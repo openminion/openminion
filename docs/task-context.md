@@ -41,9 +41,10 @@ tool replay.
 
 The existing execution context owner builds the act request. Canonical tool replay
 supplies historical assistant/tool batches before the latest input; duplicate
-context excerpts are suppressed. Children keep their own goals and inherit the
-current parent's task conditions as background. This change adds no child
-lifecycle or asynchronous result-binding registry.
+context excerpts are suppressed. Children keep their own goals. Their existing
+child-context policy renders parent conditions and short-answer context once;
+execution consumes that prompt. This change adds no child lifecycle or
+asynchronous result-binding registry.
 
 While an external job is pending, context amendments are rejected. Replacement
 and cancellation of task-backed execution must use its existing owner. The local

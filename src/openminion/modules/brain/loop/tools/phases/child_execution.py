@@ -70,6 +70,22 @@ def execute_child_goal(
     runner = runner_from_context(ctx)
     if runner is None:
         return ""
+    if getattr(ctx.state, "resolved_task_context", None) is not None or getattr(
+        ctx.state, "inherited_task_conditions", {}
+    ):
+        from openminion.modules.brain.execution.child_tasks import SubtaskSpec
+        from openminion.modules.brain.execution.orchestrate.strategies import (
+            SummaryInheritancePolicy,
+        )
+
+        child_goal = (
+            SummaryInheritancePolicy()
+            .build_child_context(
+                parent_state=ctx.state,
+                subtask=SubtaskSpec(goal=child_goal),
+            )
+            .prompt
+        )
     try:
         from openminion.modules.brain.loop.orchestration import (
             decide as decide_phase,

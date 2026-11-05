@@ -1,26 +1,11 @@
-"""Consolidation cron runs recover pending capture intents, then run their turn (#420).
+"""Consolidation cron runs recover pending capture intents, then run their turn.
 
-Each test builds a real `APIRuntime` (echo provider), runs one SDK turn and
-then a memory consolidation job through the real `CronTurnExecutor` on the
-same runtime: its `AgentRuntimeManager`, session store, agent service, memory
-assembly, the daemon's turn request builder and the real
-`memory_capture_recovery_allowed` authorization. Recovery uses the agent
-service's own capture candidate extractor; the tests only record its calls
-and the recovery result.
-
-The turn leaves its capture intent pending in two ways: with the built-in
-memory provider when its capture bundle write fails once with
-`StoreWriteError`, and with the bundled `reference-sqlite` external adapter,
-which has no atomic capture (`CAPTURE_RECOVERY_UNSUPPORTED`, #397). With that
-adapter recovery does not call the extractor (#449).
-
-The `_consolidate` tests give the executor a task owner that reports every job
-as a `task.consolidate_memory` job. The `test_daemon_*` tests use no such
-stand-in (#456): `task.consolidate_memory`'s handler creates the job with the
-runtime's own task owner, and the daemon's `attach_cron_scheduler` runs it with
-its own cron store, its own `TaskManager` on the daemon's database path, its
-`CronTurnExecutor` and turn request builder and a running `CronScheduler`. So
-the task kind the daemon reads is the one the handler stored.
+The runtime (echo provider), `CronTurnExecutor`, turn request builder and
+`memory_capture_recovery_allowed` are real; the tests only record the
+extractor's calls and the recovery results. The `_consolidate` tests give the
+executor a task owner that reports every job as `task.consolidate_memory`. The
+`test_daemon_*` tests use no such stand-in, so the task kind the daemon's own
+`TaskManager` reads is the one the handler stored.
 """
 
 from __future__ import annotations

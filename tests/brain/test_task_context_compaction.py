@@ -1,5 +1,3 @@
-"""Compact entry schemas retain the full validation contract."""
-
 import json
 from copy import deepcopy
 

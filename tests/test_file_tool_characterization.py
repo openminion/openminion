@@ -215,6 +215,11 @@ def test_read_file_applies_offset_and_truncation(tmp_path: Path):
         "truncated": True,
         "total_length": 10,
         "returned_length": 4,
+        "next_offset": 7,
+        "hint": (
+            "pass next_offset as offset to continue, or use file.read_range for "
+            "line-based access"
+        ),
         "source": "file_module",
     }
 

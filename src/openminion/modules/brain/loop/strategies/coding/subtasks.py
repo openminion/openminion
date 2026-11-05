@@ -207,7 +207,9 @@ def _coding_subtask_context(ctx: ExecutionContext, subtask: Any) -> str:
         target_files=subtask.target_files,
         success_criteria=subtask.success_criteria,
     )
-    if getattr(ctx.state, "resolved_task_context", None) is None:
+    if getattr(ctx.state, "resolved_task_context", None) is None and not getattr(
+        ctx.state, "inherited_task_conditions", {}
+    ):
         return prompt
     from openminion.modules.brain.execution.child_tasks import SubtaskSpec
     from openminion.modules.brain.execution.orchestrate.strategies import (

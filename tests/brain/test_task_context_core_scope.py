@@ -1,5 +1,3 @@
-"""Current-task guarantees remain independent of archive and lifecycle extensions."""
-
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -7,7 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from openminion.modules.brain.execution.task_context import (
-    execution_task_text,
+    execution_messages,
     inherit_child_task,
 )
 from openminion.modules.brain.loop.context.task_context import updated_task_context
@@ -115,9 +113,24 @@ def test_child_and_grandchild_keep_short_answer_context_without_parent_task_iden
     grandchild = child.model_copy(deep=True)
     inherit_child_task(grandchild, child)
     grandchild.goal = "Check parser"
-    text = execution_task_text(
-        SimpleNamespace(state=grandchild, user_input="Check parser", logger=Mock())
+    from openminion.modules.brain.execution.child_tasks import SubtaskSpec
+    from openminion.modules.brain.execution.orchestrate.strategies import (
+        SummaryInheritancePolicy,
     )
+
+    prompt = (
+        SummaryInheritancePolicy()
+        .build_child_context(
+            parent_state=child,
+            subtask=SubtaskSpec(goal="Check parser"),
+        )
+        .prompt
+    )
+    messages = execution_messages(
+        SimpleNamespace(state=grandchild, user_input=prompt, logger=Mock())
+    )
+    text = messages[-1].content
+    assert text.count("JSON") == 1 and text.count("Width 120 cm?") == 1
     assert all(
         value in text for value in ["Check parser", "JSON", "yes", "Width 120 cm?"]
     )
@@ -126,3 +139,64 @@ def test_child_and_grandchild_keep_short_answer_context_without_parent_task_iden
     )
     grandchild.inherited_task_conditions.clear()
     assert child.inherited_task_conditions and parent.model_dump() == before
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_phase_child_uses_the_same_single_condition_rendering(monkeypatch, nested):
+    from openminion.modules.brain.execution.loop_contracts import ExecutionResult
+    from openminion.modules.brain.loop.tools.phases import child_execution
+    from openminion.modules.brain.loop import orchestration
+
+    parent = _state()
+    parent.resolved_task_context = initial_task()
+    if nested:
+        root = parent
+        parent = root.model_copy(deep=True)
+        inherit_child_task(parent, root)
+        parent.goal = "Parent parser work"
+    before = parent.model_dump()
+    child = child_execution.build_child_state(
+        parent_state=parent,
+        child_budget=parent.budgets_remaining,
+        goal="Check parser",
+    )
+    runner = SimpleNamespace(context_api=None, session_api=None)
+    ctx = SimpleNamespace(
+        state=parent, logger=Mock(), _services=SimpleNamespace(runner=runner)
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "decide",
+        lambda *args, **kwargs: SimpleNamespace(route="act_adaptive"),
+    )
+    captured = []
+
+    def invoke(runner, **kwargs):
+        captured.extend(
+            execution_messages(
+                SimpleNamespace(
+                    state=kwargs["state"],
+                    user_input=kwargs["user_input"],
+                    logger=Mock(),
+                    _services=SimpleNamespace(runner=runner),
+                )
+            )
+        )
+        return ExecutionResult(
+            status="done", working_state=kwargs["state"], message="checked"
+        )
+
+    monkeypatch.setattr(child_execution, "invoke_decision_direct", invoke)
+    assert (
+        child_execution.execute_child_goal(
+            ctx,
+            child_goal="Check parser",
+            child_state=child,
+            blocked_mode_name="refine",
+        )
+        == "checked"
+    )
+    text = captured[-1].content
+    assert text.count("JSON") == 1 and text.count("Check parser") == 1
+    assert ("Parent parser work" if nested else "Export") in text
+    assert child.goal == "Check parser" and parent.model_dump() == before

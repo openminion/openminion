@@ -1,16 +1,10 @@
-"""Same-turn freshness retention through the SDK (#395).
+"""Same-turn freshness retention through the SDK.
 
-`Agent(tools=[lookup_order], forced_tools=["lookup_order"])` runs "Check order
-A-104" against a scripted OpenAI-compatible provider on 127.0.0.1. The
-freshness classifier asks for an exact date, `lookup_order` returns no dated
-field, and the judge closes with a final answer, so the closure freshness
-guard turns that close into a continue and the turn takes a continuation step
-with no user input. The entry requests offer only `lookup_order`, whose schema
-has no `freshness` field, so the continuation entry carries no typed contract
-unless the script adds one.
-
-Read-only observers record the typed freshness state before and after each
-`_apply_entry_freshness` call and what each closure freshness guard checked.
+A scripted OpenAI-compatible provider on 127.0.0.1 asks for an exact date and
+`lookup_order` returns no dated field, so the closure freshness guard turns the
+judge's close into a continuation step without user input. `lookup_order`'s
+schema has no `freshness` field, so the continuation entry carries no typed
+contract unless the script adds one. The observers are read-only.
 """
 
 from __future__ import annotations

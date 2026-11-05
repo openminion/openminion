@@ -26,16 +26,7 @@ def execution_task_text(ctx: Any) -> str:
             else snapshot
         )
     # Do not infer task provenance from last_user_input or permanently prefer goal.
-    task_text = latest or str(getattr(state, "goal", "") or "").strip()
-    inherited = getattr(state, "inherited_task_conditions", {})
-    if inherited:
-        import json
-
-        task_text += (
-            "\nINHERITED USER CONDITIONS (applicable to this subtask):\n"
-            + json.dumps(inherited, ensure_ascii=False)
-        )
-    return task_text
+    return latest or str(getattr(state, "goal", "") or "").strip()
 
 
 def execution_messages(ctx: Any, *, autonomous: bool = False) -> list[Message]:
@@ -73,7 +64,7 @@ def execution_messages(ctx: Any, *, autonomous: bool = False) -> list[Message]:
         if task and not any(task in message.content for message in messages):
             raise TaskContextBudgetError("The required task context was truncated")
         if (
-            message_token_estimate(runner, messages)
+            message_token_estimate(getattr(runner, "llm_api", None), messages)
             > ctx.state.budgets_remaining.tokens
         ):
             raise TaskContextBudgetError(

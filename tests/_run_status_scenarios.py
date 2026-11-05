@@ -383,7 +383,7 @@ def check_thread_payload_variants(sessions: SessionStore, session_id: str) -> No
 def check_review_cases(
     sessions: SessionStore, new_session: Callable[[str], str]
 ) -> None:
-    """The four cases of the #372 review, each in a session of its own."""
+    """Run id, state and thread ids are stripped; a blank error keeps the earlier one."""
 
     def append(session_id: str, state: str, **kwargs: Any) -> EventRecord:
         return append_run_state_event(
@@ -436,7 +436,7 @@ def check_review_cases(
 def check_token_text_ids(
     sessions: SessionStore, new_session: Callable[[str], str]
 ) -> None:
-    """Ids that look like JSON tokens keep their exact text (second #372 review).
+    """Ids that look like JSON tokens keep their exact text.
 
     Each id is a run, conversation and thread id, written with the ordinary
     `append_run_state_event` arguments; "trace: NaN" and "trace: 1e999" must
@@ -821,10 +821,10 @@ def check_nonstandard_values(
 def check_nonstandard_probe_cases(
     sessions: SessionStore, new_session: Callable[[str], str]
 ) -> None:
-    """The cases of the third #372 review (`probe_372_nonstandard.py`).
+    """NaN, Infinity and NUL payload values after an earlier error.
 
-    An earlier error, then a later run event with the value; `dev` reports
-    these results on both backends.
+    Both backends report what the readers' Python normalization reads from the
+    later run event.
     """
     cases = {
         "error NaN": ({"error": NAN}, "s", "nan"),

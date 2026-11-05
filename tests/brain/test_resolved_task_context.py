@@ -749,19 +749,46 @@ def test_objective_correction_can_combine_prior_goal_and_short_new_input():
     assert corrected.sources["$objective"] == input_digest(latest)
 
 
-def test_coding_child_keeps_task_conditions_as_background_and_its_own_goal(current):
+@pytest.mark.parametrize("nested", [False, True])
+def test_coding_child_keeps_task_conditions_as_background_and_its_own_goal(
+    current, nested
+):
     from unittest.mock import patch
     from openminion.modules.brain.loop.strategies.coding.subtasks import (
         _invoke_coding_subtask,
     )
     from openminion.modules.brain.loop.strategies.coding.plan import CodingSubtask
     from openminion.modules.brain.loop.context.task_context import task_context_message
+    from openminion.modules.brain.execution.task_context import (
+        execution_messages,
+        inherit_child_task,
+    )
     from openminion.modules.brain.execution.loop_contracts import ExecutionResult
+    from openminion.modules.llm.schemas import Message
     from tests.brain.test_unified_turn_entry import _state
 
-    parent = _state()
-    parent.resolved_task_context = current
-    parent.goal = task_context_message(current).content
+    current = updated_task_context(
+        current,
+        {
+            **delta(1, "Use JSON-ONLY-529; yes"),
+            "set_conditions": [
+                {"key": "format", "quote": "JSON-ONLY-529"},
+                {"key": "width", "quote": "yes", "question_quote": "Use width 120 cm?"},
+            ],
+        },
+        user_input="Use JSON-ONLY-529; yes",
+        clarification_question="Use width 120 cm?",
+    )
+    root = _state()
+    root.resolved_task_context = current
+    root.goal = task_context_message(current).content
+    root_before = root.model_dump()
+    parent = root
+    if nested:
+        parent = root.model_copy(deep=True)
+        inherit_child_task(parent, root)
+        parent.goal = "Parent parser work"
+    before = parent.model_dump()
     subtask = CodingSubtask(
         goal="Implement parser",
         target_files=["parser.py"],
@@ -771,11 +798,37 @@ def test_coding_child_keeps_task_conditions_as_background_and_its_own_goal(curre
     ctx = SimpleNamespace(state=parent, logger=None)
     captured = []
 
+    def build_context(**kwargs):
+        return {
+            "messages": [
+                Message(
+                    role="user",
+                    content=kwargs["hints"]["user_input"],
+                    meta={"block_kind": "turn_input"},
+                )
+            ]
+        }
+
+    message_runner = SimpleNamespace(
+        context_api=object(),
+        session_api=None,
+        llm_api=None,
+        _build_context=build_context,
+    )
+
     def execute(runner_obj, **kwargs):
-        captured.append(kwargs)
+        messages = execution_messages(
+            SimpleNamespace(
+                state=kwargs["state"],
+                user_input=kwargs["user_input"],
+                logger=None,
+                _services=SimpleNamespace(runner=message_runner),
+            )
+        )
+        captured.append((kwargs, messages))
         return ExecutionResult(status="done", working_state=kwargs["state"])
 
-    budget = dict(ticks=5, tool_calls=3, a2a_calls=1, tokens=1000, time_ms=1000)
+    budget = dict(ticks=5, tool_calls=3, a2a_calls=1, tokens=4000, time_ms=1000)
     with patch(
         "openminion.modules.brain.loop.strategies.coding.subtasks.invoke_decision_direct",
         side_effect=execute,
@@ -783,16 +836,21 @@ def test_coding_child_keeps_task_conditions_as_background_and_its_own_goal(curre
         _, child = _invoke_coding_subtask(
             runner, ctx, runner_obj=object(), subtask_index=0, child_budget=budget
         )
-    prompt = captured[0]["user_input"]
-    assert "Compare ALPHA" in prompt and "JSON" in prompt
-    assert (
-        "background context" in prompt
-        and "Implement parser" in prompt
-        and "parser.py" in prompt
-    )
+    arguments, messages = captured[0]
+    prompt = arguments["user_input"]
+    assert len(messages) == 1 and messages[0].role == "user"
+    text = messages[0].content
+    for value in [
+        "JSON-ONLY-529",
+        "Use width 120 cm?",
+        "Implement parser",
+        "parser.py",
+    ]:
+        assert prompt.count(value) == 1 and text.count(value) == 1
+    assert "background context" in text and "yes" in text
+    assert ("Parent parser work" if nested else "Compare ALPHA") in text
     assert child.goal == "Implement parser" and child.resolved_task_context is None
-    assert parent.resolved_task_context.task_id == current.task_id
-    assert parent.resolved_task_context.conditions == current.conditions
+    assert parent.model_dump() == before and root.model_dump() == root_before
 
 
 def test_context_cancellation_cannot_falsely_cancel_an_external_task(current):

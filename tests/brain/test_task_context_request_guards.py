@@ -65,22 +65,22 @@ def test_task_definitions_preserve_runtime_refs_and_validate_both_payloads(occup
     [None, lambda **kwargs: 1, lambda **kwargs: (_ for _ in ()).throw(RuntimeError())],
 )
 def test_tool_schema_and_structured_tool_arguments_contribute_to_fallback(estimator):
-    runner = SimpleNamespace(llm_api=SimpleNamespace(estimate_tokens=estimator))
+    adapter = SimpleNamespace(estimate_tokens=estimator)
     messages = [Message(role="user", content="Export")]
     large = ToolSpec(
         name="write",
         description="x" * 10000,
         input_schema={"type": "object", "description": "y" * 10000},
     )
-    base = message_token_estimate(runner, messages)
-    assert message_token_estimate(runner, messages, tools=[large]) > base + 4000
+    base = message_token_estimate(adapter, messages)
+    assert message_token_estimate(adapter, messages, tools=[large]) > base + 4000
     from openminion.modules.llm.schemas import ToolCall
 
     structured = Message(
         role="assistant",
         tool_calls=[ToolCall(id="c", name="write", arguments={"body": "z" * 10000})],
     )
-    assert message_token_estimate(runner, [structured]) > base + 2000
+    assert message_token_estimate(adapter, [structured]) > base + 2000
 
 
 class CallClient:
@@ -249,3 +249,15 @@ def test_entry_reconsideration_accounts_first_response_before_retry(tmp_path):
         assert result.working_state.resolved_task_context.revision == 1
     finally:
         h.close()
+
+
+def test_direct_provider_estimate_is_used_above_serialized_fallback():
+    from unittest.mock import Mock
+
+    adapter = SimpleNamespace(estimate_tokens=Mock(return_value=100000))
+    messages = [Message(role="user", content="Export")]
+    assert message_token_estimate(adapter, messages, model="provider-model") == 100000
+    adapter.estimate_tokens.assert_called_once_with(
+        model="provider-model",
+        context={"messages": [messages[0].model_dump(mode="json")]},
+    )

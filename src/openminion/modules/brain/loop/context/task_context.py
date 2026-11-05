@@ -231,7 +231,11 @@ class TaskContextBudgetError(ValueError):
 
 
 def message_token_estimate(
-    runner: Any, messages: list[Any], *, model: str = "", tools: list[Any] | None = None
+    adapter: Any,
+    messages: list[Any],
+    *,
+    model: str = "",
+    tools: list[Any] | None = None,
 ) -> int:
     # Follow the context owner's fallback estimate; use a provider estimate when available.
     context = {"messages": [m.model_dump(mode="json") for m in messages]}
@@ -241,8 +245,7 @@ def message_token_estimate(
     # remains a serialized-size heuristic, not a provider tokenizer guarantee.
     chars = len(json.dumps(context, ensure_ascii=False, separators=(",", ":")))
     fallback = max(1, (chars + 3) // 4)
-    api = getattr(runner, "llm_api", None)
-    estimate = getattr(api, "estimate_tokens", None)
+    estimate = getattr(adapter, "estimate_tokens", None)
     if callable(estimate):
         try:
             return max(fallback, int(estimate(model=model, context=context)))

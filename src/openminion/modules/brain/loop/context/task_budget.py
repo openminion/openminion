@@ -1,6 +1,5 @@
 """Request-boundary guard for the current task's remaining token budget."""
 
-from types import SimpleNamespace
 from typing import Any
 
 from .task_context import TaskContextBudgetError, message_token_estimate
@@ -17,9 +16,7 @@ def task_request_output_limit(
 ) -> int | None:
     if state is None:
         return requested_output
-    estimated = message_token_estimate(
-        SimpleNamespace(llm_api=adapter), messages, model=model, tools=tools
-    )
+    estimated = message_token_estimate(adapter, messages, model=model, tools=tools)
     available = int(state.budgets_remaining.tokens) - estimated
     if available <= 0:
         raise TaskContextBudgetError(

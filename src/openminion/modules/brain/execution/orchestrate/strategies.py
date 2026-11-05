@@ -573,9 +573,24 @@ class SummaryInheritancePolicy(ContextInheritancePolicy):
         dependency_results: list[SubtaskResult] | None = None,
     ) -> ChildContext:
         summary_parts: list[str] = []
-        goal = str(getattr(parent_state, "goal", "") or "").strip()
+        from openminion.modules.brain.loop.context.task_context import (
+            task_context_message,
+        )
+
+        task = getattr(parent_state, "resolved_task_context", None)
+        goal = (
+            str(task_context_message(task).content)
+            if task is not None
+            else str(getattr(parent_state, "goal", "") or "").strip()
+        )
         if goal:
             summary_parts.append(f"Parent goal: {goal}")
+        inherited = getattr(parent_state, "inherited_task_conditions", {})
+        if task is None and inherited:
+            summary_parts.append(
+                "INHERITED USER CONDITIONS (applicable to this subtask):\n"
+                + json.dumps(inherited, ensure_ascii=False)
+            )
         last_result = getattr(parent_state, "last_result", None)
         last_summary = str(getattr(last_result, "summary", "") or "").strip()
         if last_summary:

@@ -1,15 +1,10 @@
-"""Memory retention and purge on items that carry evidence, for SQLite and PostgreSQL (#400).
+"""Memory retention and purge on items with evidence, for SQLite and PostgreSQL.
 
-Each case seeds three items that its step removes:
-- ``artifact-ref``: one evidence ref to an artifact;
-- ``capture-evidence``: the evidence entry that ``apply_capture_bundle`` writes
-  on captured candidates and that promotion copies to the record;
-- ``no-evidence``: no evidence.
-
-It runs the step on the store itself, not through ``AuditedMemoryStore``
-(#392), and returns the step's result, each item's state afterwards and the
-artifact ref removals that the store's artifactctl received. The expected
-outcome is the same on both backends.
+Each case seeds ``artifact-ref`` (one evidence ref to an artifact),
+``capture-evidence`` (the evidence entry ``apply_capture_bundle`` writes and
+promotion copies to the record) and ``no-evidence``, then runs its step on the
+store itself, not through ``AuditedMemoryStore``. The expected outcome is the
+same on both backends.
 """
 
 from __future__ import annotations

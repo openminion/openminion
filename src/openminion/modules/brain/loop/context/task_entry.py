@@ -16,6 +16,7 @@ def prepare_task_context_prompt(
     runner: Any, state: Any, *, model: str, has_new_input: bool, target: int
 ) -> tuple[list[Message], int, RespondDecision | None]:
 
+    adapter = getattr(runner, "llm_api", None)
     required_messages = (
         [Message(role="system", content=TASK_UPDATE_INSTRUCTIONS)]
         if has_new_input
@@ -30,14 +31,16 @@ def prepare_task_context_prompt(
     if not required_messages:
         return [], target, None
     reserved_tokens = (
-        message_token_estimate(runner, required_messages, model=model)
+        message_token_estimate(adapter, required_messages, model=model)
         if required_messages
         else 0
     )
     pack_budget = max(1, target - reserved_tokens)
     if reserved_tokens >= state.budgets_remaining.tokens:
         required_messages = task_context_recovery_messages(state)
-        reserved_tokens = message_token_estimate(runner, required_messages, model=model)
+        reserved_tokens = message_token_estimate(
+            adapter, required_messages, model=model
+        )
         pack_budget = max(1, target - reserved_tokens)
     if reserved_tokens >= state.budgets_remaining.tokens:
         return (
@@ -62,20 +65,21 @@ def append_required_task_messages(
     model: str,
     user_input: str | None = None,
 ) -> RespondDecision | None:
+    adapter = getattr(runner, "llm_api", None)
     if required_messages:
         move_current_input_last(base_messages, user_input)
         base_messages.insert(0, required_messages[0])
         if len(required_messages) > 1:
             base_messages.insert(max(0, len(base_messages) - 1), required_messages[1])
         if (
-            message_token_estimate(runner, base_messages, model=model)
+            message_token_estimate(adapter, base_messages, model=model)
             > state.budgets_remaining.tokens
         ):
             recovery = task_context_recovery_messages(state)
             base_messages[0] = recovery[0]
             base_messages[-2] = recovery[1]
         if (
-            message_token_estimate(runner, base_messages, model=model)
+            message_token_estimate(adapter, base_messages, model=model)
             > state.budgets_remaining.tokens
         ):
             return RespondDecision(
@@ -174,6 +178,7 @@ def build_task_entry_context(
     from openminion.modules.brain.adapters.llm.request import _messages_from_context
     from openminion.modules.brain.bootstrap.budget import trim_decide_context_to_budget
 
+    adapter = getattr(runner, "llm_api", None)
     required_messages, pack_budget, task_error = prepare_task_context_prompt(
         runner,
         state,
@@ -183,9 +188,9 @@ def build_task_entry_context(
     )
     if task_error is not None:
         return {}, 0, [], task_error
-    schema_tokens = message_token_estimate(runner, [], model=model, tools=tool_specs)
+    schema_tokens = message_token_estimate(adapter, [], model=model, tools=tool_specs)
     reserved_tokens = schema_tokens + (
-        message_token_estimate(runner, required_messages, model=model)
+        message_token_estimate(adapter, required_messages, model=model)
         if required_messages
         else 0
     )
@@ -234,7 +239,7 @@ def build_task_entry_context(
         runner, state, messages, required_messages, model=model, user_input=user_input
     )
     if required_messages:
-        _estimate = message_token_estimate(runner, messages, model=model)
+        _estimate = message_token_estimate(adapter, messages, model=model)
     context["task_context_recovery_only"] = any(
         message.meta.get("block_kind") == "task_context_recovery"
         for message in messages

@@ -249,7 +249,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         "service",
         help="Unified service lifecycle overview",
     )
-    service_subcommands = service.add_subparsers(dest="service_command")
+    service_subcommands = service.add_subparsers(dest="service_command", required=True)
 
     service_list = service_subcommands.add_parser("list", help="List known services")
     add_json_output_flag(service_list)
