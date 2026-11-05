@@ -59,6 +59,12 @@ event before saving WorkingState does not make a cross-store transaction. Reader
 must verify the committed-head chain; a failed save cannot make an orphan event
 look accepted. Invalid deltas, restore references, capacity overflow or persistence
 errors must preserve the previously committed task and prevent external effects.
+The implementation checks historical scope/owner against a present destination
+key before restoration, and reserves proposed detached-job capacity before
+appending an amendment. Regression controls cover key reuse across subtasks,
+same-owner short answers, and the 128/129 handle boundary followed by reload and
+the actual job reconciler. These controls validate the local failure paths;
+they do not replace the maintainer scope decision or live/package acceptance.
 
 Existing core sessions load additive empty workspace/active lifecycle defaults.
 Their current task identity, revision and conditions survive. The next accepted

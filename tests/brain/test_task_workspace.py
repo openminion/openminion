@@ -527,3 +527,96 @@ def test_invalid_resume_amendment_does_not_move_archive():
             conditions=[dict(key="format", quote="invented XML")],
         )
     assert state.model_dump() == before
+
+
+def test_detachment_capacity_refuses_amendment_before_commit_and_recovers(
+    tmp_path, monkeypatch
+):
+    from openminion.modules.brain.execution.runtime.turn import jobs
+
+    state = new_state()
+    api = SessctlAdapter(tmp_path / "sessions.db")
+    poll = Mock(return_value={"status": "pending"})
+    monkeypatch.setattr("openminion.modules.brain.execution.poll_async_job", poll)
+    monkeypatch.setattr(jobs, "_pending_response", Mock(return_value="pending"))
+    runner = Mock()
+    try:
+        for i in range(128):
+            job = JobHandle(
+                task_id=f"job-{i}",
+                command_id=f"cmd-{i}",
+                provider="tool",
+                status="pending",
+            )
+            state.pending_jobs = [job]
+            register_job_binding(state, job.task_id)
+            commit(
+                state,
+                f"format-{i}",
+                api,
+                conditions=[dict(key="format", quote=f"format-{i}")],
+            )
+            state.status = "job_pending"
+            assert (
+                jobs.reconcile_pending_jobs(runner, state=state, logger=Mock()) is None
+            )
+            assert len(state.task_workspace.detached_jobs) == i + 1
+        poll.assert_not_called()
+        live = JobHandle(
+            task_id="job-128", command_id="cmd-128", provider="tool", status="pending"
+        )
+        state.pending_jobs = [live]
+        register_job_binding(state, live.task_id)
+        before = state.model_dump()
+        events = committed_checkpoints(api, state)
+        response = _tool_response(
+            "tool",
+            {
+                "name": "file.write",
+                "task_update": update(
+                    state, "XML", conditions=[dict(key="format", quote="XML")]
+                ),
+            },
+        )
+        decision = apply_entry_task_context(
+            state,
+            response,
+            user_input="XML",
+            clarify=False,
+            logger=Mock(),
+            session_api=api,
+        )
+        assert decision.reason_code == "invalid_task_context_update"
+        expected = dict(before, task_context_needs_update=True)
+        assert state.model_dump() == expected
+        assert committed_checkpoints(api, state) == events
+        restored = type(state).model_validate_json(state.model_dump_json())
+        assert binding_matches(restored, restored.task_execution_bindings[live.task_id])
+        assert (
+            jobs.reconcile_pending_jobs(runner, state=restored, logger=Mock())
+            == "pending"
+        )
+        poll.assert_called_once_with(
+            runner, state=restored, job=restored.pending_jobs[0]
+        )
+        assert restored.resolved_task_context.revision == 129
+        assert len(restored.task_workspace.detached_jobs) == 128
+        assert restored.pending_jobs[0].task_id == live.task_id
+    finally:
+        api.close()
+
+
+def test_idle_reconciliation_keeps_workspace_identity_and_cleans_orphan_binding():
+    state = new_state()
+    state.pending_jobs = [
+        JobHandle(task_id="live", command_id="cmd", provider="tool", status="pending")
+    ]
+    register_job_binding(state, "live")
+    register_job_binding(state, "orphan")
+    workspace = state.task_workspace
+    before = workspace.model_dump()
+    discard_stale_jobs(state)
+    assert state.task_workspace is workspace
+    assert state.task_workspace.model_dump() == before
+    assert set(state.task_execution_bindings) == {"live"}
+    assert state.pending_jobs[0].task_id == "live"

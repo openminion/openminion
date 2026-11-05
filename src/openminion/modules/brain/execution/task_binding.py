@@ -2,6 +2,7 @@
 
 from functools import wraps
 from typing import Any
+from openminion.modules.brain.schemas.task_context import ResolvedTaskContext
 from openminion.modules.brain.schemas.task_workspace import (
     TaskExecutionBinding,
     TaskWorkspace,
@@ -25,9 +26,14 @@ def capture_binding(
 
 
 def binding_matches(state: Any, binding: TaskExecutionBinding | None) -> bool:
+    return _binding_matches_task(getattr(state, "resolved_task_context", None), binding)
+
+
+def _binding_matches_task(
+    task: ResolvedTaskContext | None, binding: TaskExecutionBinding | None
+) -> bool:
     if binding is None:
-        return state.resolved_task_context is None
-    task = getattr(state, "resolved_task_context", None)
+        return task is None
     return bool(
         task is not None
         and task.task_id == binding.task_id
@@ -142,21 +148,34 @@ def register_job_binding(state: Any, job_id: str) -> None:
         state.task_execution_bindings[job_id] = binding
 
 
-def discard_stale_jobs(state: Any) -> None:
+def plan_job_detachment(
+    state: Any, workspace: TaskWorkspace, task: ResolvedTaskContext | None
+) -> tuple[TaskWorkspace, set[str]]:
     stale = {
         job.task_id
         for job in state.pending_jobs
         if job.task_id in state.task_execution_bindings
-        and not binding_matches(state, state.task_execution_bindings[job.task_id])
+        and not _binding_matches_task(task, state.task_execution_bindings[job.task_id])
     }
-    workspace = state.task_workspace.model_copy(deep=True)
+    if not stale:
+        return workspace, stale
+    detached = dict(workspace.detached_jobs)
     for job in state.pending_jobs:
         if job.task_id in stale:
-            workspace.detached_jobs[job.task_id] = DetachedTaskExecution(
+            detached[job.task_id] = DetachedTaskExecution(
                 binding=state.task_execution_bindings[job.task_id],
                 handle=job.model_dump(mode="json"),
             )
-    workspace = TaskWorkspace.model_validate(workspace.model_dump())
+    workspace = TaskWorkspace.model_validate(
+        workspace.model_dump() | {"detached_jobs": detached}
+    )
+    return workspace, stale
+
+
+def discard_stale_jobs(state: Any) -> None:
+    workspace, stale = plan_job_detachment(
+        state, state.task_workspace, state.resolved_task_context
+    )
     state.task_workspace = workspace
     state.pending_jobs = [job for job in state.pending_jobs if job.task_id not in stale]
     stale.update(

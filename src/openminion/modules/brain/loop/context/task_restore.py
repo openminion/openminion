@@ -6,6 +6,7 @@ from openminion.modules.brain.schemas.task_context import (
     TaskConditionOwner,
 )
 from .task_context import input_digest
+from .task_ownership import owner_for
 
 
 def restore_task_conditions(
@@ -38,9 +39,16 @@ def restore_task_conditions(
         item = receipt["entry"]
         if item["task_id"] != result.task_id or item["key"] != selection.key:
             raise ValueError("Historical evidence belongs to another task or condition")
-        owner = result.condition_owners.get(selection.key)
-        if owner is None:
-            owner = TaskConditionOwner.model_validate(item["owner"])
+        historical_owner = TaskConditionOwner.model_validate(item["owner"])
+        if selection.key in result.conditions:
+            owner = owner_for(result, selection.key)
+            if (owner.scope, owner.owner_id) != (
+                historical_owner.scope,
+                historical_owner.owner_id,
+            ):
+                raise ValueError("Historical evidence belongs to another owner")
+        else:
+            owner = historical_owner
             if owner.scope == "conversation":
                 if (
                     not patch.conversation_scope_quote

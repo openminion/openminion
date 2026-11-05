@@ -112,7 +112,13 @@ Async jobs and child results carry task identity/revision bindings. Results for
 an obsolete owner cannot advance the current plan. Detached async handles and
 their bindings remain available in the workspace (up to 128); external jobs are
 not cancelled by context replacement. Any accepted user revision conservatively
-invalidates an older binding, even if the amendment was small. This is an owner
+invalidates an older binding, even if the amendment was small. Entry reserves
+space for the proposed detached handles before appending the amendment checkpoint.
+Exceeding the 128-handle or serialized workspace limit refuses the amendment:
+the previous task revision, committed journal head and pending job binding survive,
+so reconciliation can still poll that job after state reload. Existing handles
+are not evicted to make room. Idle reconciliation removes orphan bindings without
+copying or revalidating an unchanged workspace. This is an owner
 check, not a distributed compare-and-swap or rollback of tool side effects.
 
 The runtime validates structure, revision, current-user quotes, condition keys,
@@ -232,6 +238,11 @@ Overwriting/removing a key clears its marker. Duplicate keys and conflicts with
 set/remove lists are rejected atomically. Historical evidence never supplies new
 permissions. Restoring a removed conversation-wide rule needs current scope
 citation; completed/cancelled subtask rules cannot be reactivated this way.
+For a currently present key, the historical scope and subtask owner must match
+its current owner, including the implicit task scope of older keys. Reusing a
+key for subtask B does not authorize restoring subtask A's value into B. Such a
+restore refuses the whole amendment without changing B's value or the committed
+journal; same-owner restores retain the original clarification question and source.
 
 Canonical historical tool batches now precede the latest user input. The task
 snapshot is inserted between complete batches and the current input, rather than

@@ -169,8 +169,7 @@ def workspace_entry_update(
     ):
         raise ValueError("An inactive task must be resumed or amended before execution")
     result = _with_requested_history(state, result, patch, response, session_api)
-    workspace = TaskWorkspace.model_validate(workspace.model_dump())
-    result = _persist_entry_update(
+    result, workspace = _persist_entry_update(
         state,
         workspace,
         result,
@@ -231,7 +230,11 @@ def _persist_entry_update(
     recovery_only: bool,
     patch: TaskContextUpdate | None,
     history_reads: dict[str, Any] | None,
-) -> ResolvedTaskContext | None:
+) -> tuple[ResolvedTaskContext | None, TaskWorkspace]:
+    from openminion.modules.brain.execution.task_binding import plan_job_detachment
+
+    workspace = TaskWorkspace.model_validate(workspace.model_dump())
+    workspace, _ = plan_job_detachment(state, workspace, result)
     try:
         recorded = bool(user_input) and append_checkpoint(
             session_api,
@@ -266,7 +269,7 @@ def _persist_entry_update(
         )
         if before is None and result is not None and workspace.conversation_conditions:
             result = _conversation_snapshot(result, workspace)
-    return result
+    return result, workspace
 
 
 def _resume_task(

@@ -501,10 +501,12 @@ def test_no_search_adds_no_inference_or_state_change(history):
     assert len(runtime.runtime.requests) == 1 and state.model_dump() == before
 
 
-def test_restored_short_answer_keeps_its_original_question(history):
+@pytest.mark.parametrize("scope", ["task", "subtask"])
+def test_restored_short_answer_keeps_its_original_question(history, scope):
     from openminion.modules.brain.schemas import ClarifyContext
 
     state, api = history
+    state.resolved_task_context.subtasks["a"] = "active"
     state.pending_llm_clarify_context = ClarifyContext(
         original_user_input="Build report", clarify_question="Exclude archived rows?"
     )
@@ -513,7 +515,13 @@ def test_restored_short_answer_keeps_its_original_question(history):
         "yes",
         api,
         conditions=[
-            dict(key="exclude", quote="yes", question_quote="Exclude archived rows?")
+            dict(
+                key="exclude",
+                quote="yes",
+                question_quote="Exclude archived rows?",
+                scope=scope,
+                owner_id="a" if scope == "subtask" else None,
+            )
         ],
     )
     state.pending_llm_clarify_context = None
@@ -527,6 +535,10 @@ def test_restored_short_answer_keeps_its_original_question(history):
     task = restore(state, api, "Restore exclusion", reads)
     assert task.conditions["exclude"] == "yes"
     assert task.condition_questions["exclude"] == "Exclude archived rows?"
+    assert task.condition_owners["exclude"].scope == scope
+    assert task.condition_owners["exclude"].owner_id == (
+        "a" if scope == "subtask" else None
+    )
 
 
 @pytest.mark.parametrize(
@@ -891,3 +903,52 @@ def test_removal_is_recorded_as_latest_edit_in_catalog(history):
     catalog = search_task_history(api, state, {})
     assert catalog["recent_conditions"][0]["key"] == "format"
     assert catalog["recent_conditions"][0]["present"] is False
+
+
+@pytest.mark.parametrize("source_status", ["active", "completed"])
+@pytest.mark.parametrize("destination_scope", ["subtask", "task"])
+def test_restore_reused_key_refuses_different_owner_atomically(
+    history, source_status, destination_scope
+):
+    state, api = history
+    state.resolved_task_context.subtasks["a"] = "active"
+    commit(
+        state,
+        "Use ALPHA parser",
+        api,
+        conditions=[dict(key="parser", quote="ALPHA", scope="subtask", owner_id="a")],
+    )
+    state.resolved_task_context.subtasks["a"] = source_status
+    commit(state, "Remove parser", api, remove_conditions=["parser"])
+    state.resolved_task_context.subtasks["b"] = "active"
+    commit(
+        state,
+        "Use BETA parser",
+        api,
+        conditions=[
+            dict(
+                key="parser",
+                quote="BETA",
+                scope=destination_scope,
+                owner_id="b" if destination_scope == "subtask" else None,
+            )
+        ],
+    )
+    result, reads = read(
+        state, api, "Restore first parser", key="parser", selection="first"
+    )
+    assert result["entries"][0]["owner"]["owner_id"] == "a"
+    before = state.model_dump()
+    events = api.list_events(
+        state.session_id, event_type="task.context.checkpoint", limit=None
+    )
+    with pytest.raises(ValueError, match="another owner"):
+        restore(state, api, "Restore first parser", reads)
+    assert state.model_dump() == before
+    assert state.resolved_task_context.conditions["parser"] == "BETA"
+    assert (
+        api.list_events(
+            state.session_id, event_type="task.context.checkpoint", limit=None
+        )
+        == events
+    )
