@@ -163,7 +163,7 @@ class _StateStoreMixin(StateStore):
         result_ref: str | None = None,
         error: dict[str, Any] | None = None,
     ) -> bool:
-        return (
+        return bool(
             self._record_store.execute_count(
                 """
             UPDATE idempotency_keys
