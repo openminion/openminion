@@ -88,6 +88,27 @@ result = transport.call(
 `HTTPTransport` also exposes `job_start`, `job_status`, and `job_cancel` for
 async jobs across the wire.
 
+## Retrying a synchronous call
+
+Reuse the original idempotency key to check the result of a call after a timeout
+or disconnect. With a shared persistent state store, a duplicate returns the
+stored result or an unresolved status; it does not run the handler again.
+
+- `IN_PROGRESS`: the reservation is recent and no result is stored yet.
+- `OUTCOME_UNKNOWN`: the reservation has aged past the recovery threshold
+  (300 seconds by default), or the handler no longer owns its reservation.
+  The effect may or may not have happened. A handler that still owns the
+  reservation can finish, and polling with the same key can then return its
+  stored result.
+
+An unresolved reservation stays in the store. After a crash, check the
+downstream system before reissuing the operation. A new idempotency key can
+run the handler again, so use one only after confirming no effect occurred
+and the original handler can no longer run, or when the downstream operation
+is safe to repeat. This does not guarantee exactly-once execution. Stop
+older A2A servers before sharing the store with the updated runtime, since
+older servers can still reclaim unresolved calls.
+
 ## Security model
 
 - **Token auth is required.** Every endpoint compares

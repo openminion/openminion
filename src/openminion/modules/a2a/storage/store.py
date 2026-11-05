@@ -11,7 +11,7 @@ from openminion.modules.a2a.models import (
     JobRecord,
     iso_now,
 )
-from openminion.modules.a2a.storage.base import StateStore, idempotency_slot_is_stale
+from openminion.modules.a2a.storage.base import StateStore
 from openminion.modules.storage.record_store import RecordStore
 from openminion.modules.storage.runtime.module_store import (
     BaseModuleSQLiteStore,
@@ -123,6 +123,8 @@ def _create_state_schema(record_store: RecordStore) -> None:
 
 
 class _StateStoreMixin(StateStore):
+    _record_store: RecordStore
+
     def _list_migrations(self) -> list[str]:
         return list_migrations()
 
@@ -137,7 +139,7 @@ class _StateStoreMixin(StateStore):
         BaseModuleStore.close(self)
 
     def reserve_idempotency(
-        self, key: str, scope: str, *, stale_reclaim_after_sec: int | None = None
+        self, key: str, scope: str
     ) -> tuple[bool, IdempotencyRecord | None]:
         now = iso_now()
         inserted = self._record_store.execute_count(
@@ -150,34 +152,38 @@ class _StateStoreMixin(StateStore):
         )
         if inserted > 0:
             return True, _in_progress_idempotency(key=key, scope=scope, stamped=now)
-        existing = self._get_idempotency(scope, key)
-        if (
-            stale_reclaim_after_sec is not None
-            and existing is not None
-            and existing.status == A2A_IDEMPOTENCY_STATUS_IN_PROGRESS
-            and idempotency_slot_is_stale(
-                existing.updated_at, stale_after_sec=stale_reclaim_after_sec
-            )
-        ):
-            reclaimed = self._record_store.execute_count(
+        return False, self._get_idempotency(scope, key)
+
+    def finish_idempotency(
+        self,
+        reservation: IdempotencyRecord,
+        status: str,
+        *,
+        result_inline: dict[str, Any] | None = None,
+        result_ref: str | None = None,
+        error: dict[str, Any] | None = None,
+    ) -> bool:
+        return (
+            self._record_store.execute_count(
                 """
-                UPDATE idempotency_keys
-                SET created_at = ?, updated_at = ?
-                WHERE scope = ? AND key = ? AND status = ? AND updated_at = ?
-                """,
+            UPDATE idempotency_keys
+            SET status = ?, result_inline_json = ?, result_ref = ?, error_json = ?, updated_at = ?
+            WHERE scope = ? AND key = ? AND status = ? AND created_at = ?
+            """,
                 (
-                    now,
-                    now,
-                    scope,
-                    key,
+                    status,
+                    _json(result_inline),
+                    result_ref,
+                    _json(error),
+                    iso_now(),
+                    reservation.scope,
+                    reservation.key,
                     A2A_IDEMPOTENCY_STATUS_IN_PROGRESS,
-                    existing.updated_at,
+                    reservation.created_at,
                 ),
             )
-            if reclaimed > 0:
-                return True, _in_progress_idempotency(key=key, scope=scope, stamped=now)
-            existing = self._get_idempotency(scope, key)
-        return False, existing
+            > 0
+        )
 
     def set_idempotency_result(
         self,

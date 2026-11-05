@@ -1,0 +1,273 @@
+"""Fault injection against actual A2A call() and persistent reservations."""
+
+import json
+from contextlib import contextmanager
+import os
+from pathlib import Path
+import subprocess
+import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
+from openminion.modules.a2a.models import Envelope
+from openminion.modules.a2a.runtime import A2ARuntime
+from openminion.modules.a2a.storage import MemoryAuditStore, SQLiteStateStore
+
+
+def request(sender="client-a", payload="A", session=None):
+    return Envelope.new(
+        from_agent=sender,
+        to_agent="writer",
+        to_capability=None,
+        type="call",
+        method="ticket.create",
+        params={"payload": payload},
+        idempotency_key="fixture-operation",
+        timeout_ms=30000,
+        meta={"session_id": session} if session else {},
+    )
+
+
+def runtime(root, handler):
+    rt = A2ARuntime(
+        state_store=SQLiteStateStore(root / "runtime.db"),
+        audit_store=MemoryAuditStore(),
+        recovery_stale_heartbeat_sec=1,
+    )
+    rt.register_agent("writer", ["ticket."], handler)
+    return rt
+
+
+def ledger(root):
+    path = root / "external-ledger.jsonl"
+    return (
+        [json.loads(line) for line in path.read_text().splitlines()]
+        if path.exists()
+        else []
+    )
+
+
+def effect(root, req):
+    entries = ledger(root)
+    entry = {
+        "receipt": len(entries) + 1,
+        "key": req.idempotency_key,
+        "payload": req.params["payload"],
+        "sender": req.from_agent,
+    }
+    with (root / "external-ledger.jsonl").open("a") as f:
+        f.write(json.dumps(entry) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+    return entry
+
+
+def child(root, stage):
+    def handler(req):
+        if stage == "before":
+            os._exit(71)
+        result = effect(root, req)
+        if stage == "after":
+            os._exit(72)
+        return result
+
+    rt = runtime(root, handler)
+    try:
+        assert rt.call(request()).params["ok"]
+    finally:
+        rt.close()
+
+
+def test_fresh_pending_call_not_dispatched(tmp_path):
+    p = subprocess.run(
+        [sys.executable, str(Path(__file__).resolve()), str(tmp_path), "after"],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert p.returncode == 72, p.stderr
+    rt = runtime(tmp_path, lambda req: pytest.fail("fresh pending call redispatched"))
+    try:
+        result = rt.call(request()).params
+        assert result["status"] == "IN_PROGRESS"
+        assert len(ledger(tmp_path)) == 1
+    finally:
+        rt.close()
+
+
+def test_running_call_is_not_reclaimed_as_dead(tmp_path):
+    entered, release = threading.Event(), threading.Event()
+
+    def first_handler(req):
+        result = effect(tmp_path, req)
+        entered.set()
+        assert release.wait(10)
+        return result
+
+    first = runtime(tmp_path, first_handler)
+    second = runtime(tmp_path, lambda req: effect(tmp_path, req))
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(first.call, request())
+            try:
+                assert entered.wait(5)
+                time.sleep(1.12)
+                competing = second.call(request()).params
+            finally:
+                release.set()
+            original = future.result(timeout=5).params
+        replay = second.call(request()).params
+        assert len(ledger(tmp_path)) == 1
+        assert competing["status"] == "OUTCOME_UNKNOWN"
+        assert original["ok"] and not original["cached"]
+        assert replay["ok"] and replay["cached"]
+        assert original["data"] == replay["data"] == ledger(tmp_path)[0]
+    finally:
+        release.set()
+        second.close()
+        first.close()
+
+
+@contextmanager
+def http_endpoint(rt):
+    from openminion.modules.a2a.transport import A2AHTTPServer, HTTPTransport
+
+    token = "local-fixture-only"
+    server = A2AHTTPServer(("127.0.0.1", 0), runtime=rt, token=token)
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    try:
+        yield HTTPTransport(f"http://127.0.0.1:{server.server_address[1]}", token)
+    finally:
+        server.shutdown()
+        server.server_close()
+        t.join(timeout=5)
+
+
+def test_http_running_call_is_not_reclaimed(tmp_path):
+    entered, release = threading.Event(), threading.Event()
+
+    def handler(req):
+        result = effect(tmp_path, req)
+        if result["receipt"] == 1:
+            entered.set()
+            assert release.wait(10)
+        return result
+
+    rt = runtime(tmp_path, handler)
+    try:
+        with http_endpoint(rt) as transport, ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(transport.call, request())
+            try:
+                assert entered.wait(5)
+                time.sleep(1.12)
+                competing = transport.call(request()).params
+            finally:
+                release.set()
+            original = future.result(timeout=5).params
+            replay = transport.call(request()).params
+        assert len(ledger(tmp_path)) == 1
+        assert competing["status"] == "OUTCOME_UNKNOWN"
+        assert original["ok"] and not original["cached"]
+        assert replay["ok"] and replay["cached"]
+        assert original["data"] == replay["data"] == ledger(tmp_path)[0]
+    finally:
+        release.set()
+        rt.close()
+
+
+@pytest.mark.parametrize("over_http", [False, True], ids=["sqlite", "http"])
+@pytest.mark.parametrize("stage", ["before", "after", "settled"])
+def test_process_recovery(tmp_path, stage, over_http):
+    # Crash without unwinding on either side of the durable external effect.
+    child_process = subprocess.run(
+        [sys.executable, str(Path(__file__).resolve()), str(tmp_path), stage],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert (
+        child_process.returncode == {"before": 71, "after": 72, "settled": 0}[stage]
+    ), child_process.stderr
+    before = ledger(tmp_path)
+    assert len(before) == (0 if stage == "before" else 1)
+    time.sleep(1.12)
+    rt = runtime(tmp_path, lambda req: effect(tmp_path, req))
+    try:
+        if over_http:
+            with http_endpoint(rt) as transport:
+                result = transport.call(request()).params
+        else:
+            result = rt.call(request()).params
+        assert ledger(tmp_path) == before
+        assert result["cached"]
+        if stage == "settled":
+            assert result["ok"] and result["data"] == before[0]
+        else:
+            assert not result["ok"]
+            assert result["status"] == result["error"]["code"] == "OUTCOME_UNKNOWN"
+    finally:
+        rt.close()
+
+
+@pytest.mark.parametrize("late_error", [False, True], ids=["success", "error"])
+@pytest.mark.parametrize(
+    "replacement_finished", [False, True], ids=["pending", "finished"]
+)
+def test_superseded_call_cannot_write_receipt(
+    tmp_path, late_error, replacement_finished
+):
+    entered, release = threading.Event(), threading.Event()
+
+    def original_handler(req):
+        entered.set()
+        assert release.wait(10)
+        if late_error:
+            raise ValueError("late error")
+        return {"receipt": "late"}
+
+    first = runtime(tmp_path, original_handler)
+    # Simulate a reservation replaced by the previous runtime's reclaim algorithm.
+    second = SQLiteStateStore(tmp_path / "runtime.db")
+    key, scope = request().idempotency_key, "call:writer:ticket.create"
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(first.call, request())
+            try:
+                assert entered.wait(5)
+                assert (
+                    second._record_store.execute_count(
+                        "UPDATE idempotency_keys SET created_at = ? WHERE scope = ? AND key = ?",
+                        ("2000-01-01T00:00:00+00:00", scope, key),
+                    )
+                    == 1
+                )
+                if replacement_finished:
+                    second.set_idempotency_result(
+                        key, scope, "SUCCESS", result_inline={"receipt": "replacement"}
+                    )
+            finally:
+                release.set()
+            late = future.result(timeout=5).params
+        reserved, row = second.reserve_idempotency(key, scope)
+        assert not reserved and row is not None
+        if replacement_finished:
+            assert row.status == "SUCCESS" and row.result_inline == {
+                "receipt": "replacement"
+            }
+        else:
+            assert (
+                row.status == "IN_PROGRESS"
+                and row.result_inline is None
+                and row.error is None
+            )
+        assert late["status"] == "OUTCOME_UNKNOWN"
+    finally:
+        second.close()
+        first.close()
+
+
+if __name__ == "__main__":
+    child(Path(sys.argv[1]), sys.argv[2])
