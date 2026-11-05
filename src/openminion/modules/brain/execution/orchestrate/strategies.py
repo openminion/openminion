@@ -399,9 +399,9 @@ def build_child_state(
     child_context: ChildContext,
 ) -> WorkingState:
     child_state = parent_state.model_copy(deep=True)
-    from ..task_context import inherit_child_task
+    from ..task_binding import inherit_child_task
 
-    inherit_child_task(child_state, parent_state)
+    inherit_child_task(child_state, parent_state, child_context.task_subtask_id)
     child_state.trace_id = new_uuid()
     child_state.goal = child_context.goal
     child_state.last_user_input = child_context.prompt
@@ -573,20 +573,27 @@ class SummaryInheritancePolicy(ContextInheritancePolicy):
         dependency_results: list[SubtaskResult] | None = None,
     ) -> ChildContext:
         summary_parts: list[str] = []
-        from openminion.modules.brain.loop.context.task_context import (
-            task_context_message,
-        )
+        from ..task_binding import parent_task_background
 
         task = getattr(parent_state, "resolved_task_context", None)
-        goal = (
-            str(task_context_message(task).content)
-            if task is not None
-            else str(getattr(parent_state, "goal", "") or "").strip()
-        )
+        goal = parent_task_background(
+            parent_state, getattr(subtask, "subtask_id", "__unassigned__")
+        ).strip()
         if goal:
             summary_parts.append(f"Parent goal: {goal}")
         inherited = getattr(parent_state, "inherited_task_conditions", {})
-        if task is None and inherited:
+        if task is not None and inherited:
+            from openminion.modules.brain.loop.context.task_ownership import (
+                visible_condition_keys,
+            )
+
+            rendered = visible_condition_keys(
+                task, subtask_id=getattr(subtask, "subtask_id", "__unassigned__")
+            )
+            inherited = {
+                key: value for key, value in inherited.items() if key not in rendered
+            }
+        if inherited:
             summary_parts.append(
                 "INHERITED USER CONDITIONS (applicable to this subtask):\n"
                 + json.dumps(inherited, ensure_ascii=False)
@@ -617,6 +624,7 @@ class SummaryInheritancePolicy(ContextInheritancePolicy):
             constraints=constraints,
             active_skill_id=getattr(parent_state, "active_skill_id", None),
             delegation_context=delegation_context,
+            task_subtask_id=getattr(subtask, "subtask_id", None),
         )
 
 

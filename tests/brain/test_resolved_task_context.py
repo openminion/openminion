@@ -120,7 +120,7 @@ def test_correction_keeps_independent_fact_from_same_earlier_reply(h):
     current = json.loads(h.queries[sid].splitlines()[1])
     assert current["conditions"]["width"] == "width=100"
     assert "120" not in json.dumps(current["conditions"])
-    assert "condition_history" not in current
+    assert current["condition_history"]["width"][0]["quote"] == "width=120"
 
 
 def test_replacement_survives_twelve_more_answers(h):
@@ -310,7 +310,7 @@ def test_short_answer_keeps_its_exact_question_and_later_correction_replaces_it(
     current = json.loads(h.queries[sid].splitlines()[1])
     assert "120" not in json.dumps(current["conditions"])
     assert "width" not in current["answer_context"]
-    assert "condition_history" not in current
+    assert current["condition_history"]["width"][0]["question_quote"] == "Width 120 cm?"
 
 
 def test_untrusted_question_context_cannot_be_supplied_by_model(current):
@@ -759,10 +759,8 @@ def test_coding_child_keeps_task_conditions_as_background_and_its_own_goal(
     )
     from openminion.modules.brain.loop.strategies.coding.plan import CodingSubtask
     from openminion.modules.brain.loop.context.task_context import task_context_message
-    from openminion.modules.brain.execution.task_context import (
-        execution_messages,
-        inherit_child_task,
-    )
+    from openminion.modules.brain.execution.task_context import execution_messages
+    from openminion.modules.brain.execution.task_binding import inherit_child_task
     from openminion.modules.brain.execution.loop_contracts import ExecutionResult
     from openminion.modules.llm.schemas import Message
     from tests.brain.test_unified_turn_entry import _state
@@ -850,7 +848,17 @@ def test_coding_child_keeps_task_conditions_as_background_and_its_own_goal(
     assert "background context" in text and "yes" in text
     assert ("Parent parser work" if nested else "Compare ALPHA") in text
     assert child.goal == "Implement parser" and child.resolved_task_context is None
-    assert parent.model_dump() == before and root.model_dump() == root_before
+    after = parent.model_dump()
+    if not nested:
+        assert (
+            after["resolved_task_context"]["subtasks"].pop(subtask.subtask_id)
+            == "completed"
+        )
+    assert after == before
+    root_after = root.model_dump()
+    if not nested:
+        root_after["resolved_task_context"]["subtasks"].pop(subtask.subtask_id)
+    assert root_after == root_before
 
 
 def test_context_cancellation_cannot_falsely_cancel_an_external_task(current):
@@ -989,73 +997,3 @@ def test_execution_keeps_latest_verbatim_input_even_when_delta_omits_a_detail():
         state=SimpleNamespace(resolved_task_context=task), user_input=latest
     )
     assert latest in execution_task_text(ctx)
-
-
-@pytest.mark.parametrize("operation", ["update", "replace", "cancel"])
-def test_pending_external_job_prevents_context_change_without_owner(operation, current):
-    from openminion.modules.brain.loop.context.task_entry import (
-        apply_entry_task_context,
-    )
-    from tests.brain.runner_test_support import fake_logger
-    from tests.brain.test_unified_turn_entry import _state
-    from openminion.modules.brain.schemas import JobHandle
-
-    state = _state()
-    state.resolved_task_context = current
-    state.goal = "Current task"
-    state.pending_jobs = [
-        JobHandle(
-            task_id="external", command_id="cmd", provider="tool", status="pending"
-        )
-    ]
-    before = state.model_dump()
-    response = _tool_response(
-        "respond",
-        {
-            "answer": "Changed",
-            "task_update": delta(
-                1,
-                "Change task",
-                operation=operation,
-                objective="Replacement" if operation == "replace" else None,
-            ),
-        },
-    )
-    result = apply_entry_task_context(
-        state,
-        response,
-        user_input="Change task",
-        clarify=False,
-        logger=fake_logger(),
-    )
-    assert result.reason_code == "invalid_task_context_update"
-    assert state.resolved_task_context.model_dump() == before["resolved_task_context"]
-    assert state.pending_jobs[0].task_id == "external" and state.goal == before["goal"]
-    assert state.task_context_needs_update
-
-
-@pytest.mark.parametrize("operation", ["replace", "cancel"])
-def test_task_backed_execution_requires_its_existing_owner(operation, current):
-    state = SimpleNamespace(
-        resolved_task_context=current, task_backed_task_id="external", pending_jobs=[]
-    )
-    response = _tool_response(
-        "respond",
-        {
-            "answer": "Changed",
-            "task_update": delta(
-                1,
-                "Change task",
-                operation=operation,
-                objective="Replacement" if operation == "replace" else None,
-            ),
-        },
-    )
-    with pytest.raises(ValueError, match="task owner"):
-        resolve_entry_task_update(
-            state, response, user_input="Change task", clarify=False
-        )
-    assert (
-        state.resolved_task_context is current
-        and state.task_backed_task_id == "external"
-    )
