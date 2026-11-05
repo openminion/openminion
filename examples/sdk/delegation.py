@@ -104,9 +104,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.mode == "handoff":
-        return _print_handoff(
-            run_handoff(args.prompt, args.agent, args.approval)
-        )
+        return _print_handoff(run_handoff(args.prompt, args.agent, args.approval))
     print(run_subagent(args.prompt, args.agent))
     return 0
 
