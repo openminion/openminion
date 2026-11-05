@@ -29,7 +29,9 @@ def history_payload(
                 evidence.append(event)
             sequence.append(positions[identity])
         pooled = {"evidence": evidence, "sequence": sequence}
-        result[key] = pooled if _encoded_size(pooled) < _encoded_size(events) else events
+        result[key] = (
+            pooled if _encoded_size(pooled) < _encoded_size(events) else events
+        )
     return result
 
 

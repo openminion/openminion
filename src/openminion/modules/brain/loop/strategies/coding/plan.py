@@ -13,7 +13,9 @@ CODING_SUBTASK_STATUS = Literal["pending", "running", "done", "failed"]
 class CodingSubtask(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    subtask_id: str = Field(default_factory=lambda: uuid4().hex, min_length=1, max_length=64)
+    subtask_id: str = Field(
+        default_factory=lambda: uuid4().hex, min_length=1, max_length=64
+    )
     goal: str = Field(..., min_length=1)
     target_files: list[str] = Field(default_factory=list)
     success_criteria: str = ""

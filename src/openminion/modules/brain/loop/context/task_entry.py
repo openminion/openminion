@@ -97,7 +97,8 @@ def apply_entry_task_context(
 ) -> RespondDecision | None:
     replacing = any(
         isinstance(call.arguments.get("task_update"), dict)
-        and call.arguments["task_update"].get("operation") in {"replace", "cancel", "pause", "complete", "resume"}
+        and call.arguments["task_update"].get("operation")
+        in {"replace", "cancel", "pause", "complete", "resume"}
         for call in response.tool_calls
     )
     cancelled = any(
@@ -112,7 +113,8 @@ def apply_entry_task_context(
             user_input=user_input,
             clarify=clarify,
             recovery_only=recovery_only,
-            session_api=session_api, history_reads=history_reads,
+            session_api=session_api,
+            history_reads=history_reads,
         )
     except ValueError:
         state.task_context_needs_update = True
@@ -149,8 +151,15 @@ def apply_entry_task_context(
             ),
         )
     if operation in {"pause", "complete"}:
-        return RespondDecision(confidence=1.0, reason_code="entry_task_" + operation,
-                               respond_kind="answer", answer=str(response.tool_calls[0].arguments.get("answer") or "Task " + operation + "."))
+        return RespondDecision(
+            confidence=1.0,
+            reason_code="entry_task_" + operation,
+            respond_kind="answer",
+            answer=str(
+                response.tool_calls[0].arguments.get("answer")
+                or "Task " + operation + "."
+            ),
+        )
     return None
 
 
@@ -233,7 +242,14 @@ def task_context_recovery_messages(state: Any) -> list[Message]:
 def entry_task_preflight(state: Any, *, has_new_input: bool) -> RespondDecision | None:
     task = state.resolved_task_context
     if task is not None and task.lifecycle != "active" and not has_new_input:
-        return RespondDecision(confidence=1.0, reason_code="task_inactive", respond_kind="answer", answer="The task is " + task.lifecycle + ". A new user instruction is required to continue.")
+        return RespondDecision(
+            confidence=1.0,
+            reason_code="task_inactive",
+            respond_kind="answer",
+            answer="The task is "
+            + task.lifecycle
+            + ". A new user instruction is required to continue.",
+        )
     if state.task_context_needs_update and not has_new_input:
         return RespondDecision(
             confidence=1.0,
@@ -260,7 +276,12 @@ def entry_task_tool_specs(
                 spec, required=state.resolved_task_context is not None
             )
             for spec in specs
-        ] + ([history_tool_spec()] if getattr(state, "task_workspace", None) and state.task_workspace.journal_head else []), None
+        ] + (
+            [history_tool_spec()]
+            if getattr(state, "task_workspace", None)
+            and state.task_workspace.journal_head
+            else []
+        ), None
     except ValueError:
         return [], RespondDecision(
             confidence=1.0,
@@ -293,28 +314,32 @@ def detach_replaced_task_execution(state: Any) -> None:
 
 def task_budget_entry_decision(error: Exception) -> RespondDecision:
     return RespondDecision(
-        confidence=1.0, reason_code="task_context_budget_exceeded",
-        respond_kind="clarify", question=str(error),
+        confidence=1.0,
+        reason_code="task_context_budget_exceeded",
+        respond_kind="clarify",
+        question=str(error),
     )
 
 
-def emit_entry_identity_audit(logger: Any, state: Any, runner: Any, call_id: str) -> None:
+def emit_entry_identity_audit(
+    logger: Any, state: Any, runner: Any, call_id: str
+) -> None:
     logger.emit(
         "llm.identity_audit",
         {
             "llm_call_id": call_id,
             "purpose": "entry",
             "agent_id": state.agent_id,
-            "profile_version": getattr(
-                runner.profile, "profile_version", "unknown"
-            ),
+            "profile_version": getattr(runner.profile, "profile_version", "unknown"),
             "trace_id": state.trace_id,
         },
         trace_id=state.trace_id,
     )
 
 
-def debit_entry_response(runner: Any, state: Any, usage: dict[str, Any], logger: Any) -> None:
+def debit_entry_response(
+    runner: Any, state: Any, usage: dict[str, Any], logger: Any
+) -> None:
     from openminion.modules.brain.execution.delegation import _runner_delegate
 
     state.llm_calls_used += 1
@@ -323,11 +348,30 @@ def debit_entry_response(runner: Any, state: Any, usage: dict[str, Any], logger:
 
 def move_current_input_last(messages: list[Message], user_input: str | None) -> None:
     """Historical tool replay precedes this turn; never split a call/result batch."""
-    candidates = [index for index, message in enumerate(messages) if message.role == "user" and (
-        message.meta.get("block_kind") == "turn_input"
-        or (user_input is not None and message.content.strip() == user_input.strip())
-    )]
+    candidates = [
+        index
+        for index, message in enumerate(messages)
+        if message.role == "user"
+        and (
+            message.meta.get("block_kind") == "turn_input"
+            or (
+                user_input is not None and message.content.strip() == user_input.strip()
+            )
+        )
+    ]
     if candidates:
         messages.append(messages.pop(candidates[-1]))
     elif user_input:
-        messages.append(Message(role="user", content=user_input, meta={"block_kind": "turn_input"}))
+        messages.append(
+            Message(role="user", content=user_input, meta={"block_kind": "turn_input"})
+        )
+
+
+def emit_entry_call_started(
+    logger: Any, state: Any, call_id: str, model: str | None
+) -> None:
+    logger.emit(
+        "llm.call.started",
+        {"llm_call_id": call_id, "purpose": "entry", "model": model},
+        trace_id=state.trace_id,
+    )

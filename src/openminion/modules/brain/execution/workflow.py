@@ -203,6 +203,7 @@ class WorkflowMode(ABC):
         if job is None:
             return
         from .task_binding import register_job_binding
+
         register_job_binding(ctx.state, job.task_id)
         existing = {item.task_id for item in ctx.state.pending_jobs}
         if job.task_id not in existing:

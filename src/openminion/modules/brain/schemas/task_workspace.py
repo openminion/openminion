@@ -26,17 +26,31 @@ class TaskWorkspace(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     journal_head: str | None = None
-    detached_jobs: dict[str, DetachedTaskExecution] = Field(default_factory=dict, max_length=128)
-    archived: dict[str, ResolvedTaskContext] = Field(default_factory=dict, max_length=64)
-    conversation_conditions: dict[str, TaskConditionEvidence] = Field(default_factory=dict, max_length=128)
+    detached_jobs: dict[str, DetachedTaskExecution] = Field(
+        default_factory=dict, max_length=128
+    )
+    archived: dict[str, ResolvedTaskContext] = Field(
+        default_factory=dict, max_length=64
+    )
+    conversation_conditions: dict[str, TaskConditionEvidence] = Field(
+        default_factory=dict, max_length=128
+    )
 
     @model_validator(mode="after")
     def bounded_workspace(self) -> "TaskWorkspace":
         if any(key != task.task_id for key, task in self.archived.items()):
             raise ValueError("Archived task identity mismatch")
         size = sum(len(task.model_dump_json()) for task in self.archived.values())
-        size += sum(len(key) + len(item.model_dump_json()) for key, item in self.conversation_conditions.items())
-        size += sum(len(key) + len(item.model_dump_json()) for key, item in self.detached_jobs.items())
+        size += sum(
+            len(key) + len(item.model_dump_json())
+            for key, item in self.conversation_conditions.items()
+        )
+        size += sum(
+            len(key) + len(item.model_dump_json())
+            for key, item in self.detached_jobs.items()
+        )
         if size > 512_000:
-            raise ValueError("Task workspace capacity exceeded; start a separate session")
+            raise ValueError(
+                "Task workspace capacity exceeded; start a separate session"
+            )
         return self

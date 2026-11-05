@@ -857,9 +857,7 @@ def test_initial_action_without_delta_is_preserved_then_adopted_after_restart(h)
 
 
 def test_verbatim_adoption_quotes_are_allowed_only_during_update():
-    state = SimpleNamespace(
-        resolved_task_context=None, task_context_needs_update=False
-    )
+    state = SimpleNamespace(resolved_task_context=None, task_context_needs_update=False)
     task = resolve_entry_task_update(
         state,
         _tool_response("research", {"sub_intents": []}),
@@ -898,7 +896,9 @@ def test_verbatim_adoption_quotes_are_allowed_only_during_update():
 
 def test_initial_verbatim_capacity_failure_preserves_empty_state():
     from openminion.modules.brain.constants import TASK_CONTEXT_MAX_CHARS
-    from openminion.modules.brain.loop.context.task_entry import apply_entry_task_context
+    from openminion.modules.brain.loop.context.task_entry import (
+        apply_entry_task_context,
+    )
     from tests.brain.runner_test_support import fake_logger
 
     state = SimpleNamespace(

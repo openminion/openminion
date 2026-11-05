@@ -702,6 +702,7 @@ class ResearchMode(SimpleCheckpointMixin):
     ) -> WorkingState:
         child_state = parent_state.model_copy(deep=True)
         from openminion.modules.brain.execution.task_binding import inherit_child_task
+
         inherit_child_task(child_state, parent_state)
         child_state.goal = goal
         child_state.plan = None

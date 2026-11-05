@@ -755,10 +755,14 @@ def test_focus_pty_keeps_top_down_transcript_with_inline_input_across_resize(
             "❯ Reply with exactly: second layout check"
         )
         second_response_row = next(
-            index
-            for index, line in enumerate(screen_rows)
-            if index > second_prompt_row and "second layout check" in line
+            (
+                index
+                for index, line in enumerate(screen_rows)
+                if index > second_prompt_row and "second layout check" in line
+            ),
+            None,
         )
+        assert second_response_row is not None, "\n".join(screen_rows)
         assert second_response_row == second_prompt_row + 2
         assert second_response_row < len(screen_rows) - 2
         transcript = visible_text(session.visible_transcript)

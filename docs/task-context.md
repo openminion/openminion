@@ -152,9 +152,9 @@ include a serialized-size fallback even when an adapter estimator fails or
 underestimates. This is still a heuristic, not an exact provider tokenizer,
 image-token calculation or a model-context-window guarantee.
 
-A fitting task request gets an explicit output cap bounded by the estimated
-remaining allowance. If none was requested, the task guard allocates up to 2,000
-output tokens; callers can request a larger allowance explicitly. If input alone
+A fitting task request retains an explicitly requested output cap, bounded by
+the estimated remaining allowance. An unset output cap remains unset, leaving
+defaults and configured limits to the existing LLM/profile budget owner. If input alone
 does not fit, no provider request is sent and the owner returns waiting_user,
 keeping the current task. The guard also applies to the first entry request, before a task snapshot
 exists. Runtime users that do not attach a budget state retain their previous
@@ -211,9 +211,11 @@ inside a tool call/result pair. The current input remains verbatim with its
 content parts when available. This preserves transcript validity and avoids
 presenting old file effects as if they followed the newest user restriction.
 
-Limitations: key/intent interpretation remains model work. Lookup is a bounded
-journal scan, not indexed semantic search. Catalogs cap at 32 keys and value lists
-at eight entries, with explicit truncation. Raw conversation messages without an
+Limitations: key/intent interpretation remains model work. Lookup scans the full
+committed journal chain; stored-history reads and scan cost are not bounded.
+It is not indexed semantic search. Lookup rounds are capped at three per entry
+decision, catalogs at 32 keys and value lists at eight entries, with explicit
+result truncation. Raw conversation messages without an
 accepted task-condition projection are not automatically recovered as structured
 conditions. There is no distributed multi-worker CAS, and prior external side
 effects cannot be rolled back by restoring conditions.

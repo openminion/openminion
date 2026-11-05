@@ -2,8 +2,12 @@
 
 import pytest
 
-from openminion.modules.brain.loop.context.task_context import input_digest, updated_task_context
+from openminion.modules.brain.loop.context.task_context import (
+    input_digest,
+    updated_task_context,
+)
 from tests.brain.test_resolved_task_context import delta
+
 
 def test_anaphoric_reaffirmation_keeps_its_rule_after_twenty_more_updates():
     from openminion.modules.brain.loop.context.task_context import task_context_message
@@ -11,22 +15,34 @@ def test_anaphoric_reaffirmation_keeps_its_rule_after_twenty_more_updates():
     first = "Process BATCH-ALPHA, excluding archived rows. Write JSON."
     task = updated_task_context(
         None,
-        delta(0, first, operation="start", objective="Process BATCH-ALPHA",
-              conditions=[("exclude_archived", "excluding archived rows"),
-                          ("format", "Write JSON")]),
+        delta(
+            0,
+            first,
+            operation="start",
+            objective="Process BATCH-ALPHA",
+            conditions=[
+                ("exclude_archived", "excluding archived rows"),
+                ("format", "Write JSON"),
+            ],
+        ),
         user_input=first,
     )
     latest = "Use BATCH-BETA. Keep the exclusion rule."
     task = updated_task_context(
         task,
-        delta(1, latest, objective="Process BATCH-BETA",
-              conditions=[("exclude_archived", "Keep the exclusion rule")]),
+        delta(
+            1,
+            latest,
+            objective="Process BATCH-BETA",
+            conditions=[("exclude_archived", "Keep the exclusion rule")],
+        ),
         user_input=latest,
     )
     for i in range(20):
         text = f"field_{i}=VALUE_{i}"
         task = updated_task_context(
-            task, delta(task.revision, text, conditions=[(f"field_{i}", text)]),
+            task,
+            delta(task.revision, text, conditions=[(f"field_{i}", text)]),
             user_input=text,
         )
     evidence = task.condition_history["exclude_archived"]
@@ -57,7 +73,8 @@ def test_condition_history_keeps_answer_context_and_follows_its_owner():
     )
     assert not removed.condition_history and not removed.condition_questions
     replaced = updated_task_context(
-        task, delta(3, "New task", operation="replace", objective="New task"),
+        task,
+        delta(3, "New task", operation="replace", objective="New task"),
         user_input="New task",
     )
     assert not replaced.condition_history and not replaced.conditions
@@ -66,15 +83,23 @@ def test_condition_history_keeps_answer_context_and_follows_its_owner():
 def test_condition_history_overflow_rejects_without_mutating_prior_state():
     first = "x" * 1000
     task = updated_task_context(
-        None, delta(0, first, operation="start", objective="Compare",
-                    conditions=[("condition", first)]), user_input=first
+        None,
+        delta(
+            0,
+            first,
+            operation="start",
+            objective="Compare",
+            conditions=[("condition", first)],
+        ),
+        user_input=first,
     )
     for i in range(20):
         text = str(i) + "x" * 999
         before = task.model_dump()
         try:
             task = updated_task_context(
-                task, delta(task.revision, text, conditions=[("condition", text)]),
+                task,
+                delta(task.revision, text, conditions=[("condition", text)]),
                 user_input=text,
             )
         except ValueError:

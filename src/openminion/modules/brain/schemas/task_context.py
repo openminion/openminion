@@ -37,7 +37,9 @@ class TaskConditionRestore(BaseModel):
 class TaskContextUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    operation: Literal["start", "update", "replace", "cancel", "pause", "complete", "resume"]
+    operation: Literal[
+        "start", "update", "replace", "cancel", "pause", "complete", "resume"
+    ]
     expected_revision: int = Field(ge=0)
     user_quote: str = Field(min_length=1, max_length=2048)
     objective: str | None = Field(
@@ -50,10 +52,13 @@ class TaskContextUpdate(BaseModel):
     remove_conditions: list[str] = Field(default_factory=list, max_length=128)
     target_task_id: str | None = Field(default=None, min_length=1, max_length=64)
     target_revision: int | None = Field(default=None, ge=1)
-    conversation_scope_quote: str | None = Field(default=None, min_length=1, max_length=2048)
+    conversation_scope_quote: str | None = Field(
+        default=None, min_length=1, max_length=2048
+    )
     history_revisions: list[int] = Field(default_factory=list, max_length=8)
-    restore_conditions: list[TaskConditionRestore] = Field(default_factory=list, max_length=16)
-
+    restore_conditions: list[TaskConditionRestore] = Field(
+        default_factory=list, max_length=16
+    )
 
 
 class TaskConditionEvidence(BaseModel):
@@ -68,10 +73,16 @@ class ResolvedTaskContext(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     revision: int = Field(ge=1)
-    task_id: str = Field(default_factory=lambda: uuid4().hex, min_length=1, max_length=64)
+    task_id: str = Field(
+        default_factory=lambda: uuid4().hex, min_length=1, max_length=64
+    )
     lifecycle: Literal["active", "paused", "completed", "cancelled"] = "active"
-    condition_owners: dict[str, TaskConditionOwner] = Field(default_factory=dict, max_length=128)
-    subtasks: dict[str, Literal["pending", "active", "completed", "cancelled"]] = Field(default_factory=dict, max_length=128)
+    condition_owners: dict[str, TaskConditionOwner] = Field(
+        default_factory=dict, max_length=128
+    )
+    subtasks: dict[str, Literal["pending", "active", "completed", "cancelled"]] = Field(
+        default_factory=dict, max_length=128
+    )
     restored_from: dict[str, int] = Field(default_factory=dict, max_length=128)
     history_available: bool = False
     history_context: dict[str, str] = Field(default_factory=dict, max_length=8)
@@ -87,7 +98,9 @@ class ResolvedTaskContext(BaseModel):
 
     @model_validator(mode="after")
     def bounded_state(self) -> "ResolvedTaskContext":
-        if set(self.restored_from) - set(self.conditions) or any(value < 1 for value in self.restored_from.values()):
+        if set(self.restored_from) - set(self.conditions) or any(
+            value < 1 for value in self.restored_from.values()
+        ):
             raise ValueError("Invalid historical restoration provenance")
         if set(self.condition_owners) - set(self.conditions):
             raise ValueError("Condition owner has no condition")
@@ -97,7 +110,9 @@ class ResolvedTaskContext(BaseModel):
             if owner.scope != "subtask" and owner.owner_id is not None:
                 raise ValueError("Only subtask conditions take an explicit owner id")
         size = sum(len(key) + len(value) for key, value in self.history_context.items())
-        size += sum(len(owner.scope_quote or "") for owner in self.condition_owners.values())
+        size += sum(
+            len(owner.scope_quote or "") for owner in self.condition_owners.values()
+        )
         size += len(self.objective) + sum(
             len(key) + len(value) for key, value in self.conditions.items()
         )

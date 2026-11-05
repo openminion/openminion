@@ -14,10 +14,10 @@ src/openminion/modules/brain/bootstrap/skill/selection.py	_select_skills_with_ll
 src/openminion/modules/brain/config.py	RunnerOptions.__post_init__	134	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/adaptive/finalization.py	ActLoopFinalizationMixin._finalize_success	293	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/adaptive/finalization.py	ActLoopFinalizationMixin._result_from_outcome	290	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/brain/loop/adaptive/modes.py	ActLoopMode.execute	253	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/modules/brain/loop/adaptive/modes.py	ActLoopMode.execute	248	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/adaptive/seeded.py	ActLoopSeededMixin._execute_seeded_commands	109	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/adaptive/seeded.py	ActLoopSeededMixin._finalize_seeded_success	146	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/brain/loop/orchestration.py	decide	606	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/modules/brain/loop/orchestration.py	decide	604	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/recursive/generation.py	generate	414	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/strategies/coding/results.py	_result_from_outcome	192	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/strategies/research/handler.py	ResearchMode.execute	146	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes

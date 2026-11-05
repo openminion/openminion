@@ -3,7 +3,9 @@
 from typing import Any, cast
 
 
-def merge_task_definitions(schema: dict[str, Any], update: dict[str, Any]) -> dict[str, Any]:
+def merge_task_definitions(
+    schema: dict[str, Any], update: dict[str, Any]
+) -> dict[str, Any]:
     definitions = dict(schema.get("$defs") or {})
     generated = update.pop("$defs", {})
     occupied = set(definitions) | set(generated)
@@ -36,6 +38,6 @@ def _rewrite_refs(value: Any, refs: dict[str, str]) -> Any:
     if isinstance(ref, str):
         for original, replacement in refs.items():
             if ref == original or ref.startswith(original + "/"):
-                result["$ref"] = replacement + ref[len(original):]
+                result["$ref"] = replacement + ref[len(original) :]
                 break
     return result

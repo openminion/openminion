@@ -1714,7 +1714,9 @@ class RunnerDecisionTests(unittest.TestCase):
                 options=RunnerOptions(reflection_enabled=True),
             )
 
-    def test_decide_rejects_underestimated_tool_request_before_provider_call(self) -> None:
+    def test_decide_rejects_underestimated_tool_request_before_provider_call(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             session = LocalSessionStore(root / "sessions")

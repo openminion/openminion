@@ -20,9 +20,6 @@ from openminion.modules.brain.bootstrap.recovery import (
     heuristic_decision,
 )
 from openminion.modules.brain.execution.delegation import _runner_delegate
-from openminion.modules.brain.loop.tools.runtime import (
-    DefaultAdaptiveToolLoopLLMRuntime,
-)
 from openminion.modules.llm.client_call import (
     response_cost_payload,
     response_telemetry_event_fields,
@@ -77,7 +74,12 @@ from .context.task_entry import (
 
 from .context.task_context import TaskContextBudgetError
 from .context.task_lookup import TaskHistoryEntryRuntime
-from .context.task_entry import task_budget_entry_decision, emit_entry_identity_audit, debit_entry_response
+from .context.task_entry import (
+    task_budget_entry_decision,
+    emit_entry_identity_audit,
+    debit_entry_response,
+    emit_entry_call_started,
+)
 from .failures import _internal_failure_answer, _provider_failure_error
 from .providers.retry import (
     build_provider_retry_policy,
@@ -576,11 +578,7 @@ def decide(
     if task_error is not None:
         return task_error
 
-    logger.emit(
-        "llm.call.started",
-        {"llm_call_id": llm_call_id, "purpose": "entry", "model": model},
-        trace_id=state.trace_id,
-    )
+    emit_entry_call_started(logger, state, llm_call_id, model)
     _runner_delegate("_track_call_started", runner, llm_call_id, "entry", model)
 
     budget_max_tokens = min(2000, state.budgets_remaining.tokens)
@@ -597,7 +595,7 @@ def decide(
         return task_error
 
     try:
-        runtime = TaskHistoryEntryRuntime(DefaultAdaptiveToolLoopLLMRuntime.from_adapter(runner.llm_api, task_state=state), runner, state, logger, user_input)
+        runtime = TaskHistoryEntryRuntime.from_runner(runner, state, logger, user_input)
     except Exception as exc:  # noqa: BLE001
         _emit_decide_fail_closed_event(
             logger=logger,
@@ -897,7 +895,9 @@ def decide(
         user_input=user_input,
         clarify=last_detection.path == "clarify",
         logger=logger,
-        recovery_only=bool(context.get("task_context_recovery_only")), session_api=runner.session_api, history_reads=runtime.history_reads,
+        recovery_only=bool(context.get("task_context_recovery_only")),
+        session_api=runner.session_api,
+        history_reads=runtime.history_reads,
     )
     if task_error is not None:
         return task_error

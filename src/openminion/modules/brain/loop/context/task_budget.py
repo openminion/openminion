@@ -26,13 +26,16 @@ def task_request_output_limit(
             "The task, messages and tool schemas exceed the remaining token budget. "
             "Split the task or increase its budget before continuing."
         )
-    return min(requested_output if requested_output is not None else 2000, available)
+    # An unset limit belongs to the existing provider/profile output policy.
+    return min(requested_output, available) if requested_output is not None else None
 
 
 def task_budget_execution_result(state: Any, error: Exception) -> Any:
     from openminion.modules.brain.execution.loop_contracts import ExecutionResult
 
-    return ExecutionResult(status="waiting_user", working_state=state, message=str(error))
+    return ExecutionResult(
+        status="waiting_user", working_state=state, message=str(error)
+    )
 
 
 def task_budget_loop_outcome(owner: Any, error: Exception) -> Any:

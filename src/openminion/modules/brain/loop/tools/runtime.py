@@ -575,7 +575,9 @@ def _normalize_runtime_response(
 
 
 class DefaultAdaptiveToolLoopLLMRuntime:
-    def __init__(self, llm_client: Any, *, task_state: Any = None, adapter: Any = None) -> None:
+    def __init__(
+        self, llm_client: Any, *, task_state: Any = None, adapter: Any = None
+    ) -> None:
         self._client = llm_client
         self._task_state = task_state
         self._budget_adapter = adapter
@@ -584,7 +586,9 @@ class DefaultAdaptiveToolLoopLLMRuntime:
         ) and callable(getattr(llm_client, "call", None))
 
     @classmethod
-    def from_adapter(cls, llm_adapter: Any, *, task_state: Any = None) -> "DefaultAdaptiveToolLoopLLMRuntime":
+    def from_adapter(
+        cls, llm_adapter: Any, *, task_state: Any = None
+    ) -> "DefaultAdaptiveToolLoopLLMRuntime":
         client = _unwrap_llm_client(llm_adapter)
         if client is None:
             raise AdaptiveToolLoopRuntimeUnavailableError(
@@ -605,8 +609,12 @@ class DefaultAdaptiveToolLoopLLMRuntime:
         metadata: dict[str, Any] | None = None,
     ) -> LLMResponse:
         max_output_tokens = task_request_output_limit(
-            self._task_state, self._budget_adapter, messages=messages, tools=tools,
-            model=model, requested_output=max_output_tokens,
+            self._task_state,
+            self._budget_adapter,
+            messages=messages,
+            tools=tools,
+            model=model,
+            requested_output=max_output_tokens,
         )
         if self._use_call_path:
             request = _build_llm_request(

@@ -40,6 +40,7 @@ def reconcile_pending_jobs(
     logger: CanonicalEventLogger,
 ) -> Any:
     from ...task_binding import discard_stale_jobs
+
     discard_stale_jobs(state)
     if state.status != BRAIN_STATE_JOB_PENDING or not state.pending_jobs:
         return None
@@ -282,6 +283,7 @@ def _handle_completed_plan(
     )
     if disposition == BRAIN_DISPOSITION_CLOSE:
         from ...task_binding import complete_task
+
         complete_task(state)
         extract_success_memories(
             runner,

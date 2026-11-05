@@ -133,24 +133,38 @@ def updated_task_context(
     if not patch.user_quote.strip() or patch.user_quote not in user_input:
         raise ValueError("Task update must quote the latest user input")
     if patch.operation in {"cancel", "pause", "complete"}:
-        if patch.objective or patch.set_conditions or patch.remove_conditions or patch.restore_conditions:
-            raise ValueError("A lifecycle transition cannot also modify task conditions")
+        if (
+            patch.objective
+            or patch.set_conditions
+            or patch.remove_conditions
+            or patch.restore_conditions
+        ):
+            raise ValueError(
+                "A lifecycle transition cannot also modify task conditions"
+            )
         if patch.operation == "cancel":
             return None
         if current is None:
             raise ValueError("Cannot transition an absent task")
-        return current.model_copy(update={
-            "revision": revision + 1,
-            "lifecycle": "paused" if patch.operation == "pause" else "completed",
-            "consumed_input": input_digest(user_input),
-        })
+        return current.model_copy(
+            update={
+                "revision": revision + 1,
+                "lifecycle": "paused" if patch.operation == "pause" else "completed",
+                "consumed_input": input_digest(user_input),
+            }
+        )
     if patch.operation == "resume":
         raise ValueError("Task restoration requires its workspace owner")
     if patch.operation == "start" and current is not None:
         raise ValueError("Use replace to start a new task when one is present")
     if patch.operation == "update" and current is None:
         raise ValueError("Cannot update an absent task")
-    if patch.operation == "update" and current is not None and current.objective_kind == "verbatim" and not patch.objective:
+    if (
+        patch.operation == "update"
+        and current is not None
+        and current.objective_kind == "verbatim"
+        and not patch.objective
+    ):
         raise ValueError("A verbatim first request requires a resolved objective")
     is_new = patch.operation in {"start", "replace"}
     if is_new and not patch.objective:
@@ -160,18 +174,35 @@ def updated_task_context(
     subtasks = {} if is_new or current is None else dict(current.subtasks)
     subtasks.update(known_subtasks or {})
     data = apply_condition_delta(
-        current, patch, user_input=user_input, question=clarification_question,
-        digest=input_digest(user_input), subtasks=subtasks, retain_history=retain_history,
+        current,
+        patch,
+        user_input=user_input,
+        question=clarification_question,
+        digest=input_digest(user_input),
+        subtasks=subtasks,
+        retain_history=retain_history,
     )
-    changed = bool(patch.set_conditions or patch.remove_conditions or (patch.objective and current is not None and patch.objective != current.objective))
+    changed = bool(
+        patch.set_conditions
+        or patch.remove_conditions
+        or (
+            patch.objective
+            and current is not None
+            and patch.objective != current.objective
+        )
+    )
     return ResolvedTaskContext(
         revision=revision + 1,
         task_id=uuid4().hex if is_new or current is None else current.task_id,
-        lifecycle="active" if is_new or current is None or changed else current.lifecycle,
+        lifecycle="active"
+        if is_new or current is None or changed
+        else current.lifecycle,
         subtasks=subtasks,
         objective=patch.objective or (current.objective if current else ""),
         consumed_input=input_digest(user_input),
-        history_available=current.history_available if current and not is_new else False,
+        history_available=current.history_available
+        if current and not is_new
+        else False,
         **data,
     )
 
@@ -186,16 +217,38 @@ def task_context_message(task: ResolvedTaskContext) -> Message:
                 "revision": task.revision,
                 "task_id": task.task_id,
                 "lifecycle": task.lifecycle,
-                "condition_owners": {key: owner.model_dump(exclude_none=True) for key, owner in task.condition_owners.items() if key in visible},
+                "condition_owners": {
+                    key: owner.model_dump(exclude_none=True)
+                    for key, owner in task.condition_owners.items()
+                    if key in visible
+                },
                 "subtasks": task.subtasks,
                 "history_available": task.history_available,
-                "restored_from": {key: value for key, value in task.restored_from.items() if key in visible},
+                "restored_from": {
+                    key: value
+                    for key, value in task.restored_from.items()
+                    if key in visible
+                },
                 "history_context": task.history_context,
                 "objective": task.objective,
                 "objective_kind": task.objective_kind,
-                "conditions": {key: value for key, value in task.conditions.items() if key in visible},
-                "answer_context": {key: value for key, value in task.condition_questions.items() if key in visible},
-                **history_fields({key: items for key, items in task.condition_history.items() if key in visible}),
+                "conditions": {
+                    key: value
+                    for key, value in task.conditions.items()
+                    if key in visible
+                },
+                "answer_context": {
+                    key: value
+                    for key, value in task.condition_questions.items()
+                    if key in visible
+                },
+                **history_fields(
+                    {
+                        key: items
+                        for key, items in task.condition_history.items()
+                        if key in visible
+                    }
+                ),
             },
             ensure_ascii=False,
             separators=(",", ":"),
@@ -266,11 +319,24 @@ def resolve_entry_task_update(
     pending = getattr(state, "pending_llm_clarify_context", None)
     question = str(getattr(pending, "clarify_question", "") or "")
     result = updated_task_context(
-        active, patches[0], user_input=str(user_input), clarification_question=question,
-        known_subtasks=known_subtasks, retain_history=retain_history, allow_restore=allow_restore
+        active,
+        patches[0],
+        user_input=str(user_input),
+        clarification_question=question,
+        known_subtasks=known_subtasks,
+        retain_history=retain_history,
+        allow_restore=allow_restore,
     )
-    if (result is None or (isinstance(raw_patch, dict) and raw_patch.get("operation") in {"pause", "complete"})) and (len(calls) != 1 or calls[0].name != "respond"):
-        raise ValueError("A cancelled or paused/completed request must respond without executing tools")
+    if (
+        result is None
+        or (
+            isinstance(raw_patch, dict)
+            and raw_patch.get("operation") in {"pause", "complete"}
+        )
+    ) and (len(calls) != 1 or calls[0].name != "respond"):
+        raise ValueError(
+            "A cancelled or paused/completed request must respond without executing tools"
+        )
     for call in calls:
         if TASK_UPDATE_FIELD in call.arguments:
             call.raw_arguments = None

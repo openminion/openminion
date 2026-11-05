@@ -120,6 +120,19 @@ def _seed_requests_inactive_tool(seed_response: Any) -> bool:
     )
 
 
+def _runtime_unavailable_result(
+    ctx: ExecutionContext, error: Exception
+) -> ExecutionResult:
+    return ExecutionResult(
+        status=BRAIN_STATE_ERROR,
+        working_state=ctx.state,
+        message=str(error),
+        action_result=_build_error_result(
+            str(error), "act_adaptive_runtime_unavailable"
+        ),
+    )
+
+
 def _tool_result_scratchpad(runner: Any) -> dict[str, Any]:
     return {
         "telemetry.structural_tool_results": bool(
@@ -295,14 +308,7 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
                 },
             )
             return ModePreparation(
-                mode_result=ExecutionResult(
-                    status=BRAIN_STATE_ERROR,
-                    working_state=ctx.state,
-                    message=str(exc),
-                    action_result=_build_error_result(
-                        str(exc), "act_adaptive_runtime_unavailable"
-                    ),
-                ),
+                mode_result=_runtime_unavailable_result(ctx, exc),
                 consume_user_input_for_command=False,
             )
 
@@ -340,16 +346,11 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
         if self._seeded_commands(ctx):
             return self._execute_seeded_commands(ctx)
         try:
-            runtime = DefaultAdaptiveToolLoopLLMRuntime.from_adapter(ctx.llm_adapter, task_state=ctx.state)
-        except AdaptiveToolLoopRuntimeUnavailableError as exc:
-            return ExecutionResult(
-                status=BRAIN_STATE_ERROR,
-                working_state=ctx.state,
-                message=str(exc),
-                action_result=_build_error_result(
-                    str(exc), "act_adaptive_runtime_unavailable"
-                ),
+            runtime = DefaultAdaptiveToolLoopLLMRuntime.from_adapter(
+                ctx.llm_adapter, task_state=ctx.state
             )
+        except AdaptiveToolLoopRuntimeUnavailableError as exc:
+            return _runtime_unavailable_result(ctx, exc)
         if not ctx.state.intent_execution_states and ctx.state.decision_sub_intent_refs:
             ctx.state.intent_execution_states = build_intent_execution_states(
                 ctx.state.decision_sub_intent_refs,

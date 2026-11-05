@@ -30,7 +30,11 @@ def execution_task_text(ctx: Any) -> str:
     inherited = getattr(state, "inherited_task_conditions", {})
     if inherited:
         import json
-        task_text += "\nINHERITED USER CONDITIONS (applicable to this subtask):\n" + json.dumps(inherited, ensure_ascii=False)
+
+        task_text += (
+            "\nINHERITED USER CONDITIONS (applicable to this subtask):\n"
+            + json.dumps(inherited, ensure_ascii=False)
+        )
     return task_text
 
 

@@ -400,6 +400,7 @@ def build_child_state(
 ) -> WorkingState:
     child_state = parent_state.model_copy(deep=True)
     from ..task_binding import inherit_child_task
+
     inherit_child_task(child_state, parent_state, child_context.task_subtask_id)
     child_state.trace_id = new_uuid()
     child_state.goal = child_context.goal
@@ -573,7 +574,10 @@ class SummaryInheritancePolicy(ContextInheritancePolicy):
     ) -> ChildContext:
         summary_parts: list[str] = []
         from ..task_binding import parent_task_background
-        goal = parent_task_background(parent_state, getattr(subtask, "subtask_id", "__unassigned__")).strip()
+
+        goal = parent_task_background(
+            parent_state, getattr(subtask, "subtask_id", "__unassigned__")
+        ).strip()
         if goal:
             summary_parts.append(f"Parent goal: {goal}")
         last_result = getattr(parent_state, "last_result", None)
