@@ -189,7 +189,9 @@ def _tool_result_resolution_metadata(data: dict[str, Any]) -> dict[str, str]:
     }
 
 
-def _tool_result_payload_entry(item: Any) -> dict[str, Any]:
+def _tool_result_payload_entry(
+    item: Any, *, threshold_chars: int = TOOL_OUTPUT_FRAME_THRESHOLD_CHARS
+) -> dict[str, Any]:
     data = getattr(item, "data", {}) or {}
     entry_data = data if isinstance(data, dict) else {}
     entry_chain = entry_data.get("runtime_fallback_chain", []) or []
@@ -201,6 +203,7 @@ def _tool_result_payload_entry(item: Any) -> dict[str, Any]:
     content, output_frame = _tool_output_content_and_frame(
         content=str(getattr(item, "content", "") or ""),
         data=entry_data,
+        threshold_chars=threshold_chars,
     )
     payload_entry = {
         "id": str(getattr(item, "call_id", "") or ""),
@@ -927,7 +930,11 @@ class AgentService(AgentTurnFlowMixin):
         self, *, batch: Any, tool_calls_count: int
     ) -> dict[str, str]:
         results = list(getattr(batch, "results", []) or [])
-        tool_results_payload = [_tool_result_payload_entry(item) for item in results]
+        threshold_chars = self._config.runtime.agent_loop_tool_result_max_chars
+        tool_results_payload = [
+            _tool_result_payload_entry(item, threshold_chars=threshold_chars)
+            for item in results
+        ]
         resolution_metadata = self._empty_tool_resolution_metadata()
         for item in results:
             data = getattr(item, "data", {}) or {}

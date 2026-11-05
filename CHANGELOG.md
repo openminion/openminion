@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Honour `runtime.agent_loop_tool_result_max_chars`: the setting was declared and
+  range-checked but never read, so inline tool output was always framed at the
+  hardcoded 8192-character threshold. The configured value now drives it, so the
+  4000 default takes effect for existing configurations; raise the setting to 8192
+  to keep the previous threshold (Refs #604).
+
 - Reconcile research child budget consumption before allocating the next pass,
   and include their terminal tool results in the turn's tool/error statistics.
   Preserve isolated child state and settle consumption on partial, failed and

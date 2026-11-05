@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from openminion.base.config import OpenMinionConfig
 from openminion.base.types import Message
 from openminion.modules.llm.providers.envelope_v2 import CONTRACT_VERSION_V2
 from openminion.services.agent.execution.flow import _unavailable_response
@@ -144,6 +145,7 @@ class CrossFileConstantIdentityTests(unittest.TestCase):
 class BehavioralEmissionTests(unittest.TestCase):
     def test_tool_turn_metadata_builders_emit_shared_contract_version(self) -> None:
         service = AgentService.__new__(AgentService)
+        service._config = OpenMinionConfig()
         batch = SimpleNamespace(
             results=[
                 SimpleNamespace(
