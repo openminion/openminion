@@ -1,11 +1,7 @@
-"""Persistence of the turn evidence kept on the working state (#419).
+"""Turn evidence on the working state survives `save_state` and `load_or_init_state`.
 
-The working state keeps the action result handed to a same-turn continuation
-together with the turn's trace id (`turn_evidence`, `turn_evidence_trace_id`).
-The brain saves the working state with `save_state`
-(`WorkingState.model_dump(mode="json")`) and reads it back with
-`load_or_init_state` (`WorkingState.model_validate`), through the runtime's
-SQLite session store or the local session store. Each test runs on both.
+Each test runs on the runtime's SQLite session store and on the local session
+store.
 """
 
 from __future__ import annotations

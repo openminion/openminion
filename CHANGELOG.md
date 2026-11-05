@@ -14,6 +14,11 @@ This file tracks package-facing release notes for `openminion`.
   Whole-turn LLM response reporting continues to use the existing canonical
   event projection introduced by #596 (Refs #531, Refs #542).
 
+- Document `file.read`'s numeric arguments (character offset, default and maximum
+  length) and return `next_offset` plus a continuation hint when a read is
+  truncated, so following a large file no longer means deriving the window by hand
+  (Refs #605).
+
 - Retain a completed research child's answer ahead of raw tool-output prefixes,
   with the existing source URLs and evidence references. Use a successful
   action summary when the completed message is empty and usable tool evidence
@@ -34,10 +39,9 @@ This file tracks package-facing release notes for `openminion`.
   its own `--session` with a default, which overwrote the root value so
   `openminion --session <id> run ...` silently ran in `cli-run` (Refs #593).
 
-- Document `file.read`'s numeric arguments (character offset, default and maximum
-  length) and return `next_offset` plus a continuation hint when a read is
-  truncated, so following a large file no longer means deriving the window by hand
-  (Refs #605).
+- Describe `--dir` accurately: it selects the interactive workspace and the
+  one-shot `run` tool root, and the root-option form must precede the command
+  (Refs #594).
 
 ## Current package line - 2026-11-04
 

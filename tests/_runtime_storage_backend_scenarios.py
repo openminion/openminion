@@ -1,13 +1,8 @@
-"""Runtime start, room path and wrapper on either runtime storage backend (#437).
+"""Runtime start, room and wrapper scenarios shared by the SQLite and PostgreSQL tests.
 
-The SQLite tests and the PostgreSQL tests build the same echo-agent runtime
-home and differ only in the `storage` section. The contract:
-
-- `APIRuntime` starts and closes with either record backend;
-- `storage_connection`, and the compatibility wrapper's `storage`, are the
-  SQLite handle of the runtime record store, and `None` for other backends;
-- `openminion room create` writes the room through `runtime.sessions`, so the
-  room and its participant rows are in the configured record store.
+Both build the same echo-agent runtime home and differ only in its `storage`
+section. `storage_connection` and the wrapper's `storage` are the SQLite handle
+of the record store, and `None` for other backends.
 """
 
 from __future__ import annotations

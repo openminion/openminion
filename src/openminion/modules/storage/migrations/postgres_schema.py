@@ -1,28 +1,11 @@
-"""PostgreSQL schema selection for runtime storage and module stores (#446).
+"""PostgreSQL schema selection for runtime storage and module stores.
 
-Runtime storage and every module used to write into the one schema the configured URL selects, so
-they shared ``alembic_version`` and ``om_meta`` and adopted each other's tables through
-``CREATE TABLE IF NOT EXISTS``. Now:
-
-- runtime storage keeps that base schema, ``current_schema()`` of the configured URL;
-- each module uses its own schema, ``<base>__<module id>``;
-- a module whose history is already in the base schema keeps using it, with no move and no stamp.
-
-The evidence is an owner's ledger together with exact tables. The ledger is the ``migrations``
-rows v1..vk for runtime storage, and for a module ``om_meta.module_id`` with its
-``alembic_version`` row (none at Alembic base), or with ``om_meta.schema_head`` for a store that
-has no Alembic ledger.
-A table belongs to an owner when that owner's ledger is recorded in the schema and a history
-listed for that ledger in ``postgres_histories.json`` has the table with the same columns, types,
-NOT NULL and primary key. An owner's history there is proven when every table of one listed
-history is present, belongs to that owner alone, and the owner has no other table there. A table
-an owner would create or read that is not proven its own is refused before any write; owners
-that use none of the refused table names are not affected. An existing ``<base>__<module id>``
-is used only when it is empty or holds the module's proven history; the storage engine's tables
-there must then have the exact columns this code creates.
-
-The checks read only catalogs and ledger rows, with explicit schema names, in one READ ONLY
-transaction.
+Runtime storage uses the base schema, ``current_schema()`` of the configured URL. Each module uses
+``<base>__<module id>``, or stays in the base schema when its history there is proven: its ledger
+is recorded and its tables match a history in ``postgres_histories.json`` exactly. A table an
+owner would create or read that is not proven its own is refused before any write. The checks
+read only catalogs and ledger rows, with explicit schema names, in one READ ONLY transaction.
+The rules are in "PostgreSQL schemas per owner" in docs/runtime-database-upgrades.md.
 """
 
 from __future__ import annotations
@@ -197,9 +180,6 @@ class ModuleSchema:
         return module_url(configured_url, self.schema)
 
 
-# ---------------------------------------------------------------------------- catalog reads
-
-
 def _quote(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
@@ -362,9 +342,6 @@ def _runtime_rows(
     return tuple((int(r[0]), str(r[1])) for r in rows)
 
 
-# ---------------------------------------------------------------------------- evidence
-
-
 def _name(owner: str) -> str:
     return "runtime storage" if owner == RUNTIME else owner
 
@@ -476,9 +453,6 @@ def _facts(
     if len(facts) == 1 and listed:
         facts.append(f"its tables are not one listed {name} {ledger} history")
     return "; ".join(facts)
-
-
-# ---------------------------------------------------------------------------- decisions
 
 
 def runtime_refusal(layout: SchemaLayout) -> str | None:
@@ -769,9 +743,6 @@ def check_module_connection(engine: Engine, module_id: str) -> ModuleSchema:
     if refusal is None:
         return ModuleSchema(module_id, name, name, ledger=ledger)
     raise SchemaOwnershipError(refusal)
-
-
-# ---------------------------------------------------------------------------- connections
 
 
 def module_url(url: str, schema: str) -> str:
