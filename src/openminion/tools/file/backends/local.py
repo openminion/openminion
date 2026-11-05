@@ -1,8 +1,11 @@
+"""Local file operations with guarded replacement on an open file descriptor."""
+
 import fnmatch
 import errno
 import os
 import stat
 from pathlib import Path
+from types import ModuleType
 from typing import Callable, cast
 
 from openminion.modules.tool.contracts.schemas import ErrorCode
@@ -26,7 +29,32 @@ from .protocol import (
     WriteResult,
 )
 from .searching import compile_line_matcher, search_snippet
-from .text import edit_content, encode_text, select_range
+from .text import (
+    check_replacement_precondition,
+    edit_content,
+    encode_text,
+    select_range,
+)
+
+fcntl: ModuleType | None
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+
+
+def _file_version(stat_result: os.stat_result) -> str:
+    return ":".join(
+        str(value)
+        for value in (
+            stat_result.st_dev,
+            stat_result.st_ino,
+            stat_result.st_size,
+            stat_result.st_mtime_ns,
+            stat_result.st_ctime_ns,
+        )
+    )
+
 
 _LEGACY_ERROR_CODE = cast(ErrorCode, "ERROR")
 _SEARCH_PRUNED_DIRS = frozenset(
@@ -154,6 +182,7 @@ class LocalStorageBackend:
             fd = self._open_leaf_no_symlink(target, flags=os.O_RDONLY)
             with os.fdopen(fd, "r", encoding="utf-8") as handle:
                 content = handle.read()
+                version = _file_version(os.fstat(handle.fileno()))
         except UnicodeDecodeError as exc:
             raise ToolRuntimeError(
                 "INVALID_ARGUMENT", "file is not text-encoded"
@@ -189,6 +218,7 @@ class LocalStorageBackend:
             total_length=total_length,
             returned_length=len(content),
             truncated=truncated,
+            version=version,
         )
 
     def read_range(
@@ -221,22 +251,29 @@ class LocalStorageBackend:
         *,
         append: bool = False,
         create_dirs: bool = True,
+        expected_content_sha256: str | None = None,
+        expected_version: str | None = None,
     ) -> WriteResult:
         target = Path(path)
         encoded = encode_text(content)
 
         try:
+            if (
+                expected_content_sha256 is not None or expected_version is not None
+            ) and not target.exists():
+                raise ToolRuntimeError("NOT_FOUND", "file disappeared since readback")
             if create_dirs:
                 target.parent.mkdir(parents=True, exist_ok=True)
             elif not target.parent.exists():
                 raise ToolRuntimeError("NOT_FOUND", "parent directory does not exist")
 
-            flags = os.O_WRONLY | os.O_CREAT
-            flags |= os.O_APPEND if append else os.O_TRUNC
-            fd = self._open_leaf_no_symlink(target, flags=flags)
-            mode = "ab" if append else "wb"
-            with os.fdopen(fd, mode) as handle:
-                handle.write(encoded)
+            self._write_content(
+                target,
+                encoded,
+                append=append,
+                expected_content_sha256=expected_content_sha256,
+                expected_version=expected_version,
+            )
         except PermissionError as exc:
             raise ToolRuntimeError("POLICY_DENIED", "permission denied") from exc
         except OSError as exc:
@@ -255,6 +292,53 @@ class LocalStorageBackend:
             bytes_written=len(encoded),
             mode="append" if append else "write",
         )
+
+    def _write_content(
+        self,
+        target: Path,
+        encoded: bytes,
+        *,
+        append: bool,
+        expected_content_sha256: str | None,
+        expected_version: str | None,
+    ) -> None:
+        guarded = expected_content_sha256 is not None or expected_version is not None
+        if guarded and append:
+            raise ToolRuntimeError(
+                "INVALID_ARGUMENT", "conditional append is not supported"
+            )
+        if guarded and fcntl is None:
+            raise ToolRuntimeError(
+                "PLATFORM_UNSUPPORTED", "conditional replacement requires file locking"
+            )
+        flags = os.O_RDWR if guarded else os.O_WRONLY | os.O_CREAT
+        fd = self._open_leaf_no_symlink(
+            target, flags=flags | (os.O_APPEND if append else 0)
+        )
+        with os.fdopen(fd, "r+b" if guarded else "wb") as handle:
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            if guarded:
+                observed = (
+                    handle.read()
+                    .decode("utf-8")
+                    .replace("\r\n", "\n")
+                    .replace("\r", "\n")
+                )
+                check_replacement_precondition(observed, expected_content_sha256)
+                current = os.fstat(handle.fileno())
+                if (
+                    expected_version is not None
+                    and _file_version(current) != expected_version
+                    or current.st_ino != target.stat(follow_symlinks=False).st_ino
+                ):
+                    raise ToolRuntimeError(
+                        "PRECONDITION_FAILED", "file version changed since readback"
+                    )
+                handle.seek(0)
+            if not append:
+                handle.truncate(0)
+            handle.write(encoded)
 
     def find(
         self,

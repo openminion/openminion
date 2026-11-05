@@ -1,3 +1,4 @@
+import hashlib
 import re
 from collections.abc import Iterable
 from typing import cast
@@ -78,3 +79,13 @@ def select_range(
         total,
         truncated,
     )
+
+
+def check_replacement_precondition(content: str, expected_digest: str | None) -> None:
+    if (
+        expected_digest is not None
+        and hashlib.sha256(encode_text(content)).hexdigest() != expected_digest
+    ):
+        raise ToolRuntimeError(
+            "PRECONDITION_FAILED", "file content changed since readback"
+        )

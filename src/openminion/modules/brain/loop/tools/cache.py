@@ -1,3 +1,5 @@
+"""Cache completed read results within one adaptive loop."""
+
 from __future__ import annotations
 
 import hashlib
@@ -64,6 +66,12 @@ class LoopCache:
 
     def put(self, tool_name: str, args: dict[str, Any], result: Any) -> None:
         if tool_name not in _READ_CACHEABLE_TOOLS:
+            return
+        action_result = getattr(result, "action_result", None)
+        if (
+            getattr(action_result, "status", None) != "success"
+            or getattr(result, "job", None) is not None
+        ):
             return
         key = _args_hash(tool_name, args)
         self._entries[key] = result

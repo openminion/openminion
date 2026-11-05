@@ -82,7 +82,10 @@ def test_contract_read_matches_shape(tmp_path: Path, backend_kind: str):
 
     result = backend.read(str(workspace / "alpha.txt"), max_chars=4, offset=3)
 
-    assert asdict(result) == {
+    assert (result.version is not None) == (backend_kind == "local")
+    payload = asdict(result)
+    payload.pop("version")
+    assert payload == {
         "content": "defg",
         "total_length": 10,
         "returned_length": 4,

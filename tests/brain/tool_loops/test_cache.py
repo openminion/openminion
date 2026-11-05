@@ -1,15 +1,14 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from openminion.modules.brain.loop.tools.cache import LoopCache
 
 
 def _fake_result(summary: str) -> object:
-    class _R:
-        pass
-
-    r = _R()
-    r.summary = summary  # type: ignore[attr-defined]
-    return r
+    return SimpleNamespace(
+        action_result=SimpleNamespace(status="success", summary=summary), job=None
+    )
 
 
 def test_identical_read_returns_cached_result() -> None:
@@ -114,3 +113,21 @@ def test_hit_miss_counters_accumulate() -> None:
 
     assert cache.hits == 2
     assert cache.misses == 2
+
+
+def test_failed_and_pending_reads_are_not_cached() -> None:
+    for status in ("failed", "timeout", "retry", "blocked", "needs_user"):
+        cache = LoopCache()
+        cache.put(
+            "file.read",
+            {"path": "a"},
+            SimpleNamespace(action_result=SimpleNamespace(status=status), job=None),
+        )
+        assert cache.get("file.read", {"path": "a"}) is None
+    cache = LoopCache()
+    cache.put(
+        "file.read",
+        {"path": "a"},
+        SimpleNamespace(action_result=SimpleNamespace(status="success"), job=object()),
+    )
+    assert cache.get("file.read", {"path": "a"}) is None

@@ -1,3 +1,5 @@
+"""Adaptive loop closure and duplicate dispatch decisions."""
+
 # mypy: disable-error-code="attr-defined,has-type,no-any-return"
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from .contracts import (
     AdaptiveToolLoopOutcome,
 )
 from .duplicate_batch import (
+    _consume_duplicate_redispatch,
     _build_duplicate_batch_answer_only_closure_message,
     _duplicate_batch_recovery_message,
     _duplicate_batch_retry_counts,
@@ -125,7 +128,12 @@ class AdaptiveLoopRunnerClosureMixin:
         tool_calls: list[Any],
         prepared: Any,
     ) -> tuple[bool, AdaptiveToolLoopOutcome | None]:
-        if signature not in set(self.loop_state.seen_signatures):
+        if signature not in set(self.loop_state.seen_signatures) or (
+            self.profile.allow_llm_recovery_after_tool_failure
+            and _consume_duplicate_redispatch(
+                self.loop_state, signature=signature, tool_calls=tool_calls
+            )
+        ):
             return False, None
         if all(
             call.name == PLAN_TOOL_NAME

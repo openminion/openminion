@@ -23,6 +23,7 @@ class ReadResult:
     total_length: int
     returned_length: int
     truncated: bool
+    version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -114,6 +115,8 @@ class StorageBackend(Protocol):
         *,
         append: bool = False,
         create_dirs: bool = True,
+        expected_content_sha256: str | None = None,
+        expected_version: str | None = None,
     ) -> WriteResult: ...
 
     def find(

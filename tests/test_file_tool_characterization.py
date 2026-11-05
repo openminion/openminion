@@ -191,6 +191,7 @@ def test_read_file_returns_content(tmp_path: Path):
 
     result = _h_read_file({"path": "alpha.txt"}, ctx)
 
+    assert isinstance(result.pop("version"), str)
     assert result == {
         "ok": True,
         "path": str(ctx.workspace / "alpha.txt"),
@@ -208,6 +209,7 @@ def test_read_file_applies_offset_and_truncation(tmp_path: Path):
 
     result = _h_read_file({"path": "alpha.txt", "offset": 3, "max_chars": 4}, ctx)
 
+    assert isinstance(result.pop("version"), str)
     assert result == {
         "ok": True,
         "path": str(ctx.workspace / "alpha.txt"),
