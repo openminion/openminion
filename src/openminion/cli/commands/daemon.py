@@ -137,7 +137,15 @@ def daemon_stop(
     pid = read_pid(pid_file)
     if pid is None:
         if daemon_is_reachable(endpoint):
-            print("Daemon appears reachable but no PID file was found.")
+            print(
+                f"Daemon endpoint {endpoint.host}:{endpoint.port} is reachable, but no "
+                f"daemon PID file was found at {pid_file}. No process was signalled."
+            )
+            print(
+                "Run `openminion daemon status --json` to inspect reachability, PID and "
+                "lifecycle state; if the listener is not the daemon for this config, stop "
+                "it manually."
+            )
             return 1
         print("Daemon is not running.")
         return 0

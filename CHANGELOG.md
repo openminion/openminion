@@ -57,6 +57,10 @@ This file tracks package-facing release notes for `openminion`.
   its own `--session` with a default, which overwrote the root value so
   `openminion --session <id> run ...` silently ran in `cli-run` (Refs #593).
 
+- `daemon stop` now names the resolved endpoint and the expected PID-file path when
+  the endpoint answers but no PID file exists, states that nothing was signalled,
+  and still exits 1 instead of a bare reachable-without-PID line (Refs #592).
+
 - Describe `--dir` accurately: it selects the interactive workspace and the
   one-shot `run` tool root, and the root-option form must precede the command
   (Refs #594).
