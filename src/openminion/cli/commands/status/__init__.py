@@ -455,7 +455,7 @@ def _register_status_note_activate_subcommand(
 
 def register(subparsers: StatusSubcommands) -> None:
     status = subparsers.add_parser("status", help="Inspect run/task lifecycle status")
-    status_subcommands = status.add_subparsers(dest="status_command")
+    status_subcommands = status.add_subparsers(dest="status_command", required=True)
 
     _register_status_runs_subcommand(status_subcommands)
     _register_status_run_events_subcommand(status_subcommands)

@@ -31,6 +31,10 @@ This file tracks package-facing release notes for `openminion`.
   exists. Keep partial-child evidence salvage and the 200/800-character prompt
   projections unchanged (Refs #543).
 
+- Require a subcommand for `openminion status` and `openminion service`: a bare
+  group now prints that group's usage and exits 2 instead of falling through to
+  the no-handler interactive/onboarding route (Refs #591).
+
 - Check Focus terminal layout against one screen-and-cursor snapshot so resize
   repaint fragments cannot invalidate an already accepted test frame. Preserve
   the compositor assertions and existing wait limits (Refs #610).
