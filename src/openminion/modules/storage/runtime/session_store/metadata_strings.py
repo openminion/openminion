@@ -1,24 +1,9 @@
-"""String members of each runtime session's metadata (#369).
+"""Rows of `session_metadata_strings`: the top-level string members of session metadata.
 
-`list_sessions(metadata_filter=...)` on PostgreSQL selects the sessions whose
-stored metadata has a top-level member with the filter key whose value is a
-string equal to the filter value. PostgreSQL cannot parse every document
-`metadata_json` stores (`json.dumps` writes NaN and Infinity, and escapes a
-NUL or a lone surrogate), so the store keeps those members in
-`session_metadata_strings`, one row per member, written in the same
-transaction as the session row.
-
-The rows come from the stored `metadata_json` read back with
-`parse_json_object`, the metadata `SessionRecord.metadata` shows. A member is
-kept only when its value is a JSON string; numbers, booleans, null, objects
-and arrays get no row. The member name and value are stored as their JSON
-string text (`json.dumps`: ASCII, no NUL byte), so every string, including a
-NUL, a lone surrogate or non-ASCII text, is stored exactly. The PostgreSQL
-reader compares that text with `COLLATE "C"`, which is a byte comparison;
-`entry_digest` only lets an index find the candidate rows, so a long name or
-value adds no index size limit and two entries with one digest still compare
-in full. SQLite keeps its `json_extract` reader; the rows are maintained there
-too, so both backends store the same facts.
+PostgreSQL metadata filters read these rows because PostgreSQL cannot parse every
+document `metadata_json` stores (NaN, Infinity, an escaped NUL or lone surrogate).
+The rows are written in the session row's transaction on both backends. Filter
+semantics per backend: docs/runtime-database-upgrades.md.
 """
 
 from __future__ import annotations
@@ -45,7 +30,11 @@ _INSERT_CHUNK = 200
 
 
 def encode_member(text: str) -> str:
-    """Return the stored form of a member name or string value: its JSON text."""
+    """Return the stored form of a member name or string value: its JSON text.
+
+    `json.dumps` text is ASCII without a NUL byte, so NUL, lone surrogates and
+    non-ASCII text are stored exactly.
+    """
     return json.dumps(text)
 
 
@@ -81,7 +70,11 @@ def metadata_string_rows(session_id: str, stored_metadata: str) -> list[dict[str
 
 
 def metadata_string_match(key: str, value: str) -> tuple[str, list[str]]:
-    """Return the PostgreSQL condition for one filter and its parameters."""
+    """Return the PostgreSQL condition for one filter and its parameters.
+
+    `COLLATE "C"` compares the JSON texts byte for byte, whatever the database
+    collation; the digest only selects candidate rows.
+    """
     encoded_key = encode_member(key)
     encoded_value = encode_member(value)
     return (

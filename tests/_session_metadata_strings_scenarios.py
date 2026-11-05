@@ -1,12 +1,4 @@
-"""Session metadata string rows, shared by the SQLite and PostgreSQL tests (#369).
-
-`session_metadata_strings` keeps, for each session, the top-level members of
-its stored metadata whose value is a string (see
-`session_store/metadata_strings.py`). These scenarios check that every session
-write keeps the rows equal to the ones derived from the stored
-`metadata_json`, that a failed write leaves both unchanged, that runtime
-migration 15 backfills existing history exactly, and that the PostgreSQL
-filter reads the rows as a literal, bounded top-level string match.
+"""Session metadata string row scenarios shared by the SQLite and PostgreSQL tests.
 
 pytest does not rewrite the assertions of this module, so each check compares
 one result with its expectation and prints both on failure.

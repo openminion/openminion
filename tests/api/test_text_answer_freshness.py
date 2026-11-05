@@ -1,19 +1,9 @@
-"""Text entry answers go through the freshness finalization (#419).
+"""Text entry answers go through the freshness finalization, `final_close_message`.
 
-`Agent(tools=[lookup_order])` runs "Check order A-104" against a scripted
-OpenAI-compatible provider on 127.0.0.1. The freshness classifier's answer
-sets the turn's typed obligations; `lookup_order` returns no dated field.
-
-When an entry step answers in text, the respond route ends the turn with that
-text. It is now finalized by `final_close_message`, the owner that finalizes a
-judge's closing answer: an answer whose evidence meets the obligations is kept
-as it is, and one without the required evidence becomes the existing
-freshness-failure message. On a same-turn continuation the evidence is the
-result the turn's execution handed to the continuation; a result from another
-turn is not evidence. A read-only observer records each call of the existing
-verifier, `verify_freshness_answer`, made by `final_close_message` on the
-respond route, and an entry observer records the obligations each entry step
-leaves on the turn.
+A scripted OpenAI-compatible provider on 127.0.0.1 drives
+`Agent(tools=[lookup_order])`, and `lookup_order` returns no dated field. The
+observers of `verify_freshness_answer` and of each entry step's obligations are
+read-only.
 """
 
 from __future__ import annotations

@@ -1,19 +1,9 @@
-"""Run-status facts of each runtime session event (#352).
+"""Run-status facts of each runtime session event, one `event_run_facts` row each.
 
-The run-status readers in `openminion.modules.task.run` reduce a session's
-events by a few values of each event's payload. The store keeps those values
-in `event_run_facts`, one row per event, written in the same transaction as
-the event, so the readers aggregate them in SQL without parsing
-`payload_json`. Postgres and SQLite do not parse every payload `json.loads`
-reads (NaN, Infinity, an escaped NUL).
-
-The facts come from the payload as the readers see it: the stored
-`payload_json` read back with `row_to_event`. New events and the runtime
-migration 13 backfill both use `event_run_facts`. An id is stored as its JSON
-string (`encode_key`), which is ASCII without NUL, so equality is exact on
-both backends; the readers order runs by the decoded id. The run key is
-indexed through a fixed-length digest, so the index adds no length limit to
-run ids.
+The run-status readers in `openminion.modules.task.run` aggregate these rows in
+SQL instead of parsing `payload_json`, which Postgres and SQLite cannot always
+parse (NaN, Infinity, an escaped NUL). The rows are written in the event's
+transaction from the payload as the readers see it (`row_to_event`).
 """
 
 from __future__ import annotations
@@ -90,7 +80,11 @@ def extract_event_error(payload: Mapping[str, Any]) -> str:
 
 
 def encode_key(value: str) -> str:
-    """Return the stored key of an id: its JSON string, or "" for an empty id."""
+    """Return the stored key of an id: its JSON string, or "" for an empty id.
+
+    JSON text is ASCII without NUL, so equality is exact on both backends; the
+    readers order runs by the decoded id.
+    """
     return json.dumps(value) if value else ""
 
 
@@ -99,7 +93,10 @@ def decode_key(key: str) -> str:
 
 
 def key_digest(key: str) -> str:
-    """Return the indexed digest of a key: 16 hex characters, or "" for none."""
+    """Return the indexed digest of a key: 16 hex characters, or "" for none.
+
+    The fixed length keeps the index from limiting the length of run ids.
+    """
     return hashlib.sha256(key.encode("ascii")).hexdigest()[:16] if key else ""
 
 
