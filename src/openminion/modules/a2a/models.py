@@ -263,6 +263,7 @@ class IdempotencyRecord:
     task_id: str | None = None
     created_at: str = field(default_factory=iso_now)
     updated_at: str = field(default_factory=iso_now)
+    request_fingerprint: str | None = None
 
     def is_terminal(self) -> bool:
         return self.status in IDEMPOTENCY_TERMINAL_STATUSES
