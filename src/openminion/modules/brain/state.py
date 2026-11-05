@@ -519,6 +519,7 @@ def respond(
     status: str,
     action_result=None,
     kind: RespondKindLiteral = RESPOND_KIND_ASSISTANT,
+    confirmation_outcome: dict[str, str] | None = None,
 ) -> StepOutput:
     if kind not in RESPOND_KIND_VALUES:
         raise ValueError(f"unknown respond kind: {kind!r}")
@@ -557,15 +558,21 @@ def respond(
                 },
             )
     else:
+        turn_meta: dict[str, Any] = {
+            "ts": iso_now(),
+            "status": status,
+            "is_error": bool(getattr(action_result, "error", None)),
+        }
+        if confirmation_outcome:
+            # Durable readers need the denial/approval fact, not just the answer text.
+            turn_meta["confirmation_outcome"] = json.dumps(
+                confirmation_outcome, sort_keys=True
+            )
         runner.session_api.append_turn(
             state.session_id,
             "assistant",
             message,
-            meta={
-                "ts": iso_now(),
-                "status": status,
-                "is_error": bool(getattr(action_result, "error", None)),
-            },
+            meta=turn_meta,
         )
     set_session_status(runner, state.session_id, status)
     update_session_summary(runner, session_id=state.session_id, agent_id=state.agent_id)
@@ -579,6 +586,7 @@ def respond(
         working_state=state,
         action_result=action_result,
         kind=kind,
+        confirmation_outcome=confirmation_outcome,
     )
 
 

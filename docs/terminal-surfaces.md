@@ -61,6 +61,42 @@ the process entry points (`openminion` and `python -m openminion`); an imported
 its own `KeyboardInterrupt`, and the CLI reports it as exit 130 when the call returns
 while the host's `finally` blocks still run.
 
+## One-shot run outcome
+
+`openminion run` reports what the turn produced, not just whether the transport
+answered. The outcome is reported in-band, in `turn_outcome`; the process exit
+status is unchanged from the previous release:
+
+| `turn_outcome` | meaning |
+| --- | --- |
+| absent | the projection recognized no returned error, denial or waiting state |
+| `failed` | the turn returned errors (provider, runtime); transport `ok` is unchanged |
+| `needs_user` | the turn is waiting for an answer, for example a confirmation question |
+| `denied` | the caller's confirmation was denied, so the action did not run |
+
+Exit codes: a returned envelope exits `0` whatever the outcome, exactly as before;
+a transport or API error still exits `2` through the pre-existing error path. A
+distinct outcome-to-exit-code mapping (for example non-zero for `denied`) is
+**not** part of this release — it is deferred pending a decision on the public
+exit-code contract, because changing the status of a route that used to exit `0`
+is a compatibility change.
+
+`--json` prints one envelope with `turn_outcome` when it is not `completed`, and
+a human run adds one line on stderr. `--jsonl` forwards the daemon frames:
+`response` frames are forwarded as they arrive and the single `done` frame is
+emitted last, after the outcome is known, so it carries the same field. When no
+frame reaches the caller the command synthesizes the pair: its `response` frame
+carries `turn_outcome` like the real one, but its synthetic `done` frame carries
+only `ok` — unlike the streamed `done` frame — and makes no completion claim.
+Absence of the field is not a success claim: it means only that the projection
+saw no error, denial or waiting state, and it cannot establish that the work in
+the turn was done.
+
+One acknowledged gap: a denial decided inside an approval callback is surfaced
+as an ask-user answer, so it reports `needs_user` rather than `denied`. The
+`denied` mapping covers denials the confirmation owner records for the returned
+turn.
+
 ## Terminal color
 
 The default interactive terminal detects color support automatically. Use the
