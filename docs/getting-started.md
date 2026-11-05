@@ -323,8 +323,12 @@ in the export; credential values, including authentication headers, do not.
 See [turn budgets and token cost](turn-budgets.md) before changing limits to
 address an early stop or an expensive turn.
 
-A complete `file.read` from local storage includes an opaque `version`. For a
-conditional overwrite, `file.write` accepts `expected_content_sha256` (SHA-256 of
+A `file.read` includes `content_sha256` for the full UTF-8 text before newline
+conversion or slicing. Local reads retain their existing universal-newline text
+view; the fingerprint distinguishes the original LF, CRLF and CR bytes. In-memory
+reads preserve the original newline characters. Complete local reads also include
+an opaque `version`. For conditional overwrites, `file.write` accepts
+`expected_content_sha256` (SHA-256 of
 the UTF-8 text returned by the read) and `expected_version`. A mismatch returns
 `PRECONDITION_FAILED` before truncation. Conditional append is rejected. Local
 conditional replacement requires advisory file locking and fails closed when it

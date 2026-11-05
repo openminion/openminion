@@ -1,6 +1,7 @@
 """In-memory file operations with conditional replacement checks."""
 
 import fnmatch
+import hashlib
 from threading import RLock
 from io import StringIO
 from collections.abc import Callable, Mapping
@@ -145,6 +146,7 @@ class InMemoryStorageBackend:
             raise ToolRuntimeError("INVALID_ARGUMENT", "path is not a file")
 
         content = self._files[normalized]
+        content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
         total_length = len(content)
         if offset > 0:
             if offset >= total_length:
@@ -163,6 +165,7 @@ class InMemoryStorageBackend:
             total_length=total_length,
             returned_length=len(content),
             truncated=truncated,
+            content_sha256=content_sha256,
         )
 
     def read_range(

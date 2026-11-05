@@ -9,7 +9,7 @@ from openminion.modules.brain.loop.strategies.coding import CodingProfileRunner
 from openminion.modules.brain.schemas import ActionResult
 from openminion.modules.brain.tools.executor import CommandExecutionOutcome
 from openminion.modules.llm.schemas import Message
-from openminion.tools.file.plugin import _h_read_file, _h_write_file
+from openminion.tools.file.plugin import _get_backend, _h_read_file, _h_write_file
 from tests.test_file_tool_characterization import _ctx
 from tests.brain.tool_loops.test_engine import (
     _LoopContext,
@@ -22,11 +22,16 @@ from tests.brain.tool_loops.test_duplicate_read_recovery import call, reply
 
 
 class NativeContext(_LoopContext):
-    def __init__(self, tmp_path, mode="dropped"):
+    def __init__(self, tmp_path, mode="dropped", backend="local"):
         super().__init__(state=_state(tool_calls=20, tokens=2000, llm_calls_max=20))
         self.native = _ctx(tmp_path)
         self.target = self.native.workspace / "report"
         self.target.write_text("OLD")
+        self.native.policy.raw["file_backend"] = backend
+        if backend == "memory":
+            assert _h_write_file({"path": "report", "content": "OLD"}, self.native)[
+                "ok"
+            ]
         self.mode = mode
         self.writes = 0
         self.results = []
@@ -35,7 +40,9 @@ class NativeContext(_LoopContext):
         self.commands.append(command)
         if command.tool_name == "file.write":
             self.writes += 1
-            if self.writes == 1 or self.mode == "always_dropped":
+            if (
+                self.writes == 1 and self.mode != "normal"
+            ) or self.mode == "always_dropped":
                 raw = {"ok": True, "path": str(self.target), "bytes_written": 5}
             elif self.mode == "denied":
                 raw = {
@@ -294,3 +301,80 @@ def test_explicit_existing_precondition_is_not_replaced_by_recovery(tmp_path, gu
     execute(ctx, responses)
     assert ctx.writes == 1
     assert ctx.target.read_text() == "OLD"
+
+
+@pytest.mark.parametrize("backend", ["local", "memory"])
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"], ids=["lf", "crlf", "cr"])
+@pytest.mark.parametrize("mode", ["normal", "dropped", "always_dropped"])
+def test_newline_readback_preserves_bytes_and_bounded_writes(
+    tmp_path, backend, newline, mode
+):
+    ctx = NativeContext(tmp_path, mode, backend)
+    desired = f"first{newline}second{newline}"
+    responses = sequence()
+    for index in (0, 2):
+        responses[index].tool_calls[0].arguments["content"] = desired
+    out = execute(ctx, responses)
+    expected_writes = 1 if mode == "normal" else 2
+    assert ctx.writes == expected_writes
+    assert len(ctx.commands) == out.state.total_tool_calls == 2 * expected_writes
+    expected = "OLD" if mode == "always_dropped" else desired
+    actual = (
+        ctx.target.read_bytes()
+        if backend == "local"
+        else _get_backend(ctx.native).read(str(ctx.target)).content.encode("utf-8")
+    )
+    assert actual == expected.encode("utf-8")
+    assert ctx.commands[0].args["content"] == desired
+    if mode == "normal":
+        expected_read = (
+            desired.replace("\r\n", "\n").replace("\r", "\n")
+            if backend == "local"
+            else desired
+        )
+        assert ctx.results[1].outputs["content"] == expected_read
+    elif mode == "dropped":
+        assert ctx.commands[2].args["content"] == desired
+        assert ctx.commands[2].args["expected_content_sha256"]
+
+
+@pytest.mark.parametrize("backend", ["local", "memory"])
+@pytest.mark.parametrize("observed", ["a\r\nb", "a\rb"])
+def test_distinct_newline_bytes_still_authorize_real_correction(
+    tmp_path, backend, observed
+):
+    ctx = NativeContext(tmp_path, backend=backend)
+    assert _h_write_file({"path": "report", "content": observed}, ctx.native)["ok"]
+    responses = sequence()
+    for index in (0, 2):
+        responses[index].tool_calls[0].arguments["content"] = "a\nb"
+    execute(ctx, responses)
+    assert ctx.writes == 2
+    actual = (
+        ctx.target.read_bytes()
+        if backend == "local"
+        else _get_backend(ctx.native).read(str(ctx.target)).content.encode("utf-8")
+    )
+    assert actual == b"a\nb"
+
+
+def test_replacement_evidence_is_compact_and_checkpointed(tmp_path):
+    ctx = NativeContext(tmp_path)
+    responses = sequence()[:2] + [reply()]
+    responses[0].tool_calls[0].arguments["content"] = "large payload" * 3000
+    out = execute(ctx, responses)
+    owner = CodingProfileRunner()
+    owner._loop_state = out.state
+    restored = CodingProfileRunner()
+    restored.restore_state(json.loads(json.dumps(owner.snapshot_state())))
+    history = restored._loop_state.scratchpad["file_replacement_recovery"]
+    assert len(history) == 1
+    assert len(next(iter(history))) == 64
+    assert "content" not in next(iter(history.values()))
+    assert len(json.dumps(history)) < 1024
+
+
+def test_unrelated_read_does_not_create_replacement_history(tmp_path):
+    ctx = NativeContext(tmp_path)
+    out = execute(ctx, [reply(call(1, path="report")), reply()])
+    assert "file_replacement_recovery" not in out.state.scratchpad

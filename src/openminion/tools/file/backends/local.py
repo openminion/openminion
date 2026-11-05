@@ -1,6 +1,7 @@
 """Local file operations with guarded replacement on an open file descriptor."""
 
 import fnmatch
+import hashlib
 import errno
 import os
 import stat
@@ -180,7 +181,7 @@ class LocalStorageBackend:
 
         try:
             fd = self._open_leaf_no_symlink(target, flags=os.O_RDONLY)
-            with os.fdopen(fd, "r", encoding="utf-8") as handle:
+            with os.fdopen(fd, "r", encoding="utf-8", newline="") as handle:
                 content = handle.read()
                 version = _file_version(os.fstat(handle.fileno()))
         except UnicodeDecodeError as exc:
@@ -200,6 +201,8 @@ class LocalStorageBackend:
         except Exception as exc:
             raise ToolRuntimeError(_LEGACY_ERROR_CODE, str(exc)) from exc
 
+        content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        content = content.replace("\r\n", "\n").replace("\r", "\n")
         total_length = len(content)
         if offset > 0:
             if offset >= total_length:
@@ -219,6 +222,7 @@ class LocalStorageBackend:
             returned_length=len(content),
             truncated=truncated,
             version=version,
+            content_sha256=content_sha256,
         )
 
     def read_range(

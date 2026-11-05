@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import asdict
 from pathlib import Path
 
@@ -85,6 +86,7 @@ def test_contract_read_matches_shape(tmp_path: Path, backend_kind: str):
     assert (result.version is not None) == (backend_kind == "local")
     payload = asdict(result)
     payload.pop("version")
+    assert payload.pop("content_sha256") == hashlib.sha256(b"abcdefghij").hexdigest()
     assert payload == {
         "content": "defg",
         "total_length": 10,

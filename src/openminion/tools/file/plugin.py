@@ -480,6 +480,8 @@ def _h_read_file(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     }
     if result.version is not None:
         payload["version"] = result.version
+    if result.content_sha256 is not None:
+        payload["content_sha256"] = result.content_sha256
     if result.truncated:
         payload["next_offset"] = validated.offset + result.returned_length
         payload["hint"] = (
