@@ -1,15 +1,9 @@
-"""Atomic capture bundles are an optional capability of external backends (#397).
+"""Atomic capture bundles are an optional capability of external backends.
 
-`BackendMemoryStoreAdapter.apply_capture_bundle` reports a backend without the
-method with `CaptureRecoveryUnsupportedError`, the error the memory service and
-the terminal capture step already use for an unsupported capture. A backend
-that implements it gets the bundle, and its errors propagate unchanged.
-
-The SDK tests run real `Agent.run` turns (echo provider) with
-`memory.backend.provider: external`: the bundled `reference-sqlite` adapter,
-which has no capture method; the same adapter with the method, applied by the
-built-in SQLite capture implementation; and the same adapter whose method
-fails.
+A backend without `apply_capture_bundle` is reported with
+`CaptureRecoveryUnsupportedError`, the error unsupported capture already uses;
+a backend's own capture errors propagate unchanged. The SDK tests run echo
+turns on the bundled `reference-sqlite` adapter.
 """
 
 from __future__ import annotations

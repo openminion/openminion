@@ -1,16 +1,10 @@
-"""A turn's own memory capture asks the authorization that recovery asks (#448).
+"""A turn's own memory capture asks the authorization that recovery asks.
 
-Each test builds a real `APIRuntime` for one agent whose `openai` provider is a
-scripted OpenAI-compatible server on 127.0.0.1. Unless a test says otherwise,
-the agent has an identity profile (`profile.yaml` under `identity.bundle_root`)
-with one hard constraint. SDK turns ask the agent to remember a preference; the
-provider answers the auto fact extraction with one `user_preference` item and
-records the kind of every request.
-
-The tests record the agent security policy's `memory.write` decisions and the
-memctl bundle writes (both call the original), and read the memory store, the
-turn's capture intent and its `memory.capture.result`. Recovery runs through
-the real `CronTurnExecutor` with the real `memory_capture_recovery_allowed`.
+`_Provider` is a scripted OpenAI-compatible server on 127.0.0.1, not a hosted
+model: it answers the auto fact extraction with one `user_preference` item and
+records the kind of every request. Unless a test says otherwise, the agent has
+an identity profile with one hard constraint. Recovery runs through the real
+`CronTurnExecutor` with the real `memory_capture_recovery_allowed`.
 """
 
 from __future__ import annotations

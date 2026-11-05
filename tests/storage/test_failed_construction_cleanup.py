@@ -1,11 +1,9 @@
-"""Runtime storage closes what it opened when its construction fails (#447).
+"""Runtime storage closes what it opened when its construction fails.
 
-`StorageEngine.from_config` owns the backends it creates until it returns the
-engine, and `build_runtime_storage` owns the engine until it returns the
-runtime storage context. When a later step fails, each closes them with the
-closes of `StorageEngine.close()`, and the caller gets the original exception.
-The telemetry service behind the storage telemetry hook belongs to the caller
-and stays open.
+`StorageEngine.from_config` owns its backends until it returns the engine, and
+`build_runtime_storage` owns the engine until it returns its context. On a later
+failure each closes them as `StorageEngine.close()` does, and the caller gets
+the original exception. The caller's telemetry service stays open.
 """
 
 from __future__ import annotations
