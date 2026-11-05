@@ -357,6 +357,7 @@ def respond_with_meta(
     action_result: ActionResult | None = None,
     kind: RespondKindLiteral = RESPOND_KIND_ASSISTANT,
     accepted_finish_reason: str = "",
+    confirmation_outcome: dict[str, str] | None = None,
 ) -> StepOutput:
     final_message = message
     final_status = status
@@ -417,6 +418,7 @@ def respond_with_meta(
         status=final_status,
         action_result=action_result,
         kind=kind,
+        confirmation_outcome=confirmation_outcome,
     )
     if not replaced_answer:
         step_output._accepted_finish_reason = str(accepted_finish_reason or "").strip()

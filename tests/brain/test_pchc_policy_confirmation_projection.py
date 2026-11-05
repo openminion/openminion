@@ -261,7 +261,16 @@ def test_respond_policy_confirmation_kind_skips_append_event_if_unsupported() ->
 def test_respond_with_meta_threads_kind_to_runner_respond() -> None:
     captured: dict[str, Any] = {}
 
-    def _fake_respond(*, state, logger, message, status, action_result, kind):
+    def _fake_respond(
+        *,
+        state,
+        logger,
+        message,
+        status,
+        action_result,
+        kind,
+        confirmation_outcome=None,
+    ):
         del state, logger
         captured.update(
             {
@@ -308,7 +317,16 @@ def test_respond_with_meta_threads_kind_to_runner_respond() -> None:
 def test_respond_with_meta_defaults_kind_to_assistant() -> None:
     captured: dict[str, Any] = {}
 
-    def _fake_respond(*, state, logger, message, status, action_result, kind):
+    def _fake_respond(
+        *,
+        state,
+        logger,
+        message,
+        status,
+        action_result,
+        kind,
+        confirmation_outcome=None,
+    ):
         del state, logger
         captured["kind"] = kind
         return StepOutput(
