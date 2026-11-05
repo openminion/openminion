@@ -350,6 +350,10 @@ def test_distinct_newline_bytes_still_authorize_real_correction(
         responses[index].tool_calls[0].arguments["content"] = "a\nb"
     execute(ctx, responses)
     assert ctx.writes == 2
+    assert (
+        ctx.commands[2].args["expected_content_sha256"]
+        == ctx.results[1].outputs["content_sha256"]
+    )
     actual = (
         ctx.target.read_bytes()
         if backend == "local"

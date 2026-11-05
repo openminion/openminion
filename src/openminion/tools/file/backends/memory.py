@@ -204,7 +204,7 @@ class InMemoryStorageBackend:
                         "NOT_FOUND", "file disappeared since readback"
                     )
                 check_replacement_precondition(
-                    self._files[normalized], expected_content_sha256
+                    encode_text(self._files[normalized]), expected_content_sha256
                 )
             if create_dirs:
                 self._ensure_dir(parent)

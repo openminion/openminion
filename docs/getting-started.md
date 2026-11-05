@@ -328,8 +328,8 @@ conversion or slicing. Local reads retain their existing universal-newline text
 view; the fingerprint distinguishes the original LF, CRLF and CR bytes. In-memory
 reads preserve the original newline characters. Complete local reads also include
 an opaque `version`. For conditional overwrites, `file.write` accepts
-`expected_content_sha256` (SHA-256 of
-the UTF-8 text returned by the read) and `expected_version`. A mismatch returns
+`expected_content_sha256` (pass `content_sha256` from the read directly)
+and `expected_version`. A mismatch returns
 `PRECONDITION_FAILED` before truncation. Conditional append is rejected. Local
 conditional replacement requires advisory file locking and fails closed when it
 is unavailable; the locks coordinate participating writers, not arbitrary external

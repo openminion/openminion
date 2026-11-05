@@ -323,13 +323,10 @@ class LocalStorageBackend:
             if fcntl is not None:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
             if guarded:
-                observed = (
-                    handle.read()
-                    .decode("utf-8")
-                    .replace("\r\n", "\n")
-                    .replace("\r", "\n")
-                )
-                check_replacement_precondition(observed, expected_content_sha256)
+                if expected_content_sha256 is not None:
+                    check_replacement_precondition(
+                        handle.read(), expected_content_sha256
+                    )
                 current = os.fstat(handle.fileno())
                 if (
                     expected_version is not None

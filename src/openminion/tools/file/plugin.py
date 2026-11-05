@@ -187,7 +187,7 @@ class FileWriteArgs(BaseModel):
     expected_content_sha256: str | None = Field(
         default=None,
         pattern=r"^[0-9a-f]{64}$",
-        description="Write only if the current text content matches this SHA-256 digest.",
+        description="Write only if the full content matches content_sha256 from file.read.",
     )
     expected_version: str | None = Field(
         default=None,

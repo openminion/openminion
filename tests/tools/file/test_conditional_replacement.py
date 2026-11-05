@@ -17,6 +17,40 @@ def digest(content):
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+@pytest.mark.parametrize("kind", ["local", "memory"])
+@pytest.mark.parametrize(
+    "observed,current",
+    [
+        ("a\r\nb", "a\r\nb"),
+        ("a\rb", "a\rb"),
+        ("a\nb", "a\r\nb"),
+        ("a\r\nb", "a\nb"),
+    ],
+)
+def test_read_fingerprint_is_the_write_precondition(tmp_path, kind, observed, current):
+    ctx = _ctx(tmp_path)
+    ctx.policy.raw["file_backend"] = kind
+    path = {"path": "a"}
+    assert _h_write_file({**path, "content": observed}, ctx)["ok"]
+    read = _h_read_file(path, ctx)
+    assert read["content_sha256"] == digest(observed)
+    if current != observed:
+        assert _h_write_file({**path, "content": current}, ctx)["ok"]
+    result = _h_write_file(
+        {**path, "content": "READY", "expected_content_sha256": read["content_sha256"]},
+        ctx,
+    )
+    if current == observed:
+        assert result["ok"]
+        expected = "READY"
+    else:
+        assert result["error"]["code"] == "PRECONDITION_FAILED"
+        expected = current
+    assert _h_read_file(path, ctx)["content_sha256"] == digest(expected)
+    if kind == "local":
+        assert (ctx.workspace / "a").read_bytes() == expected.encode("utf-8")
+
+
 @pytest.fixture(params=["local", "memory"])
 def backend(request, tmp_path):
     return (

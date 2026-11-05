@@ -62,8 +62,10 @@ def record_replacement_evidence(
             or result.outputs.get("total_length", len(content)) != len(content)
         ):
             return
-        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
-        observed_digest = result.outputs.get("content_sha256") or digest
+        observed_digest = (
+            result.outputs.get("content_sha256")
+            or hashlib.sha256(content.encode("utf-8")).hexdigest()
+        )
         for entry in loop_state.scratchpad.get(
             "file_replacement_recovery", {}
         ).values():
@@ -77,7 +79,7 @@ def record_replacement_evidence(
             entry.pop("expected_content_sha256", None)
             entry.pop("expected_version", None)
             if observed_digest != entry["content_sha256"]:
-                entry["expected_content_sha256"] = digest
+                entry["expected_content_sha256"] = observed_digest
                 if isinstance(result.outputs.get("version"), str):
                     entry["expected_version"] = result.outputs["version"]
 
