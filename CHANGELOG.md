@@ -14,6 +14,20 @@ This file tracks package-facing release notes for `openminion`.
   allow/deny operator decisions, where denial keeps the target from running
   (Refs #526).
 
+- Carry user corrections into the answer and any answer-only retry when the tool
+  budget runs out. Apply corrections in order and preserve unchanged request
+  requirements (Refs #659).
+
+- Keep synchronous A2A call reservations exclusive even after they age past
+  the recovery threshold. A repeated key returns `OUTCOME_UNKNOWN` when an old
+  reservation has no receipt or the result could not be published. Reconcile
+  the downstream effect before reissuing the call with a new key.
+
+- Recover one identical transient safe read and one guarded file overwrite after
+  a contradictory complete readback. Preserve duplicate suppression after a
+  successful write with LF, CRLF or CR content, recheck permissions and budgets,
+  and refuse stale replacement preconditions.
+
 - Preserve runtime-tool schema definitions when adding task updates. Include
   tool schemas and structured messages in task request budget checks, bound
   explicit output limits by the remaining allowance, and debit each returned

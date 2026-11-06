@@ -15,7 +15,7 @@ from openminion.modules.a2a.models import (
 
 
 def idempotency_slot_is_stale(updated_at: str, *, stale_after_sec: int) -> bool:
-    """Return True when an in-progress idempotency slot is old enough to reclaim."""
+    """Return True when an in-progress idempotency slot is past the reporting threshold."""
     try:
         stamped = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
     except ValueError:
@@ -55,8 +55,23 @@ def _structural_observability(
 
 class StateStore(Protocol):
     def reserve_idempotency(
-        self, key: str, scope: str, *, stale_reclaim_after_sec: int | None = None
+        self, key: str, scope: str
     ) -> tuple[bool, IdempotencyRecord | None]: ...
+
+    def finish_idempotency(
+        self,
+        reservation: IdempotencyRecord,
+        status: str,
+        *,
+        result_inline: dict[str, Any] | None = None,
+        result_ref: str | None = None,
+        error: dict[str, Any] | None = None,
+    ) -> bool:
+        """Write a terminal result only for the original, pending reservation.
+
+        The creation stamp identifies the reservation; legacy reclaim replaced it.
+        """
+        ...
 
     def set_idempotency_result(
         self,

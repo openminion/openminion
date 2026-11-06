@@ -1,4 +1,8 @@
+"""In-memory file operations with conditional replacement checks."""
+
 import fnmatch
+import hashlib
+from threading import RLock
 from io import StringIO
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -19,7 +23,12 @@ from .protocol import (
     WriteResult,
 )
 from .searching import compile_line_matcher, search_snippet
-from .text import edit_content, encode_text, select_range
+from .text import (
+    check_replacement_precondition,
+    edit_content,
+    encode_text,
+    select_range,
+)
 from openminion.tools.file.constants import FILE_SEARCH_MAX_SCANNED_FILES
 
 
@@ -30,6 +39,7 @@ class InMemoryStorageBackend:
         initial_files: Mapping[str, str] | None = None,
         root: str | Path | None = None,
     ) -> None:
+        self._write_lock = RLock()
         self._files: dict[str, str] = {}
         self._dirs: set[str] = set()
         if root is not None:
@@ -136,6 +146,7 @@ class InMemoryStorageBackend:
             raise ToolRuntimeError("INVALID_ARGUMENT", "path is not a file")
 
         content = self._files[normalized]
+        content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
         total_length = len(content)
         if offset > 0:
             if offset >= total_length:
@@ -154,6 +165,7 @@ class InMemoryStorageBackend:
             total_length=total_length,
             returned_length=len(content),
             truncated=truncated,
+            content_sha256=content_sha256,
         )
 
     def read_range(
@@ -173,18 +185,33 @@ class InMemoryStorageBackend:
         *,
         append: bool = False,
         create_dirs: bool = True,
+        expected_content_sha256: str | None = None,
+        expected_version: str | None = None,
     ) -> WriteResult:
         encoded = encode_text(content)
         normalized = self._normalize(path)
         parent = self._normalize(Path(normalized).parent)
-        if create_dirs:
-            self._ensure_dir(parent)
-        elif not self.is_dir(parent):
-            raise ToolRuntimeError("NOT_FOUND", "parent directory does not exist")
-
-        existing = self._files.get(normalized, "") if append else ""
-        self._files[normalized] = existing + content
-        self._ensure_dir(parent)
+        with self._write_lock:
+            if expected_version is not None or (
+                append and expected_content_sha256 is not None
+            ):
+                raise ToolRuntimeError(
+                    "INVALID_ARGUMENT", "unsupported replacement precondition"
+                )
+            if expected_content_sha256 is not None:
+                if normalized not in self._files:
+                    raise ToolRuntimeError(
+                        "NOT_FOUND", "file disappeared since readback"
+                    )
+                check_replacement_precondition(
+                    encode_text(self._files[normalized]), expected_content_sha256
+                )
+            if create_dirs:
+                self._ensure_dir(parent)
+            elif not self.is_dir(parent):
+                raise ToolRuntimeError("NOT_FOUND", "parent directory does not exist")
+            existing = self._files.get(normalized, "") if append else ""
+            self._files[normalized] = existing + content
         return WriteResult(
             path=normalized,
             bytes_written=len(encoded),
