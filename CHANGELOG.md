@@ -7,6 +7,10 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Strengthen developer safeguards for brain and core changes: detect reverse
+  dependency imports across supported static import forms and run policy,
+  closure, replay and steering contracts in the fast regression suite.
+
 ## Current package line - 2026-11-06
 
 - Carry user corrections into the final answer and retries when the agent

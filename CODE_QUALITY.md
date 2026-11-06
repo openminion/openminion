@@ -289,3 +289,14 @@ resolved or obsolete candidates, and open only bounded follow-up work backed
 by current caller or failure evidence. Do not reopen obsolete PRs, repeat
 closed audits, duplicate issues or take over an active contributor's branch.
 An old PR review is not proof that today's surviving code was checked.
+
+### Brain and core behavior
+
+Avoid unnecessary changes to brain decisions, prompts, orchestration, stopping
+conditions, state transitions and their shared owners. Cleanup is not a reason
+to change behavior. Trace affected callers and record which behavior must remain
+unchanged; a necessary bug fix must name its intended difference. Prove that
+difference and the neighboring unchanged behavior with focused positive and
+negative controls, including permission, replay and cancellation paths where
+affected. Block merge when the behavioral impact is unresolved. Structural
+validators and green tests support this review; they do not replace it.
