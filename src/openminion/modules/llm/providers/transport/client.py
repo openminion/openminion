@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import io
+import ipaddress
+import logging
+import re
 import socket
 from collections.abc import Iterator, Mapping
 from threading import Lock
@@ -8,6 +11,87 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 import httpx
+
+logger = logging.getLogger(__name__)
+
+# A no_proxy entry that is exactly a bracketed IPv6 literal without a port,
+# e.g. "[::1]" or "[fd8b:4f84::1]". Entries with an explicit port
+# ("[::1]:8080") do not match and are left alone.
+_BRACKETED_IPV6_LITERAL = re.compile(r"^\[(?P<host>[0-9A-Fa-f:]*:[0-9A-Fa-f:]*)\]$")
+
+
+def _sanitize_no_proxy_value(value: str) -> tuple[str, list[str]]:
+    """Rewrite bracketed IPv6 literals in a no_proxy value to unbracketed form.
+
+    httpx parses every no_proxy entry as a URL pattern and raises
+    ``InvalidURL: Invalid port: ':1]'`` for a bracketed IPv6 literal without
+    a port, although the unbracketed form (``::1``) is accepted and names
+    the same host. Returns the rewritten value plus the entries that changed.
+    """
+    sanitized: list[str] = []
+    changed: list[str] = []
+    for raw_entry in value.split(","):
+        entry = raw_entry.strip()
+        match = _BRACKETED_IPV6_LITERAL.match(entry)
+        if match:
+            sanitized.append(match.group("host"))
+            changed.append(entry)
+        else:
+            sanitized.append(entry)
+    return ",".join(sanitized), changed
+
+
+def _bypass_pattern(host: str) -> str:
+    """Return the mount pattern httpx uses to mark a no_proxy host as bypassed.
+
+    Mirrors the pattern shapes ``httpx`` builds from no_proxy entries, so a
+    locally rebuilt proxy configuration keeps the same matching behavior.
+    """
+    if "://" in host:
+        return host
+    try:
+        ip = ipaddress.ip_address(host.split("/")[0])
+    except ValueError:
+        ip = None
+    if ip is not None:
+        return f"all://{host}" if ip.version == 4 else f"all://[{host}]"
+    if host.lower() == "localhost":
+        return f"all://{host}"
+    return f"all://*{host}"
+
+
+def _client_with_corrected_no_proxy() -> httpx.Client | None:
+    """Build a client from a locally corrected proxy configuration.
+
+    Fallback for environments whose no_proxy carries bracketed IPv6
+    literals: rebuild the environment proxy map with those entries
+    unbracketed and pass it to httpx as explicit mounts for this client
+    only. The process environment is only read, never written. Returns None
+    when no entry needed rewriting, i.e. the construction failure is
+    unrelated to no_proxy.
+    """
+    proxies = urllib_request.getproxies()
+    sanitized, changed = _sanitize_no_proxy_value(proxies.get("no", ""))
+    if not changed:
+        return None
+    logger.warning(
+        "no_proxy entries %s are bracketed IPv6 literals that httpx cannot "
+        "parse; building this client with a locally corrected proxy "
+        "configuration instead.",
+        changed,
+    )
+    mounts: dict[str, httpx.BaseTransport | None] = {}
+    entries = [entry.strip() for entry in sanitized.split(",") if entry.strip()]
+    if "*" not in entries:
+        for scheme in ("http", "https", "all"):
+            proxy_url = proxies.get(scheme)
+            if proxy_url:
+                if "://" not in proxy_url:
+                    proxy_url = f"http://{proxy_url}"
+                mounts[f"{scheme}://"] = httpx.HTTPTransport(proxy=proxy_url)
+        for host in entries:
+            mounts[_bypass_pattern(host)] = None
+    return httpx.Client(follow_redirects=True, trust_env=False, mounts=mounts)
 
 
 class _ProviderHTTPResponse:
@@ -44,8 +128,8 @@ class ProviderHTTPClient:
         request: urllib_request.Request,
         timeout: float | None = None,
     ) -> _ProviderHTTPResponse:
-        client = self._get_client()
         try:
+            client = self._get_client()
             response = client.send(
                 client.build_request(
                     request.get_method(),
@@ -58,6 +142,8 @@ class ProviderHTTPClient:
             )
         except httpx.TimeoutException as exc:
             raise urllib_error.URLError(socket.timeout(str(exc))) from exc
+        except httpx.InvalidURL as exc:
+            raise urllib_error.URLError(str(exc)) from exc
         except httpx.RequestError as exc:
             raise urllib_error.URLError(str(exc)) from exc
 
@@ -83,7 +169,18 @@ class ProviderHTTPClient:
     def _get_client(self) -> httpx.Client:
         with self._lock:
             if self._client is None:
-                self._client = httpx.Client(follow_redirects=True, trust_env=True)
+                try:
+                    self._client = httpx.Client(follow_redirects=True, trust_env=True)
+                except httpx.InvalidURL:
+                    # Construction reads the proxy environment; a
+                    # bracketed IPv6 literal in no_proxy makes it raise.
+                    # Retry with the locally corrected configuration from
+                    # _client_with_corrected_no_proxy; when nothing needed
+                    # correcting, the failure is unrelated and propagates.
+                    client = _client_with_corrected_no_proxy()
+                    if client is None:
+                        raise
+                    self._client = client
             return self._client
 
 

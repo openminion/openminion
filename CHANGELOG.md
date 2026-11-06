@@ -17,6 +17,13 @@ This file tracks package-facing release notes for `openminion`.
   dependency imports across supported static import forms and run policy,
   closure, replay and steering contracts in the fast regression suite.
 
+- Fix provider HTTP calls failing before any request is sent on hosts whose
+  `no_proxy` contains a bracketed IPv6 literal without a port (e.g. `[::1]`).
+  Client construction now sits inside the transport's error normalization,
+  and on that failure the client is rebuilt with a locally corrected proxy
+  configuration for that instance only; the process environment is never
+  modified and bypass entries keep their meaning (Refs #686).
+
 ## Current package line - 2026-11-06
 
 - Carry user corrections into the final answer and retries when the agent
