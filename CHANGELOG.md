@@ -7,6 +7,10 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Carry user corrections into the answer and any answer-only retry when the tool
+  budget runs out. Apply corrections in order and preserve unchanged request
+  requirements (Refs #659).
+
 - Recover one identical transient safe read and one guarded file overwrite after
   a contradictory complete readback. Preserve duplicate suppression after a
   successful write with LF, CRLF or CR content, recheck permissions and budgets,

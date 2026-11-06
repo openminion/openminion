@@ -165,8 +165,8 @@ def _retry_answer_only_completion_if_needed(
             content=(
                 "The budget finalization step is answer-only. Call submit_output "
                 "once with the complete user-facing answer in final_answer and its "
-                "truthful typed status. Preserve the original request's exact "
-                "labels, headings, and ordering."
+                "truthful typed status. Follow user corrections in order and "
+                "preserve all requirements they did not change."
             ),
         )
     )
@@ -177,6 +177,11 @@ def _retry_answer_only_completion_if_needed(
         detail_text=f"{public_mode_tag} answer-only retry after tool call",
         mode_state="budget_answer_only_retry",
     )
+    if steering := loop_ctx.apply_turn_steering(retry_messages):
+        # Keep retry steering when a budget extension removes closeout prompts.
+        restore_index = loop_state.scratchpad["budget_answer_only_restore_index"]
+        loop_state.messages[restore_index:restore_index] = steering
+        loop_state.scratchpad["budget_answer_only_restore_index"] += len(steering)
     try:
         retry_kwargs = dict(complete_kwargs)
         retry_kwargs["tools"] = [_finalized_answer_tool()]

@@ -308,7 +308,17 @@ def test_per_tool_limit_closeout_delivers_steering():
     assert result.termination_reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
 
 
-def test_answer_only_retry_does_not_dispatch_requested_tool_or_reconsume_steering():
+@pytest.mark.parametrize(
+    ("late_corrections", "retry_attempts_read"),
+    [
+        ((), False),
+        (("Show totals in EUR.", "Use EUR decimals."), False),
+        (("Show totals in EUR.",), True),
+    ],
+)
+def test_answer_only_retry_does_not_dispatch_requested_tool_or_reconsume_steering(
+    late_corrections, retry_attempts_read, monkeypatch
+):
     ctx = _SteeringContext(after=(CORRECTION,))
     submitted = _read().model_copy(
         update={
@@ -325,17 +335,43 @@ def test_answer_only_retry_does_not_dispatch_requested_tool_or_reconsume_steerin
             ],
         }
     )
+    retry_response = (
+        _read("retry-read", "missing.txt") if retry_attempts_read else submitted
+    )
     runtime = _FakeRuntime(
-        responses=[_read(), _read("blocked-read", "missing.txt"), submitted]
+        responses=[_read(), _read("blocked-read", "missing.txt"), retry_response]
     )
 
+    complete = runtime.complete
+
+    def complete_with_steering(**kwargs):
+        response = complete(**kwargs)
+        if len(runtime.calls) == 2:
+            ctx.applied_ids.extend(
+                ctx.enqueue(text).queue_id for text in late_corrections
+            )
+        return response
+
+    monkeypatch.setattr(runtime, "complete", complete_with_steering)
     result = _run(ctx, runtime, cap=1)
 
     _, final, retry = runtime.calls
     assert final["tools"] == []
     assert final["tool_choice"] == "none"
     assert [tool.name for tool in retry["tools"]] == ["submit_output"]
-    _assert_applied_once(ctx, retry["messages"], (CORRECTION,))
+    assert [
+        msg.content for msg in final["messages"] if msg.meta.get("turn_input_queue_id")
+    ] == [CORRECTION]
+    assert retry["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "submit_output"},
+    }
+    corrections = (CORRECTION, *late_corrections)
+    _assert_applied_once(ctx, retry["messages"], corrections)
+    reserve = SimpleNamespace(_loop_state=result.state)
+    CodingReserveMixin._restore_answer_only_state_if_needed(reserve, enabled=True)
+    _assert_applied_once(ctx, result.state.messages, corrections)
     assert len(ctx.commands) == 1
-    assert result.final_text == PARTIAL
+    expected_text = "file.read: Read sales.txt" if retry_attempts_read else PARTIAL
+    assert expected_text in result.final_text
     assert result.termination_reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
