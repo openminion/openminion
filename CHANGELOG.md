@@ -7,6 +7,9 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Document that `modules/brain/runtime/approval` has no in-tree production caller:
+  the policy confirmation flow remains the owner of destructive-action approval, and
+  the approval helper's `enabled` flag defaults to false (Refs #678).
 - A same-session context rebuild now treats the rendered `gateway_system_context` as
   pack identity: the runtime cache lookup key and `pack_version` include the stripped
   gateway context, so changing that input returns the newly rendered bytes instead of
