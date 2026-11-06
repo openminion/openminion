@@ -7,6 +7,9 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Carry user corrections into the final answer and retries when the agent
+  detects repeated tool calls (Refs #660).
+
 - Document the handoff approval pause in `examples/sdk/delegation.py` and the
   SDK examples README. A handoff without an `approval_callback` returns the
   policy prompt (`respond_kind` `policy_confirmation_prompt`), not the target's
