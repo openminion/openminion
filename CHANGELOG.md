@@ -22,7 +22,9 @@ This file tracks package-facing release notes for `openminion`.
   Client construction now sits inside the transport's error normalization,
   and on that failure the client is rebuilt with a locally corrected proxy
   configuration for that instance only; the process environment is never
-  modified and bypass entries keep their meaning (Refs #686).
+  modified, bypass entries keep their meaning, and the environment's TLS
+  trust configuration (`SSL_CERT_FILE` / `SSL_CERT_DIR`) is preserved for
+  direct requests (Refs #686).
 
 ## Current package line - 2026-11-06
 

@@ -63,12 +63,16 @@ def _bypass_pattern(host: str) -> str:
 def _client_with_corrected_no_proxy() -> httpx.Client | None:
     """Build a client from a locally corrected proxy configuration.
 
-    Fallback for environments whose no_proxy carries bracketed IPv6
-    literals: rebuild the environment proxy map with those entries
-    unbracketed and pass it to httpx as explicit mounts for this client
-    only. The process environment is only read, never written. Returns None
-    when no entry needed rewriting, i.e. the construction failure is
-    unrelated to no_proxy.
+    Fallback for the one construction failure this transport corrects: a
+    bracketed IPv6 literal in no_proxy. The environment proxy map is
+    rebuilt with those entries unbracketed and passed as explicit mounts
+    for this client only; the process environment is only read, never
+    written. ``trust_env=False`` stops httpx re-reading that proxy
+    environment, so the default transport is built explicitly with
+    httpx's own defaults, which keep the environment's TLS trust
+    (``SSL_CERT_FILE`` / ``SSL_CERT_DIR``) for direct requests, exactly
+    as in the default client. Returns None when no entry needed
+    rewriting, i.e. the construction failure is unrelated to no_proxy.
     """
     proxies = urllib_request.getproxies()
     sanitized, changed = _sanitize_no_proxy_value(proxies.get("no", ""))
@@ -91,7 +95,12 @@ def _client_with_corrected_no_proxy() -> httpx.Client | None:
                 mounts[f"{scheme}://"] = httpx.HTTPTransport(proxy=proxy_url)
         for host in entries:
             mounts[_bypass_pattern(host)] = None
-    return httpx.Client(follow_redirects=True, trust_env=False, mounts=mounts)
+    return httpx.Client(
+        follow_redirects=True,
+        trust_env=False,
+        transport=httpx.HTTPTransport(),
+        mounts=mounts,
+    )
 
 
 class _ProviderHTTPResponse:
@@ -172,11 +181,9 @@ class ProviderHTTPClient:
                 try:
                     self._client = httpx.Client(follow_redirects=True, trust_env=True)
                 except httpx.InvalidURL:
-                    # Construction reads the proxy environment; a
-                    # bracketed IPv6 literal in no_proxy makes it raise.
-                    # Retry with the locally corrected configuration from
-                    # _client_with_corrected_no_proxy; when nothing needed
-                    # correcting, the failure is unrelated and propagates.
+                    # See _client_with_corrected_no_proxy for the one
+                    # failure this fallback corrects; anything else
+                    # propagates unchanged.
                     client = _client_with_corrected_no_proxy()
                     if client is None:
                         raise

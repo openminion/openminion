@@ -9,15 +9,22 @@ process environment is never modified.
 
 from __future__ import annotations
 
+import datetime
 import http.server
 import os
+import ssl
 import threading
 from collections.abc import Iterator
+from pathlib import Path
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 import httpx
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
 
 from openminion.modules.llm.providers.transport.client import (
     ProviderHTTPClient,
@@ -36,6 +43,8 @@ _PROXY_VARS = (
     "ALL_PROXY",
     "NO_PROXY",
     "REQUEST_METHOD",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
 )
 
 
@@ -116,6 +125,52 @@ def test_bracketed_ipv6_no_proxy_constructs_and_bypasses(
         client.close()
     # Construction and the request left the process environment untouched.
     assert {var: os.environ.get(var) for var in _PROXY_VARS} == env_before
+
+
+def _write_controlled_ca_file(tmp_path: Path) -> tuple[str, str]:
+    """Write a self-signed CA certificate and return (path, common name)."""
+    common_name = "OpenMinion Transport Test CA"
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(days=1))
+        .not_valid_after(now + datetime.timedelta(days=3650))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(key, hashes.SHA256())
+    )
+    ca_file = tmp_path / "controlled-ca.pem"
+    ca_file.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    return str(ca_file), common_name
+
+
+def test_corrected_client_preserves_env_certificate_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # The corrected client is built with trust_env=False so httpx does not
+    # re-read the broken proxy environment; its default transport must
+    # still honor the environment's TLS trust configuration, exactly as
+    # the default client does when SSL_CERT_FILE is set.
+    ca_file, common_name = _write_controlled_ca_file(tmp_path)
+    monkeypatch.setenv("SSL_CERT_FILE", ca_file)
+    _set_env(monkeypatch, "no_proxy", "[::1]")
+
+    client = ProviderHTTPClient()
+    try:
+        inner = client._get_client()
+        context = inner._transport._pool._ssl_context
+        loaded = context.get_ca_certs()
+        assert len(loaded) == 1
+        assert common_name in str(loaded[0].get("subject"))
+        assert context.verify_mode != ssl.CERT_NONE
+    finally:
+        client.close()
 
 
 def test_normal_no_proxy_behavior_unchanged(
