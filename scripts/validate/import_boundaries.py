@@ -2,6 +2,8 @@
 """Guard modules against forbidden service, API, and config imports."""
 
 from __future__ import annotations
+import ast
+import importlib.util
 import sys
 
 import pathlib
@@ -19,25 +21,21 @@ MODULES_DIR = REPO_ROOT / "src" / "openminion" / "modules"
 SERVICES_DIR = REPO_ROOT / "src" / "openminion" / "services"
 BASE_DIR = REPO_ROOT / "src" / "openminion" / "base"
 LEGACY_API_NAMESPACE = "".join(["openminion", ".services", ".api", "."])
-FORBIDDEN_MODULE_IMPORTS = [
-    re.compile(r"^\s*from\s+openminion\.services\.", re.MULTILINE),
-    re.compile(r"^\s*import\s+openminion\.services\.", re.MULTILINE),
-    re.compile(r"^\s*from\s+openminion\.api\.", re.MULTILINE),
-    re.compile(r"^\s*import\s+openminion\.api\.", re.MULTILINE),
-]
-FORBIDDEN_SERVICE_IMPORTS = [
-    re.compile(r"^\s*from\s+openminion\.api\.", re.MULTILINE),
-    re.compile(r"^\s*import\s+openminion\.api\.", re.MULTILINE),
-    re.compile(r"^\s*from\s+openminion\.cli\.", re.MULTILINE),
-    re.compile(r"^\s*import\s+openminion\.cli\.", re.MULTILINE),
-]
-FORBIDDEN_BASE_CONFIG_LOAD = [
-    re.compile(
-        r"^\s*from\s+openminion\.base\.config\s+import\s+.*\bload_config\b",
-        re.MULTILINE,
-    ),
-    re.compile(r"openminion\.base\.config\.load_config", re.MULTILINE),
-]
+FORBIDDEN_IMPORTS = {
+    "modules": ("openminion.services", "openminion.api"),
+    "services": ("openminion.api", "openminion.cli"),
+}
+CONFIG_LOADER = "openminion.base.config.load_config"
+
+
+def _import_targets(node: ast.Import | ast.ImportFrom, path: pathlib.Path) -> list[str]:
+    if isinstance(node, ast.Import):
+        return [alias.name for alias in node.names]
+    target = node.module or ""
+    if node.level:
+        package = ".".join(path.relative_to(REPO_ROOT / "src").parent.parts)
+        target = importlib.util.resolve_name("." * node.level + target, package)
+    return [target, *(f"{target}.{alias.name}" for alias in node.names)]
 
 
 def scan_file(path: pathlib.Path, *, layer: str | None = None) -> list[str]:
@@ -53,22 +51,28 @@ def scan_file(path: pathlib.Path, *, layer: str | None = None) -> list[str]:
             resolved_layer = "services"
         else:
             raise ValueError(f"cannot infer import layer for {path}")
-    text = path.read_text(encoding="utf-8", errors="ignore")
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     hits = []
-    patterns = (
-        FORBIDDEN_MODULE_IMPORTS
-        if resolved_layer == "modules"
-        else FORBIDDEN_SERVICE_IMPORTS
-    )
-    for pattern in patterns:
-        for m in pattern.finditer(text):
-            line_no = text[: m.start()].count("\n") + 1
-            hits.append(f"{rel}:{line_no}: {m.group(0).strip()}")
-    if resolved_layer == "modules":
-        for pattern in FORBIDDEN_BASE_CONFIG_LOAD:
-            for m in pattern.finditer(text):
-                line_no = text[: m.start()].count("\n") + 1
-                hits.append(f"{rel}:{line_no}: {m.group(0).strip()}")
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            targets = _import_targets(node, path)
+            forbidden = any(
+                target == prefix or target.startswith(prefix + ".")
+                for target in targets
+                for prefix in FORBIDDEN_IMPORTS[resolved_layer]
+            )
+            if resolved_layer == "modules" and CONFIG_LOADER in targets:
+                forbidden = True
+            if forbidden:
+                hits.append(f"{rel}:{node.lineno}: {ast.unparse(node)}")
+        elif (
+            resolved_layer == "modules"
+            and isinstance(node, ast.Attribute)
+            and node.attr == "load_config"
+            and ast.unparse(node) == CONFIG_LOADER
+        ):
+            hits.append(f"{rel}:{node.lineno}: {CONFIG_LOADER}")
+
     return hits
 
 

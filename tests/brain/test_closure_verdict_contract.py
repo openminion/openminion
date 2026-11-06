@@ -180,8 +180,19 @@ def test_closure_submit_output_schema_requires_verdict_fields() -> None:
     )
 
 
-def test_closure_final_answer_only_reply_does_not_replace_grounded_answer() -> None:
-    client = _JudgeClient({"final_answer": _REFUSAL})
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"final_answer": _REFUSAL},
+        {"satisfied": True, "reason": "done", "final_answer": _REFUSAL},
+        {"reason": "done", "next_action": "close", "final_answer": _REFUSAL},
+    ],
+    ids=["final_answer_only", "missing_next_action", "missing_satisfied"],
+)
+def test_closure_incomplete_verdict_does_not_replace_grounded_answer(
+    arguments: dict[str, Any],
+) -> None:
+    client = _JudgeClient(arguments)
 
     with (
         tempfile.TemporaryDirectory() as tmp,
@@ -192,22 +203,33 @@ def test_closure_final_answer_only_reply_does_not_replace_grounded_answer() -> N
     assert len(client.requests) == 1
 
 
-def test_closure_complete_close_verdict_keeps_model_final_answer() -> None:
+@pytest.mark.parametrize(
+    ("satisfied", "next_action", "final_answer"),
+    [
+        (True, "close", _GROUNDED_ANSWER),
+        (False, "continue", None),
+        (False, "replan", None),
+    ],
+)
+def test_closure_preserves_complete_model_verdict(
+    satisfied: bool, next_action: str, final_answer: str | None
+) -> None:
     client = _JudgeClient(
         {
-            "satisfied": True,
-            "reason": "lookup_order returned the pickup code",
-            "next_action": "close",
-            "final_answer": _GROUNDED_ANSWER,
+            "satisfied": satisfied,
+            "reason": "model verdict",
+            "next_action": next_action,
+            "final_answer": final_answer,
         }
     )
 
     with tempfile.TemporaryDirectory() as tmp:
         judgment = _evaluate_closure(Path(tmp), client)
 
-    assert judgment.satisfied is True
-    assert judgment.next_action == "close"
-    assert judgment.final_answer == _GROUNDED_ANSWER
+    assert judgment.satisfied is satisfied
+    assert judgment.next_action == next_action
+    assert judgment.final_answer == final_answer
+    assert len(client.requests) == 1
     payload = judgment.model_dump(mode="json")
     assert payload["plan_reconciliation"]["state"] == "complete"
     assert payload["verification"]["signal"] == "unavailable"

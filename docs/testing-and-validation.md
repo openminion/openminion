@@ -78,13 +78,23 @@ make ci-check
 This composes `workflow-check`, `format-check`, `lint`, `test-critical`,
 `test-ci`, and `test-e2e-ci`. The fast critical slice gives early coverage
 across turn execution, session continuity, memory, tools, tasks, delegation,
-scheduling, and approval. Its package-owned inventory is
+scheduling, and the production policy adapter's confirmation/grant behavior.
+It also runs architecture boundaries, closure-judge verdicts, confirmation
+replay, steering at budget/repeated-tool closeout, and durable session replay.
+Its package-owned inventory is
 `tests/ci/critical-path.tsv`; add a fast representative test there only when a
 new critical workflow needs early feedback. `test-ci` remains the authoritative
 provider-free suite. It excludes live, external-service, Postgres,
 package-integration, benchmark, E2E, and slow markers. `make test` and
 `make check` remain broader local commands and are not interchangeable with
 the pull-request selection.
+
+The import-boundary check in `make lint` parses static Python imports, including
+root, relative, aliased, lazy and type-only imports. It rejects reverse module
+and service dependencies without treating examples in comments or strings as
+imports. It does not analyze dynamic imports or prove behavioral equivalence.
+Brain and core changes still require caller-level review and focused positive
+and negative regression evidence under [Code Quality and Hygiene](../CODE_QUALITY.md#brain-and-core-behavior).
 
 `make lint` also runs the test-suite skip ratchet
 (`scripts/validate/test_skip_budget.py`), which keeps `skip`/`skipif`/`xfail` markers
