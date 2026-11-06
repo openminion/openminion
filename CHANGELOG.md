@@ -7,6 +7,11 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- The agent loop's stall rule now counts consecutive failures: a productive batch clears
+  the no-progress counter, so two intermittent failures spread across a turn no longer end it
+  while work is still getting done (Refs #679).
+
+
 ## Current package line - 2026-11-17
 
 - The Playwright browser provider now creates its artifact directories (downloads,
