@@ -359,6 +359,67 @@ def _follow_log_file(log_file: Path, *, start_offset: int) -> None:
         return
 
 
+def _await_daemon_ready(
+    endpoint: DaemonEndpoint,
+    process: subprocess.Popen[bytes],
+    *,
+    pid_file: Path,
+    log_file: Path,
+) -> dict[str, object]:
+    """Probe a freshly spawned daemon until it answers, exits, or runs out of time."""
+    from openminion.daemon import read_pid
+
+    deadline = time.time() + 10
+    exit_code: int | None = None
+    while time.time() < deadline:
+        probe_status, payload = probe_daemon_endpoint(endpoint, timeout_s=1.5)
+        if probe_status == "ok":
+            pid = read_pid(pid_file) or process.pid
+            return {
+                "ok": True,
+                "message": f"Started daemon pid={pid} ({endpoint.host}:{endpoint.port})",
+            }
+        if probe_status == _PROBE_STATUS_MISMATCH:
+            remote_config_path = _remote_config_path_from_probe_payload(payload)
+            return {
+                "ok": False,
+                "message": (
+                    "Daemon port became reachable, but the endpoint identity does not match "
+                    f"the requested config (expected {endpoint.config_path}, got "
+                    f"{remote_config_path or 'unknown'})."
+                ),
+            }
+        if process.poll() is not None:
+            exit_code = process.returncode
+            break
+        time.sleep(0.1)
+
+    if exit_code is None:
+        # The last probe can see a live child that exits during the sleep; read the
+        # status once more so the message reflects what actually happened.
+        exit_code = process.poll()
+    if exit_code is not None:
+        log_hint = (
+            f"Inspect logs at {log_file}."
+            if log_file.exists()
+            else "No daemon log file was written."
+        )
+        return {
+            "ok": False,
+            "message": (
+                f"Daemon exited with code {exit_code} before answering on "
+                f"{endpoint.host}:{endpoint.port}. {log_hint}"
+            ),
+        }
+    return {
+        "ok": False,
+        "message": (
+            "Daemon failed to become healthy within timeout. "
+            f"Inspect logs at {log_file}."
+        ),
+    }
+
+
 def _start_daemon(endpoint: DaemonEndpoint) -> dict[str, object]:
     from openminion.daemon import (
         process_alive,
@@ -410,37 +471,14 @@ def _start_daemon(endpoint: DaemonEndpoint) -> dict[str, object]:
 
     started = False
     try:
-        deadline = time.time() + 10
-        while time.time() < deadline:
-            probe_status, payload = probe_daemon_endpoint(endpoint, timeout_s=1.5)
-            if probe_status == "ok":
-                started = True
-                pid = read_pid(pid_file) or process.pid
-                return {
-                    "ok": True,
-                    "message": f"Started daemon pid={pid} ({endpoint.host}:{endpoint.port})",
-                }
-            if probe_status == _PROBE_STATUS_MISMATCH:
-                remote_config_path = _remote_config_path_from_probe_payload(payload)
-                return {
-                    "ok": False,
-                    "message": (
-                        "Daemon port became reachable, but the endpoint identity does not match "
-                        f"the requested config (expected {endpoint.config_path}, got "
-                        f"{remote_config_path or 'unknown'})."
-                    ),
-                }
-            if process.poll() is not None:
-                break
-            time.sleep(0.1)
-
-        return {
-            "ok": False,
-            "message": (
-                "Daemon failed to become healthy within timeout. "
-                f"Inspect logs at {log_file}."
-            ),
-        }
+        result = _await_daemon_ready(
+            endpoint,
+            process,
+            pid_file=pid_file,
+            log_file=log_file,
+        )
+        started = bool(result.get("ok"))
+        return result
     finally:
         if not started:
             if process.poll() is None:
