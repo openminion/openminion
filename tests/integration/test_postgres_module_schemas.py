@@ -1,18 +1,8 @@
-"""PostgreSQL schema per owner (#446), against a real server.
+"""PostgreSQL schema per owner against a real server, in a new database per test.
 
-Runtime storage keeps the configured URL's schema (here `public` of a new
-database per test); each module uses `public__<module id>`; a module whose
-listed history is already in `public` stays there. Every refusal is checked
-to write nothing: a snapshot of every schema's tables (columns, nullability,
-row counts and an md5 of all rows), indexes, functions, triggers and sequence
-values is the same before and after. Views, constraints other than those
-indexes, column defaults and privileges are not part of the snapshot.
-
-Legacy layouts are built the way earlier code wrote them: a module's Alembic
-chain upgraded on a connection to `public`, the memory store on an engine for
-`public`, and runtime storage's own `migrate_record_store` without the start's
-check. Only public entry points are imported at module level, so the same file
-runs on code from before #446.
+Every refusal is checked to write nothing by comparing `_snapshot` before and
+after. Only public entry points are imported at module level, so the file also
+runs on code that predates per-owner schemas.
 """
 
 from __future__ import annotations
@@ -40,9 +30,6 @@ sa = pytest.importorskip("sqlalchemy")
 DOCS = Path(__file__).resolve().parents[2] / "docs" / "runtime-database-upgrades.md"
 # Audit records older than the A2A store's retention are deleted when it writes.
 NOW = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-
-
-# ---------------------------------------------------------------------------- fixtures
 
 
 def _server_url() -> str:
@@ -102,7 +89,11 @@ def _scalars(url: str, sql: str) -> list:
 
 
 def _snapshot(url: str) -> dict:
-    """Every non-system schema: tables, columns, keys, rows, indexes, routines, sequences."""
+    """Every non-system schema: tables, columns, keys, rows, indexes, routines, sequences.
+
+    Views, constraints other than indexes, column defaults and privileges are not
+    compared.
+    """
     engine = sa.create_engine(url)
     snap: dict = {}
     try:
@@ -195,9 +186,6 @@ def _ledger(url: str, schema: str) -> tuple[list[str], str | None]:
     revisions = _scalars(url, f"SELECT version_num FROM {q}.alembic_version")
     module_id = _scalars(url, f"SELECT value FROM {q}.om_meta WHERE key = 'module_id'")
     return revisions, (module_id[0] if module_id else None)
-
-
-# ---------------------------------------------------------------------------- owners
 
 
 def _start_runtime(url: str, root: Path) -> int:
@@ -357,8 +345,6 @@ def _migrate(url: str, tmp_path: Path, capsys, module: str | None = None) -> dic
     entries = json.loads(capsys.readouterr().out)["modules"]
     return {"code": code, **{entry["module_id"]: entry for entry in entries}}
 
-
-# ---------------------------------------------------------------------------- new databases
 
 WORKING_MODULES = (
     "secret",
@@ -531,9 +517,6 @@ def test_a_module_url_that_does_not_land_in_its_schema_is_refused(
     assert _snapshot(database) == before
 
 
-# ---------------------------------------------------------------------------- in place
-
-
 def test_dedicated_memory_history_stays_in_place(
     database: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -570,9 +553,6 @@ def test_listed_historical_session_history_stays_in_place_and_upgrades(
     assert _schemas(database) == ["public"]
     current = postgres_schema.complete_history("session", _read(database, "public"))
     assert current is not None and "current" in current.measured
-
-
-# ---------------------------------------------------------------------------- refusals
 
 
 def _memory_then_failed_runtime(url: str, tmp_path: Path) -> None:
@@ -846,9 +826,6 @@ def test_a_failed_module_migration_leaves_no_schema(
     assert _schemas(database) == ["public"]
 
 
-# ---------------------------------------------------------------------------- module schemas
-
-
 def _one_store_table(url: str, tmp_path: Path) -> None:
     """`public__registry` with only `agent_methods`, as the registry store creates it."""
     _execute(
@@ -994,9 +971,6 @@ def test_a_proven_module_schema_never_touches_unproven_base_tables(
     assert _snapshot(database)["public"] == before
 
 
-# ---------------------------------------------------------------------------- schemas, roles
-
-
 def test_an_empty_schema_a_dba_created_serves_a_role_without_create(
     database: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1121,9 +1095,6 @@ def test_startup_check_reads_each_module_in_its_schema(
     with caplog.at_level(logging.WARNING):
         validate_postgres_config(database)
     assert "Postgres module 'memory': Module 'memory' will not use" in caplog.text
-
-
-# ---------------------------------------------------------------------------- listed histories
 
 
 def _read(url: str, schema: str):
@@ -1421,9 +1392,6 @@ def test_this_code_builds_only_listed_histories(database: str, tmp_path: Path) -
         '"engine_tables": '
         + json.dumps({t: sorted(s) for t, s in sorted(engine_built.items())}, indent=1)
     )
-
-
-# ---------------------------------------------------------------------------- relocation
 
 
 def _documented_sql(name: str) -> list[str]:

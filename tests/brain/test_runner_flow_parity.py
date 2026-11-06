@@ -42,7 +42,7 @@ def _profile() -> AgentProfile:
         max_ticks_per_user_turn=5,
         max_tool_calls=3,
         max_a2a_calls=1,
-        max_total_llm_tokens=1000,
+        max_total_llm_tokens=20000,
         max_elapsed_ms=10000,
     )
     llm_profiles = LLMProfiles(
@@ -232,15 +232,38 @@ def test_emit_turn_outcome_counts_storage_shaped_events() -> None:
 def test_new_user_turn_gets_fresh_trace_and_outcome_counts() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         runner, session = _build_runner(Path(tmp))
+        runner.profile.budgets.max_total_llm_tokens = 20000
 
         first = runner.run(
             session_id="s-two-turns",
             user_input='tool echo {"msg":"one"}',
         )
-        second = runner.run(
-            session_id="s-two-turns",
-            user_input="hi",
+        response = LLMResponse(
+            ok=True,
+            provider="local",
+            model="decide-default",
+            tool_calls=[
+                ToolCall(
+                    id="greeting",
+                    name="respond",
+                    arguments={
+                        "answer": "Hi!",
+                        "task_update": {
+                            "operation": "replace",
+                            "expected_revision": 1,
+                            "user_quote": "hi",
+                            "objective": "Greet the user",
+                        },
+                    },
+                )
+            ],
+            usage=UsageInfo(total_tokens=1),
         )
+        with patch.object(runner.llm_api, "call", return_value=response):
+            second = runner.run(
+                session_id="s-two-turns",
+                user_input="hi",
+            )
 
         assert first.status == "done"
         assert second.status == "done"

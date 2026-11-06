@@ -19,10 +19,14 @@ class MatchInfo:
 
 @dataclass(frozen=True)
 class ReadResult:
+    """Text slice and optional SHA-256 of full UTF-8 text before newline conversion."""
+
     content: str
     total_length: int
     returned_length: int
     truncated: bool
+    version: str | None = None
+    content_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -114,6 +118,8 @@ class StorageBackend(Protocol):
         *,
         append: bool = False,
         create_dirs: bool = True,
+        expected_content_sha256: str | None = None,
+        expected_version: str | None = None,
     ) -> WriteResult: ...
 
     def find(

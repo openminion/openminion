@@ -51,8 +51,7 @@ from openminion.modules.brain.loop.tools.budget import _debit_llm_usage  # noqa:
 from openminion.modules.brain.loop.tools.budget_extension import (
     consume_approved_extension,
 )
-from openminion.modules.brain.loop.tools.transcript import replay_tool_messages
-from openminion.modules.llm.schemas import Message
+from openminion.modules.brain.execution.task_context import execution_input
 from openminion.modules.memory.runtime.consolidation import (
     apply_memory_consolidation_decisions,
 )
@@ -118,6 +117,19 @@ def _seed_requests_inactive_tool(seed_response: Any) -> bool:
     return any(
         str(getattr(call, "name", "") or "").strip() == "tool.request"
         for call in list(getattr(seed_response, "tool_calls", []) or [])
+    )
+
+
+def _runtime_unavailable_result(
+    ctx: ExecutionContext, error: Exception
+) -> ExecutionResult:
+    return ExecutionResult(
+        status=BRAIN_STATE_ERROR,
+        working_state=ctx.state,
+        message=str(error),
+        action_result=_build_error_result(
+            str(error), "act_adaptive_runtime_unavailable"
+        ),
     )
 
 
@@ -296,14 +308,7 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
                 },
             )
             return ModePreparation(
-                mode_result=ExecutionResult(
-                    status=BRAIN_STATE_ERROR,
-                    working_state=ctx.state,
-                    message=str(exc),
-                    action_result=_build_error_result(
-                        str(exc), "act_adaptive_runtime_unavailable"
-                    ),
-                ),
+                mode_result=_runtime_unavailable_result(ctx, exc),
                 consume_user_input_for_command=False,
             )
 
@@ -341,16 +346,11 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
         if self._seeded_commands(ctx):
             return self._execute_seeded_commands(ctx)
         try:
-            runtime = DefaultAdaptiveToolLoopLLMRuntime.from_adapter(ctx.llm_adapter)
-        except AdaptiveToolLoopRuntimeUnavailableError as exc:
-            return ExecutionResult(
-                status=BRAIN_STATE_ERROR,
-                working_state=ctx.state,
-                message=str(exc),
-                action_result=_build_error_result(
-                    str(exc), "act_adaptive_runtime_unavailable"
-                ),
+            runtime = DefaultAdaptiveToolLoopLLMRuntime.from_adapter(
+                ctx.llm_adapter, task_state=ctx.state
             )
+        except AdaptiveToolLoopRuntimeUnavailableError as exc:
+            return _runtime_unavailable_result(ctx, exc)
         if not ctx.state.intent_execution_states and ctx.state.decision_sub_intent_refs:
             ctx.state.intent_execution_states = build_intent_execution_states(
                 ctx.state.decision_sub_intent_refs,
@@ -386,18 +386,15 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
                 frozenset(effective_allowed_tools)
             )
         model = resolve_loop_model(ctx)
-        messages = replay_tool_messages(
-            getattr(runner, "session_api", None),
-            str(ctx.state.session_id or ""),
-        )
         seeded_replay_without_new_input = bool(
             self._seeded_continue_stays_autonomous(ctx)
             and not str(ctx.user_input or "").strip()
         )
-        if ctx.user_input:
-            messages.append(Message(role="user", content=ctx.user_input))
-        elif ctx.state.goal and not seeded_replay_without_new_input:
-            messages.append(Message(role="user", content=str(ctx.state.goal or "")))
+        messages, task_error = execution_input(
+            ctx, autonomous=seeded_replay_without_new_input
+        )
+        if task_error is not None:
+            return task_error
         seed_response = getattr(ctx.decision, "_entry_response", None)
         direct_tool_turn = _direct_tool_turn_context(
             ctx=ctx,

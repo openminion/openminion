@@ -1,18 +1,7 @@
-"""`memctl inspect` with an omitted, empty, valid or invalid `--scope` (#413).
+"""`memctl inspect` with an omitted, empty, valid or invalid `--scope`.
 
-Each test runs the real memctl app (`memory_cli._build_app()`, with its own
-`_get_service`) on a SQLite memory database seeded with one fact in
-`agent:a` and a keyed fact with two versions in `agent:history`.
-
-- No scope, or an empty one, inspects with the default `inspect` session and
-  agent identifiers and reports the stats for every scope, the same stats
-  `memctl stats` reports without a scope.
-- A valid scope sets the matching identifier and filters the stats.
-- An invalid non-empty scope is reported as `Error: invalid scope: ...` with
-  exit code 1, as `memctl search` and `memctl list` report one, and no
-  traceback.
-
-The deepest-history summary (#402) does not depend on the scope.
+The tests run the real memctl app on a SQLite memory database. The
+deepest-history summary does not depend on the scope.
 """
 
 from __future__ import annotations

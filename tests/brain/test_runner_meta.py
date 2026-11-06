@@ -410,7 +410,7 @@ class RunnerMetaTests(unittest.TestCase):
                 session_id="s11",
                 agent_id="router-agent",
                 budgets_remaining=BudgetCounters(
-                    ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                    ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
                 ),
                 tier="T0_direct",
                 status="active",

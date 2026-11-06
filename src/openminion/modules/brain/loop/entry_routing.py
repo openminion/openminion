@@ -118,6 +118,8 @@ def _should_bypass_unified_entry(
     route: Any,
     state: WorkingState,
 ) -> bool:
+    if getattr(state, "task_context_needs_update", False):
+        return False
     execution_target_kind = str(
         getattr(getattr(route, "execution_target", None), "kind", "") or ""
     ).strip()
@@ -526,3 +528,26 @@ def _entry_coding_decision(
         source="entry_coding_tool_call",
     )
     return decision
+
+
+def resolve_entry_skill_hints(
+    runner: Any,
+    *,
+    state: WorkingState,
+    user_input: str | None,
+    logger: CanonicalEventLogger,
+) -> dict[str, Any]:
+    from openminion.modules.brain.execution.delegation import _runner_delegate
+
+    if not str(user_input or "").strip():
+        return {}
+    return dict(
+        _runner_delegate(
+            "_resolve_skill_hints",
+            runner,
+            intent=user_input,
+            purpose="plan",
+            state=state,
+            logger=logger,
+        )
+    )

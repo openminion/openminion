@@ -1,4 +1,5 @@
 import hashlib
+from openminion.modules.brain.execution.task_context import execution_task_text
 from typing import Any
 
 from openminion.modules.brain.constants import (
@@ -195,7 +196,7 @@ def _delegate_command(
         target_agent_id=resolved_agent_id,
         method="delegate",
         params=params,
-        inputs={"user_input": ctx.user_input or payload.goal},
+        inputs={"user_input": execution_task_text(ctx) or payload.goal},
         success_criteria={"status": "success"},
         idempotency_key=idempotency_key,
         timeout_ms=payload.timeout_ms,

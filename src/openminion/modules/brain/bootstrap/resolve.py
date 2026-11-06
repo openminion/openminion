@@ -28,6 +28,7 @@ from openminion.modules.brain.loop.strategies.research import (
 from openminion.modules.brain.schemas import ExecutionTargetPayload
 
 from .strategy import resolve_loop_strategy
+from ..execution.task_context import execution_task_text
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,11 +246,7 @@ def apply_resolved_act_route(
 
 
 def goal_from_context(ctx: ExecutionContext) -> str:
-    return (
-        str(ctx.user_input or "").strip()
-        or str(getattr(ctx.state, "goal", "") or "").strip()
-        or "Complete the requested act task."
-    )
+    return execution_task_text(ctx) or "Complete the requested act task."
 
 
 def build_internal_decision(ctx: ExecutionContext) -> object:

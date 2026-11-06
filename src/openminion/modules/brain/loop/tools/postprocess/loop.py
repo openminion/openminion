@@ -280,6 +280,7 @@ def _loop_snapshot_from_state(
     loop_state: Any,
     turn_scope_id: Any,
     model: str,
+    retain_all_tool_results: bool = False,
 ) -> LoopSnapshot:
     return LoopSnapshot(
         iteration_index=loop_state.iteration,
@@ -310,7 +311,7 @@ def _loop_snapshot_from_state(
                 loop_state.scratchpad.get("adaptive.tool_results", []) or []
             )
             if isinstance(item, dict)
-        ][-24:],
+        ][slice(None) if retain_all_tool_results else slice(-24, None)],
     )
 
 
@@ -331,6 +332,7 @@ def _persist_loop_snapshot(
         loop_state=loop_state,
         turn_scope_id=turn_scope_id,
         model=model,
+        retain_all_tool_results=bool(module_state.get("research", {}).get("child")),
     ).to_dict()
     ctx_state.module_state = module_state
 

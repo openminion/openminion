@@ -66,3 +66,69 @@ def test_resize_clamps_cursor_when_its_row_and_column_are_clipped(
     terminal._consume_output(b"\x1b[2;95H")
     terminal.resize(rows=18, cols=72)
     assert terminal.cursor_position == (1, 72)
+
+
+def test_screen_snapshot_does_not_mix_repaint_frames(terminal, monkeypatch):
+    reads = []
+
+    def read(session, *, timeout):
+        reads.append(timeout)
+        if len(reads) == 2:
+            session._consume_output(b"\x1b[2D\x1b[J")
+
+    monkeypatch.setattr(PtySession, "_read_available", read)
+    rows, cursor = terminal.screen_snapshot
+    assert rows[12:14] == ("❯ draft", "◆ status")
+    assert cursor == (13, 3)
+    assert reads == [0.05]
+    assert not any(row.startswith("◆") for row in terminal.screen_lines)
+
+
+def test_layout_asserts_accepted_frame_before_next_erase(terminal, monkeypatch):
+    from tests.e2e.cli.focus.test_local import _assert_flow_layout
+
+    reads = []
+
+    def read(session, *, timeout):
+        reads.append(timeout)
+        if len(reads) > 1:
+            session._consume_output(b"\x1b[2D\x1b[J")
+
+    monkeypatch.setattr(PtySession, "_read_available", read)
+    _assert_flow_layout(terminal, rows=24)
+    assert reads == [0.05, 0.05]
+    assert not any(row.startswith("◆") for row in terminal._screen_display_lines())
+
+
+@pytest.mark.parametrize("fault", ["footer", "prompt", "cursor", "height"])
+def test_layout_rejects_persistent_invalid_frame(terminal, monkeypatch, fault):
+    from tests.e2e.cli.focus import test_local
+
+    if fault == "footer":
+        terminal._consume_output(b"\x1b[14;1H\x1b[2K")
+    elif fault == "prompt":
+        terminal._consume_output(b"\x1b[13;1H\x1b[2K")
+    elif fault == "cursor":
+        terminal._consume_output(b"\x1b[1;1H")
+    ticks = iter([0.0, 0.0, 6.0])
+    monkeypatch.setattr(test_local.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(test_local.time, "sleep", lambda _: None)
+    with pytest.raises(AssertionError):
+        test_local._assert_flow_layout(terminal, rows=18 if fault == "height" else 24)
+
+
+def test_layout_waits_for_complete_frame_after_erase(terminal, monkeypatch):
+    from tests.e2e.cli.focus import test_local
+
+    terminal._consume_output(b"\x1b[2D\x1b[J")
+    reads = []
+
+    def read(session, *, timeout):
+        reads.append(timeout)
+        if len(reads) == 2:
+            session._consume_output("❯ draft\r\n◆ status\x1b[1A\r\x1b[2C".encode())
+
+    monkeypatch.setattr(PtySession, "_read_available", read)
+    monkeypatch.setattr(test_local.time, "sleep", lambda _: None)
+    test_local._assert_flow_layout(terminal, rows=24)
+    assert reads == [0.05, 0.05, 0.05]

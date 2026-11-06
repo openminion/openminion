@@ -78,11 +78,18 @@ def _usage_token_count(usage: dict[str, Any], canonical: str, legacy: str) -> in
 
 
 def _stable_tool_event_id(
-    *, session_id: str, turn_scope_id: str, call_id: str, phase: str
+    *,
+    session_id: str,
+    turn_scope_id: str,
+    call_id: str,
+    phase: str,
+    research_invocation_id: str = "",
 ) -> str:
     key = (
         f"openminion:tool-transcript:v1:{session_id}:{turn_scope_id}:{call_id}:{phase}"
     )
+    if research_invocation_id:
+        key += f":research:{research_invocation_id}"
     return uuid5(NAMESPACE_URL, key).hex
 
 
@@ -94,6 +101,11 @@ def _canonical_tool_payload(
         raise ValueError("canonical tool event requires schema_version=1")
     turn_scope_id = _required_text(payload, "turn_scope_id")
     call_id = _required_text(payload, "call_id")
+    invocation = {}
+    if payload.get("research_invocation_id"):
+        invocation["research_invocation_id"] = _required_text(
+            payload, "research_invocation_id"
+        )
 
     if event_type == "tool.call.requested":
         canonical_name = _required_text(payload, "canonical_name")
@@ -114,6 +126,7 @@ def _canonical_tool_payload(
             "schema_version": 1,
             "turn_scope_id": turn_scope_id,
             "call_id": call_id,
+            **invocation,
             "canonical_name": canonical_name,
             "sanitized_normalized_arguments": _bounded_tool_value(arguments),
             "batch_index": max(0, batch_index),
@@ -143,6 +156,7 @@ def _canonical_tool_payload(
             "schema_version": 1,
             "turn_scope_id": turn_scope_id,
             "call_id": call_id,
+            **invocation,
             "status": "success",
             "output": _bounded_tool_value(payload.get("output")),
         }
@@ -155,6 +169,7 @@ def _canonical_tool_payload(
         "schema_version": 1,
         "turn_scope_id": turn_scope_id,
         "call_id": call_id,
+        **invocation,
         "status": status,
         "error": _bounded_tool_value(error),
     }
@@ -300,6 +315,7 @@ class SessionEventWriter:
             turn_scope_id=str(payload["turn_scope_id"]),
             call_id=str(payload["call_id"]),
             phase=phase,
+            research_invocation_id=str(payload.get("research_invocation_id") or ""),
         )
         if event_name != "tool.call.requested":
             self._validate_tool_result_parent(
@@ -443,6 +459,12 @@ class SessionEventWriter:
             raise ValueError("canonical tool result parent payload is invalid")
         if parent_payload.get("call_id") != payload.get("call_id"):
             raise ValueError("canonical tool result call_id does not match parent")
+        if parent_payload.get("research_invocation_id") != payload.get(
+            "research_invocation_id"
+        ):
+            raise ValueError(
+                "canonical tool result research invocation does not match parent"
+            )
         if parent_payload.get("turn_scope_id") != payload.get("turn_scope_id"):
             raise ValueError(
                 "canonical tool result turn_scope_id does not match parent"

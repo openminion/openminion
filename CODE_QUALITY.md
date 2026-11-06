@@ -1,6 +1,8 @@
 # OpenMinion Code Quality and Hygiene
 
 This is the public contributor version of the project's code-quality rules.
+It applies to maintainers, external contributors and coding agents, to new
+changes and to reviews of code already merged.
 
 The short version:
 
@@ -28,6 +30,32 @@ Avoid:
 3. ad hoc wrappers
 4. "just for this file" copies of shared logic
 
+For each new layer, fallback or retry, identify the caller or failure it serves.
+Prefer the existing owner when it can satisfy that case directly. Keep validation
+where external data enters and preserve permission, compatibility, replay and
+cleanup guarantees. If a second check serves the same contract, show what
+can change between the two checks. Apply this review to the final diff before
+merging, including maintainer PRs.
+
+### Minimum usable code
+
+Trace the actual callers, supported inputs and failure paths before choosing
+the implementation. First ask whether the code is needed, then check the
+existing owner, standard library, platform and existing dependencies. Prefer
+a direct call or one small helper when it meets the same contract. Add a new
+layer only for a current requirement, not an imagined future consumer.
+
+Reject unused modes and extension points, pass-through wrappers, duplicate
+validation, silent defaults that hide invalid state, blanket exception handling
+and retries that hide failures. A retry needs a defined transient failure,
+a bound and an idempotency or recovery contract. An internal typed path should
+rely on its owner's contract unless state can change between checks.
+
+Necessary defenses remain required: validate untrusted input and preserve
+permissions, data integrity, compatibility, persistence, replay, resource
+cleanup and observable failures. Fewer lines are not an improvement if they
+remove one of those guarantees or make the flow harder to understand.
+
 ## 2. Code should explain itself
 
 Write code so names, types, and structure do most of the explaining.
@@ -52,7 +80,7 @@ context. If removing it loses no information beyond the names, types and code,
 remove it. Simplify unclear code before adding a walkthrough. Keep one concise
 explanation beside the owner when a constraint is genuinely non-obvious.
 
-Apply this review to tests too: keep the regression condition or surprising
+Apply this review to tests and scripts too: keep the regression condition or surprising
 oracle, but remove narration of setup, calls and assertions that already read
 clearly. Preserve public API/tool descriptions consumed by users or models,
 license notices, required directives, and useful safety or compatibility notes.
@@ -195,6 +223,20 @@ For file-by-file cleanup claims, also:
    4. `defer-later:<reason>`
 3. keep the remaining-file count explicit until it reaches zero
 
+Keep source, tests and scripts inventories separate when their proof differs.
+For each file, record the exact revision, callers checked, finding or keep
+rationale, disposition and validation. Work in bounded tranches and update
+the ledger and remaining count after each one. Refresh the inventory and
+affected validation if the code changes during review.
+
+For source simplification, record before/after LOC; revert a claimed reduction
+that is LOC-neutral or harder to read. Preserve test assertions, negative
+controls and coverage intent; do not add skips, xfails, waits or retries to
+make a failing check pass. Record unchanged failures as baseline evidence.
+Preserve scripts' exit codes, machine-readable output and operator clarity.
+Deferred work must name its owner or reason and remain visible; deferral is
+not completed cleanup.
+
 ## 9. Reduce complexity truthfully
 
 OpenMinion now treats complexity, readability, and LOC reduction as first-class
@@ -230,3 +272,20 @@ The project prefers:
 3. maintainable structure over short-term shortcuts
 
 If a change makes the code harder to place, reason about, validate, or delete later, it is probably the wrong shape.
+
+## 11. Review evidence and merged code
+
+Review the complete final diff and every new delta, including rebases and
+maintainer changes. Record the exact head, checked callers and supported
+failure paths, findings, disposition and validation in the PR review or linked
+ledger. Ask for the smaller change in the existing owner when it satisfies the
+same contract. Block approval and merge while a substantiated finding remains;
+green CI is not a substitute for this review. Recheck the live target, head,
+integration and required checks before merging.
+
+Apply the same rules to merged code, but first verify that the candidate still
+exists on current `dev`. Reuse existing findings and active owners, record
+resolved or obsolete candidates, and open only bounded follow-up work backed
+by current caller or failure evidence. Do not reopen obsolete PRs, repeat
+closed audits, duplicate issues or take over an active contributor's branch.
+An old PR review is not proof that today's surviving code was checked.

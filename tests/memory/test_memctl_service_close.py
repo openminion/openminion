@@ -1,11 +1,7 @@
-"""memctl closes the memory service that `_get_service` creates (#403).
+"""memctl closes the memory service that `_get_service` creates.
 
-`_get_service` builds a SQLite store, an audit sink and the service around
-them. Inside a memctl command they are closed when the command's context
-closes, once, whether the command succeeds or fails; outside a command the
-caller closes the service. The cyclic collector is disabled while each test
-runs, so nothing is released by collection: the store, sink and service hold a
-reference cycle through the service's helpers.
+The cyclic collector is disabled while each test runs: the store, audit sink and
+service hold a reference cycle, so collection must not be what closes them.
 """
 
 from __future__ import annotations

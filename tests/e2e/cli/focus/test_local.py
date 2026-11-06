@@ -21,12 +21,36 @@ def _occupied_rows(session: PtySession) -> tuple[str, ...]:
     return rows[: last + 1]
 
 
-def _assert_inline_composer(session: PtySession) -> tuple[str, ...]:
-    rows = _occupied_rows(session)
+def _assert_inline_composer(
+    screen_rows: tuple[str, ...], cursor: tuple[int, int]
+) -> tuple[str, ...]:
+    last = max(index for index, row in enumerate(screen_rows) if row)
+    rows = screen_rows[: last + 1]
     assert rows[-1].startswith("◆ "), "\n".join(rows)
     assert rows[-2].startswith("❯ "), "\n".join(rows)
-    assert session.cursor_position[0] == len(rows) - 1
+    assert cursor[0] == len(rows) - 1
     return rows
+
+
+def _assert_flow_layout(session: PtySession, *, rows: int) -> None:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        screen_rows, cursor = session.screen_snapshot
+        last = max((i for i, row in enumerate(screen_rows) if row), default=-1)
+        occupied_rows = screen_rows[: last + 1]
+        if (
+            len(screen_rows) == rows
+            and len(occupied_rows) >= 2
+            and occupied_rows[-1].startswith("◆ ")
+            and occupied_rows[-2].startswith("❯ ")
+            and cursor[0] == len(occupied_rows) - 1
+        ):
+            break
+        time.sleep(0.05)
+    # Validate the accepted frame; another read can consume the next repaint's erase.
+    assert len(screen_rows) == rows
+    _assert_inline_composer(screen_rows, cursor)
+    assert "cursor position requests" not in session.visible_transcript
 
 
 def test_focus_artifact_root_isolates_pytest_runs(tmp_path, monkeypatch) -> None:
@@ -199,6 +223,10 @@ def test_focus_full_slash_menu_preserves_visible_transcript(
 def test_focus_submitted_input_remains_top_down_after_slash_menu(
     focus_probe: FocusProbe,
 ) -> None:
+    # Empty-startup layout controls exclude repository-specific context notices.
+    focus_probe = focus_probe.for_workdir(
+        focus_probe.openminion_root, include_project_context=False
+    )
     with focus_probe.session(rows=53, cols=153) as session:
         focus_probe.wait_ready(session)
         session.send("/")
@@ -612,6 +640,10 @@ def test_focus_pty_survives_resize_after_launch(
 def test_focus_pty_keeps_top_down_transcript_with_inline_input_across_resize(
     focus_probe: FocusProbe,
 ) -> None:
+    focus_probe = focus_probe.for_workdir(
+        focus_probe.openminion_root, include_project_context=False
+    )
+
     def assert_blank_row_after(
         screen_rows: tuple[str, ...],
         expected_line: str,
@@ -621,27 +653,9 @@ def test_focus_pty_keeps_top_down_transcript_with_inline_input_across_resize(
         )
         assert screen_rows[row + 1] == ""
 
-    def assert_flow_layout(session: PtySession, *, rows: int) -> None:
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            screen_rows = session.screen_lines
-            occupied_rows = _occupied_rows(session)
-            if (
-                len(screen_rows) == rows
-                and len(occupied_rows) >= 2
-                and occupied_rows[-1].startswith("◆ ")
-                and occupied_rows[-2].startswith("❯ ")
-                and session.cursor_position[0] == len(occupied_rows) - 1
-            ):
-                break
-            time.sleep(0.05)
-        assert len(session.screen_lines) == rows
-        _assert_inline_composer(session)
-        assert "cursor position requests" not in session.visible_transcript
-
     with focus_probe.session(rows=24, cols=100) as session:
         focus_probe.wait_ready(session)
-        assert_flow_layout(session, rows=24)
+        _assert_flow_layout(session, rows=24)
         assert_blank_row_after(
             session.screen_lines,
             "Tip: / for commands · @ to mention a file · keep typing while a turn runs",
@@ -656,7 +670,7 @@ def test_focus_pty_keeps_top_down_transcript_with_inline_input_across_resize(
                 timeout=60,
             ),
         )
-        assert_flow_layout(session, rows=24)
+        _assert_flow_layout(session, rows=24)
         screen_rows = session.screen_lines
         tip_row = screen_rows.index(
             "Tip: / for commands · @ to mention a file · keep typing while a turn runs"
@@ -713,7 +727,7 @@ def test_focus_pty_keeps_top_down_transcript_with_inline_input_across_resize(
             time.sleep(0.05)
         else:
             raise AssertionError("typed input did not remain above the footer")
-        assert_flow_layout(session, rows=24)
+        _assert_flow_layout(session, rows=24)
 
         session.send("\x7f" * len("typed-check"))
         session.send("/")
@@ -736,10 +750,10 @@ def test_focus_pty_keeps_top_down_transcript_with_inline_input_across_resize(
         else:
             raise AssertionError("slash completion menu did not close cleanly")
         session.resize(rows=18, cols=72)
-        assert_flow_layout(session, rows=18)
+        _assert_flow_layout(session, rows=18)
 
         session.resize(rows=42, cols=120)
-        assert_flow_layout(session, rows=42)
+        _assert_flow_layout(session, rows=42)
         focus_probe.run_turn(
             session,
             FocusScenario(
@@ -749,16 +763,20 @@ def test_focus_pty_keeps_top_down_transcript_with_inline_input_across_resize(
                 timeout=60,
             ),
         )
-        assert_flow_layout(session, rows=42)
+        _assert_flow_layout(session, rows=42)
         screen_rows = session.screen_lines
         second_prompt_row = screen_rows.index(
             "❯ Reply with exactly: second layout check"
         )
         second_response_row = next(
-            index
-            for index, line in enumerate(screen_rows)
-            if index > second_prompt_row and "second layout check" in line
+            (
+                index
+                for index, line in enumerate(screen_rows)
+                if index > second_prompt_row and "second layout check" in line
+            ),
+            None,
         )
+        assert second_response_row is not None, "\n".join(screen_rows)
         assert second_response_row == second_prompt_row + 2
         assert second_response_row < len(screen_rows) - 2
         transcript = visible_text(session.visible_transcript)
@@ -856,7 +874,7 @@ def test_focus_pty_multiline_paste_waits_for_enter_and_submits_once(
 
         assert sum("Done in" in row for row in rows) == 1, "\n".join(rows)
         assert not any("Queued for next turn" in row for row in rows), "\n".join(rows)
-        _assert_inline_composer(session)
+        _assert_inline_composer(*session.screen_snapshot)
 
 
 @pytest.mark.parametrize("part_count", [18, 55])
@@ -864,6 +882,9 @@ def test_focus_pty_long_paste_keeps_transcript_top_down_and_composer_inline(
     focus_probe: FocusProbe,
     part_count: int,
 ) -> None:
+    focus_probe = focus_probe.for_workdir(
+        focus_probe.openminion_root, include_project_context=False
+    )
     prompt = " ".join(
         ["A long request with several paragraphs follows."]
         + [
@@ -907,7 +928,7 @@ def test_focus_pty_long_paste_keeps_transcript_top_down_and_composer_inline(
         if part_count == 18:
             tip_row = rows.index(tip)
             assert rows[tip_row + 2].startswith("❯ A long request"), "\n".join(rows)
-        _assert_inline_composer(session)
+        _assert_inline_composer(*session.screen_snapshot)
 
         session.send_bracketed_paste(prompt)
         deadline = time.monotonic() + 5
@@ -973,7 +994,7 @@ def test_focus_pty_resets_inherited_terminal_viewport(
     ) as session:
         focus_probe.wait_ready(session)
 
-        _assert_inline_composer(session)
+        _assert_inline_composer(*session.screen_snapshot)
         assert session.cursor_state[0] is True
 
 
@@ -1039,7 +1060,7 @@ def test_focus_cost_output_preserves_single_inline_composer(
 
         rows = session.screen_lines
         assert sum("Ask anything" in row for row in rows) == 1
-        _assert_inline_composer(session)
+        _assert_inline_composer(*session.screen_snapshot)
 
 
 def test_focus_runner_exposes_tracker_suite_names() -> None:

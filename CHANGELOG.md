@@ -1,11 +1,118 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-11-04
+Last updated: 2026-11-06
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
+
+## Current package line - 2026-11-06
+
+- Carry user corrections into the final answer and retries when the agent
+  detects repeated tool calls (Refs #660).
+
+- Document the handoff approval pause in `examples/sdk/delegation.py` and the
+  SDK examples README. A handoff without an `approval_callback` returns the
+  policy prompt (`respond_kind` `policy_confirmation_prompt`), not the target's
+  answer; the example's `--approval` flag now shows the pause plus explicit
+  allow/deny operator decisions, where denial keeps the target from running
+  (Refs #526).
+
+- Declare `lookup_order` in `examples/sdk/tool_agent.py` as a read-only,
+  idempotent tool. Since 0.1.11 the bare `@tool` was classified as
+  `write`/unknown reversibility, so the example stopped at a confirmation
+  prompt under the default action policy (#464). Approval logic and the
+  unknown-risk default are unchanged.
+
+- Carry user corrections into the answer and any answer-only retry when the tool
+  budget runs out. Apply corrections in order and preserve unchanged request
+  requirements (Refs #659).
+
+- Keep synchronous A2A call reservations exclusive even after they age past
+  the recovery threshold. A repeated key returns `OUTCOME_UNKNOWN` when an old
+  reservation has no receipt or the result could not be published. Reconcile
+  the downstream effect before reissuing the call with a new key.
+
+- Recover one identical transient safe read and one guarded file overwrite after
+  a contradictory complete readback. Preserve duplicate suppression after a
+  successful write with LF, CRLF or CR content, recheck permissions and budgets,
+  and refuse stale replacement preconditions.
+
+- Preserve runtime-tool schema definitions when adding task updates. Include
+  tool schemas and structured messages in task request budget checks, bound
+  explicit output limits by the remaining allowance, and debit each returned
+  entry retry. Preserve unset output limits and plain text answers; require a
+  valid task update before executing an uncommitted change. Reserve required
+  task context and schemas before trimming optional entry context.
+
+- Carry bounded, revisioned task conditions through clarification and execution
+  (Refs #529). Entry can return user-grounded condition deltas alongside its
+  existing action; unchanged conditions survive, corrections overwrite their
+  keys, and explicit replacement detaches the previous local workflow. Preserve
+  pending-question context for short answers, retain state across restarts, and
+  stop execution on invalid updates or insufficient context capacity. Reuse the
+  execution context owner and canonical tool replay without duplicate tool-event
+  excerpts. Source tests do not establish live-model semantic accuracy or
+  installed-package verification.
+
+- Honour `runtime.agent_loop_tool_result_max_chars`: the setting was declared and
+  range-checked but never read, so inline tool output was always framed at the
+  hardcoded 8192-character threshold. The configured value now drives it, so the
+  4000 default takes effect for existing configurations; raise the setting to 8192
+  to keep the previous threshold (Refs #604).
+
+- Reconcile research child budget consumption before allocating the next pass,
+  and include their terminal tool results in the turn's tool/error statistics.
+  Preserve isolated child state and settle consumption on partial, failed and
+  cancelled execution; resumed findings do not charge completed work again.
+  Whole-turn LLM response reporting continues to use the existing canonical
+  event projection introduced by #596 (Refs #531, Refs #542).
+
+- Document `file.read`'s numeric arguments (character offset, default and maximum
+  length) and return `next_offset` plus a continuation hint when a read is
+  truncated, so following a large file no longer means deriving the window by hand
+  (Refs #605).
+
+- Retain a completed research child's answer ahead of raw tool-output prefixes,
+  with the existing source URLs and evidence references. Use a successful
+  action summary when the completed message is empty and usable tool evidence
+  exists. Keep partial-child evidence salvage and the 200/800-character prompt
+  projections unchanged (Refs #543).
+
+- Require a subcommand for `openminion status` and `openminion service`: a bare
+  group now prints that group's usage and exits 2 instead of falling through to
+  the no-handler interactive/onboarding route (Refs #591).
+
+- Check Focus terminal layout against one screen-and-cursor snapshot so resize
+  repaint fragments cannot invalidate an already accepted test frame. Preserve
+  the compositor assertions and existing wait limits (Refs #610).
+
+- Await async `@tool` handlers in the shared execution path: an `async def` tool
+  registered successfully but was never awaited, so callers received a coroutine
+  object instead of the handler's return value (Refs #612).
+
+- Make identity `clear_cache` prefix matching case-sensitive, so it no longer deletes other agents' snippets through a case-insensitive `LIKE`. (Refs #485)
+
+- Forward the query string on POST requests, so query-parameter POST routes resolve their parameters. (Refs #486)
+
+- Accept `pattern` as an alias for `file.search`'s `query`, matching the argument
+  name `file.find` uses, and say in the description that it is a content search
+  rather than a glob (Refs #606).
+
+- Expand cron day-of-week ranges before normalizing Sunday-as-7, so ranges that contain Sunday parse correctly. (Refs #488)
+
+- Honour the root `--session` value for one-shot `run`: the subcommand declared
+  its own `--session` with a default, which overwrote the root value so
+  `openminion --session <id> run ...` silently ran in `cli-run` (Refs #593).
+
+- `daemon stop` now names the resolved endpoint and the expected PID-file path when
+  the endpoint answers but no PID file exists, states that nothing was signalled,
+  and still exits 1 instead of a bare reachable-without-PID line (Refs #592).
+
+- Describe `--dir` accurately: it selects the interactive workspace and the
+  one-shot `run` tool root, and the root-option form must precede the command
+  (Refs #594).
 
 ## Current package line - 2026-11-04
 

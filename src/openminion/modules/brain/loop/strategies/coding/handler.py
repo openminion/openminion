@@ -27,6 +27,7 @@ from openminion.modules.brain.execution.loop_contracts import (
     ExecutionContext,
     ExecutionResult,
 )
+from openminion.modules.brain.execution.task_context import execution_task_text
 from openminion.modules.brain.execution.dispatch import invoke_decision_direct
 from openminion.modules.brain.execution.preflight import ModePreparation
 from openminion.modules.brain.execution.workflow import (
@@ -203,7 +204,6 @@ class CodingProfileRunner(
         self._max_self_corrections = settings.max_self_corrections
 
     def initialize(self, ctx: ExecutionContext) -> WorkflowPlan:
-        del ctx
         return WorkflowPlan(steps=[BRAIN_INTERNAL_MODE_ACT_CODING], cursor=0)
 
     def execute_step(self, ctx: ExecutionContext, step: WorkflowStep) -> StepResult:
@@ -566,7 +566,7 @@ class CodingProfileRunner(
             self._last_verifier_candidate_payload = None
             if ctx.user_input:
                 self._loop_state.messages.append(
-                    Message(role="user", content=ctx.user_input)
+                    Message(role="user", content=execution_task_text(ctx))
                 )
             elif fresh_project_plan and canonical_task_plan is not None:
                 self._loop_state.messages.append(

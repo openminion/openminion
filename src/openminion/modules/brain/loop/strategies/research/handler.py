@@ -77,8 +77,7 @@ from .findings import (
     render_temporal_fact_lines as _render_temporal_fact_lines,
     tool_evidence_from_action_result as _tool_evidence_from_action_result,
     tool_evidence_from_working_state as _tool_evidence_from_working_state,
-    usable_child_action_result_text as _usable_child_action_result_text,
-    usable_child_working_state_text as _usable_child_working_state_text,
+    usable_child_result_text as _usable_child_result_text,
 )
 from .finalization import (
     is_project_owned_turn as _is_project_owned_turn,
@@ -86,6 +85,7 @@ from .finalization import (
     project_owned_finalization as _project_owned_finalization,
 )
 from .schemas import ResearchFinding, ResearchSynthesis
+from .accounting import account_child, allocate_child_budget, research_budget_exhausted
 from openminion.modules.brain.constants import STATE_KEY_TASK_BACKED_RESUME
 from openminion.base.constants import STATE_KEY_WORKING
 
@@ -431,11 +431,11 @@ class ResearchMode(SimpleCheckpointMixin):
             self.restore_state(restored)
 
         findings: list[dict[str, Any]] = list(self._findings)
-        resume_count = self._resume_count
-        started_index = self._next_iteration
         max_iterations = self._max_research_iterations
 
-        for iteration in range(started_index, max_iterations):
+        for iteration in range(self._next_iteration, max_iterations):
+            if research_budget_exhausted(ctx.state):
+                break
             set_phase(
                 ctx,
                 state=ctx.state,
@@ -464,7 +464,6 @@ class ResearchMode(SimpleCheckpointMixin):
                 findings.append(finding.model_dump(mode="python"))
             self._findings = list(findings)
             self._next_iteration = iteration + 1
-            self._resume_count = resume_count
             if not project_owned:
                 checkpoint_state = self._set_resume_state(
                     ctx,
@@ -637,7 +636,10 @@ class ResearchMode(SimpleCheckpointMixin):
                     child_budget=self._iteration_budget(ctx, iteration=iteration),
                     goal=child_goal,
                 )
-                with _non_recursive_child_profile(runner):
+                with (
+                    account_child(ctx.state, child_state) as execution,
+                    _non_recursive_child_profile(runner),
+                ):
                     decision = self._build_child_decision(child_goal)
                     mode_used = str(
                         getattr(decision, "route", getattr(decision, "mode", ""))
@@ -651,7 +653,7 @@ class ResearchMode(SimpleCheckpointMixin):
                         logger=ctx.logger,
                         depth=1,
                     )
-                    result_status = _normalized_text(result.status).lower()
+                    execution.result = result
                     action_result = getattr(result, "action_result", None)
                     working_state = getattr(result, STATE_KEY_WORKING, None)
                     evidence_dates = _evidence_dates_from_action_result(action_result)
@@ -662,15 +664,7 @@ class ResearchMode(SimpleCheckpointMixin):
                     tool_evidence = _tool_evidence_from_action_result(action_result)
                     if not tool_evidence.get("source_tools"):
                         tool_evidence = _tool_evidence_from_working_state(working_state)
-                    candidate_content = _usable_child_action_result_text(action_result)
-                    if not candidate_content:
-                        candidate_content = _usable_child_working_state_text(
-                            working_state
-                        )
-                    if not candidate_content and result_status == BRAIN_STATE_DONE:
-                        candidate_content = _normalized_text(result.message)
-                    if candidate_content:
-                        content = candidate_content
+                    content = _usable_child_result_text(result)
             except Exception as exc:
                 trace_id = str(getattr(ctx.state, "trace_id", "") or "").strip()
                 with suppress(Exception):
@@ -711,6 +705,11 @@ class ResearchMode(SimpleCheckpointMixin):
         goal: str,
     ) -> WorkingState:
         child_state = parent_state.model_copy(deep=True)
+        from openminion.modules.brain.execution.task_context import inherit_child_task
+
+        inherit_child_task(child_state, parent_state)
+        child_state.module_state.pop("adaptive_loop", None)
+        child_state.module_state["research"] = {"child": True}
         child_state.goal = goal
         child_state.plan = None
         child_state.cursor = 0
@@ -738,21 +737,9 @@ class ResearchMode(SimpleCheckpointMixin):
         *,
         iteration: int,
     ) -> BudgetCounters:
-        budgets = ctx.state.budgets_remaining
-        remaining_iterations = max(1, self._max_research_iterations - iteration)
-
-        def _split(value: int, *, minimum: int = 1) -> int:
-            available = max(0, int(value))
-            if available <= 0:
-                return 0
-            return min(available, max(minimum, int(available // remaining_iterations)))
-
-        return BudgetCounters(
-            ticks=_split(int(budgets.ticks), minimum=3),
-            tool_calls=_split(int(budgets.tool_calls), minimum=3),
-            a2a_calls=_split(int(budgets.a2a_calls)),
-            tokens=_split(int(budgets.tokens)),
-            time_ms=_split(int(budgets.time_ms)),
+        return allocate_child_budget(
+            ctx.state,
+            remaining_iterations=max(1, self._max_research_iterations - iteration),
         )
 
     def _check_convergence(
@@ -882,7 +869,13 @@ class ResearchMode(SimpleCheckpointMixin):
         llm_api = getattr(runner, "llm_api", None) if runner is not None else None
         llm_profiles = getattr(getattr(runner, "profile", None), "llm_profiles", None)
         model = _normalized_text(getattr(llm_profiles, "summarize_model", ""))
-        if runner is None or llm_api is None or not model:
+        if (
+            runner is None
+            or llm_api is None
+            or not model
+            or ctx.state.budgets_remaining.tokens <= 0
+            or ctx.state.llm_calls_used >= ctx.state.llm_calls_max
+        ):
             return None
         try:
             context = runner._build_context(

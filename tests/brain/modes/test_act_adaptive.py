@@ -1422,6 +1422,7 @@ def test_act_adaptive_carries_turn_progress_into_statuses_and_final_outputs() ->
         ]
     )
     ctx, services = _ctx(llm_client, executor)
+    ctx.state.budgets_remaining.tokens = 20000
 
     result = ActLoopMode().execute(ctx)
 

@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 TOOL_ERROR_CONFIRM_REQUIRED: Literal["CONFIRM_REQUIRED"] = "CONFIRM_REQUIRED"
 
 ErrorCode = Literal[
+    "PRECONDITION_FAILED",
     "INVALID_ARGUMENT",
     "INVALID_REQUEST",
     "INVALID_RESPONSE",

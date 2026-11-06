@@ -382,7 +382,7 @@ class ActLoopSeededMixin:
         if autonomous_recovery:
             try:
                 runtime = DefaultAdaptiveToolLoopLLMRuntime.from_adapter(
-                    ctx.llm_adapter
+                    ctx.llm_adapter, task_state=ctx.state
                 )
                 model = resolve_loop_model(ctx)
                 tool_specs = build_runtime_tool_specs(

@@ -1,3 +1,5 @@
+"""Duplicate batch evidence, bounded recovery and answer-only closure."""
+
 from __future__ import annotations
 
 import time
@@ -9,10 +11,19 @@ from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_RETRY,
 )
 from openminion.modules.brain.loop.failures import _raise_provider_failure
+from openminion.modules.brain.loop.constants import (
+    DUPLICATE_READ_PERMANENT_ERROR_CODES,
+    DUPLICATE_READ_REDISPATCH_LIMIT,
+)
 from openminion.modules.brain.schemas import ActionError, ActionResult, new_uuid
 from openminion.modules.llm.schemas import Message
 
 from .budget import _debit_llm_usage, _profile_budget_exhausted, _token_budget_exhausted
+from .cache import _READ_CACHEABLE_TOOLS
+from .replacement_recovery import (
+    consume_replacement_recovery,
+    record_replacement_evidence,
+)
 from .budget_control import (
     _answer_only_finalization_messages,
     _is_internal_failure_final_text,
@@ -129,11 +140,13 @@ def _record_duplicate_batch_execution_facts(
 ) -> None:
     if not signature or not ordered_tool_results:
         return
+    record_replacement_evidence(loop_state, ordered_tool_results)
     all_success = True
     has_retry_or_poll = False
     has_substantive_success = False
     has_non_success = False
     has_job = False
+    all_retryable_reads = True
     for tool_call, command_outcome in ordered_tool_results:
         action_result = getattr(
             command_outcome, "action_result", None
@@ -141,6 +154,11 @@ def _record_duplicate_batch_execution_facts(
             str(getattr(tool_call, "name", "") or "unknown").strip()
         )
         status = str(getattr(action_result, "status", "") or "").strip().lower()
+        all_retryable_reads = all_retryable_reads and _retryable_read_result(
+            tool_call=tool_call,
+            action_result=action_result,
+            command_outcome=command_outcome,
+        )
         if status != "success":
             all_success = False
             has_non_success = True
@@ -160,7 +178,52 @@ def _record_duplicate_batch_execution_facts(
         "has_retry_or_poll": has_retry_or_poll,
         "has_substantive_success": has_substantive_success,
         "answer_only_closure_consumed": False,
+        "all_retryable_reads": all_retryable_reads,
+        "result_count": len(ordered_tool_results),
     }
+
+
+def _retryable_read_result(
+    *, tool_call: Any, action_result: ActionResult, command_outcome: Any
+) -> bool:
+    if tool_call.name not in _READ_CACHEABLE_TOOLS or command_outcome.job is not None:
+        return False
+    if action_result.status not in {"failed", "timeout", "retry"}:
+        return False
+    error_code = str(getattr(action_result.error, "code", "") or "").upper()
+    if error_code in DUPLICATE_READ_PERMANENT_ERROR_CODES:
+        return False
+    outputs = action_result.outputs
+    return (
+        action_result.status in {"retry", "timeout"}
+        or error_code == "TIMEOUT"
+        or outputs.get("retryable") is True
+        or outputs.get("_structured_retryable") is True
+        or (
+            type(outputs.get("retry_after_ms")) in {int, float}
+            and outputs["retry_after_ms"] > 0
+        )
+    )
+
+
+def _consume_duplicate_redispatch(
+    loop_state: AdaptiveToolLoopState, *, signature: str, tool_calls: list[Any]
+) -> bool:
+    if consume_replacement_recovery(loop_state, tool_calls):
+        return True
+    facts = _duplicate_batch_execution_facts(loop_state).get(signature, {})
+    if (
+        not facts.get("all_retryable_reads")
+        or facts.get("result_count") != len(tool_calls)
+        or any(call.name not in _READ_CACHEABLE_TOOLS for call in tool_calls)
+    ):
+        return False
+    counts = loop_state.scratchpad.setdefault("duplicate_read_redispatch_counts", {})
+    count = int(counts.get(signature, 0) or 0)
+    if count >= DUPLICATE_READ_REDISPATCH_LIMIT:
+        return False
+    counts[signature] = count + 1
+    return True
 
 
 def _eligible_duplicate_batch_execution_facts(
@@ -208,9 +271,7 @@ def _duplicate_batch_answer_only_messages(
     *,
     loop_ctx: AdaptiveToolLoopContext,
     loop_state: AdaptiveToolLoopState,
-    tool_calls: list[Any],
 ) -> list[Message]:
-    del tool_calls
     tool_results = _successful_substantive_tool_results(loop_state)
     return _answer_only_finalization_messages(
         loop_ctx=loop_ctx,
@@ -452,17 +513,17 @@ def _force_duplicate_batch_answer_only_closure(
         return None, 0, 0
     facts["answer_only_closure_consumed"] = True
     loop_state.scratchpad["duplicate_batch_answer_only_closure_forced"] = True
-    finalization_messages = _duplicate_batch_answer_only_messages(
-        loop_ctx=loop_ctx,
-        loop_state=loop_state,
-        tool_calls=tool_calls,
-    )
     emit_adaptive_status(
         loop_ctx,
         profile=profile,
         loop_state=loop_state,
         detail_text=f"{public_mode_tag} duplicate batch answer-only closure",
         mode_state="duplicate_tool_closure",
+    )
+    loop_ctx.apply_turn_steering(loop_state.messages)
+    finalization_messages = _duplicate_batch_answer_only_messages(
+        loop_ctx=loop_ctx,
+        loop_state=loop_state,
     )
     closure_start = time.monotonic()
     try:

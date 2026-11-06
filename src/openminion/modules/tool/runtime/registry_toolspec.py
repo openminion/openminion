@@ -315,6 +315,10 @@ def execute_tool_spec_call(
                 arguments=validated_args,
                 runtime_ctx=runtime_ctx,
             )
+            if inspect.iscoroutine(payload):
+                from openminion.modules.runtime.sync import run_async_compat
+
+                payload = run_async_compat(payload)
         except ToolRuntimeError as exc:
             return ToolExecutionResult(
                 tool_name=tool_name,

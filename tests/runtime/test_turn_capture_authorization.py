@@ -1,16 +1,10 @@
-"""A turn's own memory capture asks the authorization that recovery asks (#448).
+"""A turn's own memory capture asks the authorization that recovery asks.
 
-Each test builds a real `APIRuntime` for one agent whose `openai` provider is a
-scripted OpenAI-compatible server on 127.0.0.1. Unless a test says otherwise,
-the agent has an identity profile (`profile.yaml` under `identity.bundle_root`)
-with one hard constraint. SDK turns ask the agent to remember a preference; the
-provider answers the auto fact extraction with one `user_preference` item and
-records the kind of every request.
-
-The tests record the agent security policy's `memory.write` decisions and the
-memctl bundle writes (both call the original), and read the memory store, the
-turn's capture intent and its `memory.capture.result`. Recovery runs through
-the real `CronTurnExecutor` with the real `memory_capture_recovery_allowed`.
+`_Provider` is a scripted OpenAI-compatible server on 127.0.0.1, not a hosted
+model: it answers the auto fact extraction with one `user_preference` item.
+Unless a test says otherwise, the agent has an identity profile with one hard
+constraint. Recovery runs through the real `CronTurnExecutor` with the real
+`memory_capture_recovery_allowed`.
 """
 
 from __future__ import annotations
@@ -41,6 +35,8 @@ from openminion.services.agent.execution.composition import AgentServiceTurnFlow
 from openminion.services.runtime.cron.executor import CronTurnExecutor
 from openminion.services.runtime.daemon import build_turn_request
 from openminion.tools.task.constants import CONSOLIDATION_PAYLOAD_KEY
+from tests.task_context_fixture import replace_entry_task
+
 from tests._csc_fixtures import _csc_install_default_agent
 
 AGENT_ID = "openminion"
@@ -123,7 +119,11 @@ class _Provider:
             def do_POST(self) -> None:  # noqa: N802
                 length = int(self.headers["Content-Length"])
                 body = json.loads(self.rfile.read(length))
-                payload = json.dumps(provider.respond(body)).encode()
+                response = provider.respond(body)
+                response["choices"][0]["message"] = replace_entry_task(
+                    body, response["choices"][0]["message"]
+                )
+                payload = json.dumps(response).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(payload)))

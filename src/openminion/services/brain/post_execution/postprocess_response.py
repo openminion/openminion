@@ -4,6 +4,7 @@ from typing import Any
 
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.base.types import AgentResponse, Message
+from openminion.modules.brain.constants import STATE_KEY_MODULE_STATE
 from openminion.modules.brain.runner import BrainRunner
 from openminion.modules.tool.diagnostics.events import (
     structural_security_tool_results,
@@ -221,6 +222,17 @@ def _attach_postprocess_action_metadata(
         )
         tool_results_payload = project(tool_results_payload)
         cumulative_tool_results_payload = project(cumulative_tool_results_payload)
+    research_results = (
+        getattr(step_out.working_state, STATE_KEY_MODULE_STATE, {})
+        .get("research", {})
+        .get("tool_results", [])
+    )
+    if any(
+        isinstance(item, dict)
+        and item.get("turn_scope_id") == step_out.working_state.trace_id
+        for item in research_results
+    ):
+        tool_results_payload = cumulative_tool_results_payload
     self._attach_tool_result_metadata(
         metadata=metadata,
         termination_reason=termination_reason,

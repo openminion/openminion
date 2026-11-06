@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
@@ -171,7 +172,16 @@ def test_concurrent_public_turns_keep_separate_call_events(tmp_path, monkeypatch
 
     provider = _UsageProvider()
     runtime = _runtime(tmp_path, monkeypatch, provider, constraint=None)
-    runtime.resolve_agent_service("openminion")._get_runner()
+    runner = runtime.resolve_agent_service("openminion")._get_runner()
+    # Usage isolation starts after lazy identity/context SQLite initialization.
+    runner._build_context(
+        state=runner._load_or_init_state("usage-context-init"),
+        purpose="reflect",
+        budget={"max_tokens": 800},
+        hints={},
+        logger=Mock(),
+    )
+    assert provider.usage == []
     try:
 
         def turn(session_id):

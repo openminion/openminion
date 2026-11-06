@@ -54,14 +54,27 @@ def _entry_text_response(text: str) -> LLMResponse:
     )
 
 
-def _entry_clarify_response(question: str) -> LLMResponse:
+def _entry_clarify_response(question: str, *, user_input: str) -> LLMResponse:
     return LLMResponse(
         ok=True,
         provider="test",
         model="decide-default",
         output_text="",
         assistant_messages=[Message(role="assistant", content="")],
-        tool_calls=[ToolCall(name="clarify", arguments={"question": question})],
+        tool_calls=[
+            ToolCall(
+                name="clarify",
+                arguments={
+                    "question": question,
+                    "task_update": {
+                        "operation": "start",
+                        "expected_revision": 0,
+                        "objective": user_input,
+                        "user_quote": user_input,
+                    },
+                },
+            )
+        ],
         usage=UsageInfo(total_tokens=1),
         finish_reason="tool_calls",
     )
@@ -155,7 +168,7 @@ class RunnerDecisionTests(unittest.TestCase):
                 ticks=10,
                 tool_calls=5,
                 a2a_calls=5,
-                tokens=1000,
+                tokens=20000,
                 time_ms=10_000,
             ),
         )
@@ -271,7 +284,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-placeholder-tool-args",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
         )
 
@@ -305,7 +318,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-marked-entry-retry",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
         )
 
@@ -339,7 +352,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-marked-entry-exhausted",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
         )
 
@@ -384,7 +397,7 @@ class RunnerDecisionTests(unittest.TestCase):
             decision_reason_code="confirmation_replay",
             post_action_user_message=continuation_guidance,
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
         )
         captured_hints: dict[str, Any] = {}
@@ -429,7 +442,7 @@ class RunnerDecisionTests(unittest.TestCase):
             last_user_input=original_request,
             decision_reason_code="confirmation_replay",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
         )
         captured_hints: dict[str, Any] = {}
@@ -476,7 +489,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-provider-rate-limit",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
         )
 
@@ -544,7 +557,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-transient-502",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
         )
         sleep_calls: list[float] = []
@@ -593,7 +606,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-no-provider-retry",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
         )
         logger = MagicMock()
@@ -648,7 +661,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-provider-attempt-limit",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
         )
         logger = MagicMock()
@@ -689,7 +702,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-provider-request-id",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
         )
         logger = MagicMock()
@@ -734,7 +747,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-invalid-argument",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
         )
         sleep_calls: list[float] = []
@@ -776,7 +789,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-supersede",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
             plan=Plan(
                 objective="old objective",
@@ -823,7 +836,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-inventory-priority",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
             status="active",
             goal="old objective",
@@ -855,7 +868,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-memory-policy",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
             status="active",
             goal="memory policy check",
@@ -891,7 +904,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-memory-policy-missing",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
             status="active",
             goal="memory policy check",
@@ -924,7 +937,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-resume",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
             plan=Plan(
                 objective="old objective",
@@ -960,7 +973,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-explicit-tool",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
         )
 
@@ -995,7 +1008,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-string-tool-expression",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
         )
 
@@ -1028,7 +1041,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-weather-rescue",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
         )
 
@@ -1045,7 +1058,10 @@ class RunnerDecisionTests(unittest.TestCase):
         self,
     ) -> None:
         llm_api = _StaticEntryLLM(
-            _entry_clarify_response("I do not have access to real-time weather.")
+            _entry_clarify_response(
+                "I do not have access to real-time weather.",
+                user_input="what's weather at sf?",
+            )
         )
         context_api = fake_context_builder()
         runner = BrainRunner(
@@ -1059,7 +1075,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-weather-rescue-question",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
         )
 
@@ -1087,7 +1103,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-nl-ask-fallback",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
         )
 
@@ -1120,7 +1136,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-envelope-safe-rewrite",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
         )
 
@@ -1153,7 +1169,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-invalid-decide-telemetry",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
         )
         logger = MagicMock()
@@ -1243,7 +1259,8 @@ class RunnerDecisionTests(unittest.TestCase):
                     _entry_clarify_response(
                         "Could you please rephrase or provide more context? "
                         "I'm not sure how to best assist with just the word "
-                        '"hello?".'
+                        '"hello?".',
+                        user_input="hello?",
                     )
                 )
                 context_api = fake_context_builder()
@@ -1258,7 +1275,7 @@ class RunnerDecisionTests(unittest.TestCase):
                     session_id=f"s-greeting-normalized-{reason_code}",
                     agent_id="router-agent",
                     budgets_remaining=BudgetCounters(
-                        ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                        ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
                     ),
                 )
                 logger = MagicMock()
@@ -1288,7 +1305,8 @@ class RunnerDecisionTests(unittest.TestCase):
     def test_decide_does_not_normalize_non_greeting_ambiguous_request(self) -> None:
         llm_api = _StaticEntryLLM(
             _entry_clarify_response(
-                "Could you clarify whether you mean session memory or a previous message?"
+                "Could you clarify whether you mean session memory or a previous message?",
+                user_input="hey do you remember me?",
             )
         )
         context_api = fake_context_builder()
@@ -1303,7 +1321,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-greeting-negative",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
         )
         logger = MagicMock()
@@ -1343,7 +1361,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-greeting-plan-normalized",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
         )
         logger = MagicMock()
@@ -1383,7 +1401,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-removal-regression-guard",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
         )
         logger = MagicMock()
@@ -1414,7 +1432,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-time-canary",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
         )
 
@@ -1446,7 +1464,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-weather-canary",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
         )
 
@@ -1464,7 +1482,11 @@ class RunnerDecisionTests(unittest.TestCase):
     def test_decide_weather_parity_recovery_still_fails_closed_when_ambiguous(
         self,
     ) -> None:
-        llm_api = _StaticEntryLLM(_entry_clarify_response("Please clarify."))
+        llm_api = _StaticEntryLLM(
+            _entry_clarify_response(
+                "Please clarify.", user_input="what is the weather right now?"
+            )
+        )
         context_api = fake_context_builder()
         runner = BrainRunner(
             profile=_profile(),
@@ -1479,7 +1501,7 @@ class RunnerDecisionTests(unittest.TestCase):
             session_id="s-weather-ambiguous",
             agent_id="router-agent",
             budgets_remaining=BudgetCounters(
-                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
             ),
         )
 
@@ -1692,7 +1714,9 @@ class RunnerDecisionTests(unittest.TestCase):
                 options=RunnerOptions(reflection_enabled=True),
             )
 
-    def test_decide_trims_tool_schema_context_before_token_budget_failure(self) -> None:
+    def test_decide_rejects_underestimated_tool_request_before_provider_call(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             session = LocalSessionStore(root / "sessions")
@@ -1771,12 +1795,13 @@ class RunnerDecisionTests(unittest.TestCase):
             )
 
             self.assertEqual(decision.mode, "respond")
-            self.assertEqual(decision.reason_code, "entry_text_response")
-            self.assertGreaterEqual(state.llm_calls_used, 1)
+            self.assertEqual(decision.reason_code, "task_context_budget_exceeded")
+            self.assertEqual(state.llm_calls_used, 0)
             emits = [call.args[0] for call in logger.emit.call_args_list]
             self.assertNotIn("llm.context.trimmed", emits)
 
-            # Test that identity audit events are emitted for _decide (decision)
+            # Identity audit requires a request that can fit its actual schemas.
+            runner.profile.budgets.max_total_llm_tokens = 20000
             runner.step(
                 session_id="s-identity-audit",
                 user_input="say hello",
@@ -1806,7 +1831,7 @@ class RunnerDecisionTests(unittest.TestCase):
                 # Verify that purpose is one of the expected values for LLM calls
                 self.assertIn(payload["purpose"], ["entry", "plan", "reflect"])
 
-    def test_decide_trims_runtime_tool_schemas_in_three_stages_before_llm_call(
+    def test_decide_rejects_underestimated_verbose_schema_without_provider_call(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1893,9 +1918,9 @@ class RunnerDecisionTests(unittest.TestCase):
             )
 
             self.assertEqual(decision.mode, "respond")
-            self.assertEqual(decision.reason_code, "entry_text_response")
-            self.assertEqual(llm.call_count, 1)
-            self.assertGreaterEqual(state.llm_calls_used, 1)
+            self.assertEqual(decision.reason_code, "task_context_budget_exceeded")
+            self.assertEqual(llm.call_count, 0)
+            self.assertEqual(state.llm_calls_used, 0)
 
             trim_events = [
                 call
@@ -1966,7 +1991,7 @@ class RunnerDecisionTests(unittest.TestCase):
                     return _entry_text_response("ok")
 
             profile = _profile()
-            profile.budgets.max_total_llm_tokens = 60
+            profile.budgets.max_total_llm_tokens = 20000
             llm = _ShortlistBudgetLLM()
             runner = BrainRunner(
                 profile=profile,
@@ -1980,7 +2005,7 @@ class RunnerDecisionTests(unittest.TestCase):
                 options=RunnerOptions(metactl_enabled=False),
             )
             state = runner._load_or_init_state("s-budget-trim-shortlist")
-            state.budgets_remaining.tokens = 60
+            state.budgets_remaining.tokens = 20000
             state.trace_id = "trace-budget-trim-shortlist"
             logger = MagicMock()
 
@@ -2060,13 +2085,13 @@ class RunnerDecisionTests(unittest.TestCase):
             )
 
             self.assertEqual(decision.mode, "respond")
-            self.assertEqual(decision.respond_kind, "answer")
-            self.assertEqual(decision.reason_code, "token_budget_exceeded")
-            self.assertIn("token budget", str(decision.answer).lower())
+            self.assertEqual(decision.respond_kind, "clarify")
+            self.assertEqual(decision.reason_code, "task_context_budget_exceeded")
+            self.assertIn("budget", str(decision.question).lower())
             self.assertEqual(llm.call_count, 0)
             self.assertEqual(state.llm_calls_used, 0)
 
-    def test_decide_low_budget_with_memory_v2_smoke_snapshot_still_responds(
+    def test_decide_low_budget_with_memory_v2_smoke_snapshot_fails_closed(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2121,7 +2146,7 @@ class RunnerDecisionTests(unittest.TestCase):
             )
 
             self.assertEqual(decision.mode, "respond")
-            self.assertEqual(decision.reason_code, "entry_text_response")
+            self.assertEqual(decision.reason_code, "task_context_budget_exceeded")
 
     def test_decide_context_includes_current_datetime(self) -> None:
         class _CapturingContextAdapter(LocalContextAdapter):

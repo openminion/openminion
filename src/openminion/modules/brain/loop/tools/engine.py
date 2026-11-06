@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from openminion.modules.brain.constants import STATE_KEY_MODULE_STATE
 from openminion.modules.brain.loop.constants import (
     PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY,
 )
@@ -20,6 +21,7 @@ from .correction import (
     dispatch_correction_plan,
     trigger_macro_correction,
 )
+from .postprocess.loop import _persist_loop_snapshot
 from .events import IterationToolCallRecord
 from .budget import (
     _debit_tool_budget,
@@ -173,7 +175,7 @@ def run_adaptive_tool_loop(
         seed_response=seed_response,
         seeded_commands=seeded_commands,
     )
-    return _AdaptiveLoopRunner.from_frame(
+    runner = _AdaptiveLoopRunner.from_frame(
         frame=frame,
         loop_ctx=loop_ctx,
         profile=profile,
@@ -182,7 +184,22 @@ def run_adaptive_tool_loop(
         finalizer=finalizer,
         on_tool_result=on_tool_result,
         tool_batch_runner=tool_batch_runner,
-    ).run()
+    )
+    try:
+        return runner.run()
+    finally:
+        if (
+            getattr(loop_ctx.state, STATE_KEY_MODULE_STATE, {})
+            .get("research", {})
+            .get("child")
+        ):
+            _persist_loop_snapshot(
+                loop_ctx=loop_ctx,
+                profile=profile,
+                loop_state=runner.loop_state,
+                turn_scope_id=runner.turn_scope_id,
+                model=model,
+            )
 
 
 @dataclass

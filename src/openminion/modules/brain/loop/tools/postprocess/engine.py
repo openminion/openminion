@@ -8,6 +8,8 @@ from typing import Any
 from openminion.modules.brain.loop.failures import _raise_provider_failure
 from openminion.modules.llm import ProviderError
 from openminion.modules.llm.schemas import Message, ToolCall
+from ...context.task_context import TaskContextBudgetError
+from ...context.task_budget import task_budget_loop_outcome
 from ..budget import (
     _debit_llm_usage,
     _effective_cap,
@@ -230,6 +232,14 @@ class AdaptiveLoopRunnerPostprocessMixin(
         self.loop_state.scratchpad[
             "tool_choice_none_compact_answer_only_retry_used"
         ] = True
+        emit_adaptive_status(
+            self.loop_ctx,
+            profile=self.profile,
+            loop_state=self.loop_state,
+            detail_text=f"{self.public_mode_tag} compact answer-only closeout",
+            mode_state="answer_only_compact_closeout",
+        )
+        self.loop_ctx.apply_turn_steering(self.loop_state.messages)
         finalization_messages = _answer_only_finalization_messages(
             loop_ctx=self.loop_ctx,
             loop_state=self.loop_state,
@@ -239,13 +249,6 @@ class AdaptiveLoopRunnerPostprocessMixin(
                 "Do not call more tools. Use only the successful tool evidence "
                 "already gathered and return the final user-facing answer now."
             ),
-        )
-        emit_adaptive_status(
-            self.loop_ctx,
-            profile=self.profile,
-            loop_state=self.loop_state,
-            detail_text=f"{self.public_mode_tag} compact answer-only closeout",
-            mode_state="answer_only_compact_closeout",
         )
         try:
             response = self.runtime.complete(
@@ -462,6 +465,8 @@ class AdaptiveLoopRunnerPostprocessMixin(
         return llm_tools, llm_tool_choice, llm_tool_choice == "none"
 
     def _llm_call_failure_outcome(self, exc: Exception) -> AdaptiveToolLoopOutcome:
+        if isinstance(exc, TaskContextBudgetError):
+            return task_budget_loop_outcome(self, exc)
         self.loop_state.termination_reason = ADAPTIVE_TERM_LLM_ERROR
         emit_adaptive_status(
             self.loop_ctx,
