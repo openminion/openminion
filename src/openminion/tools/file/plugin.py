@@ -73,6 +73,18 @@ def _collapse_alias_group(
             data.pop(alias, None)
 
 
+def _normalize_path_input(value: Any) -> Any:
+    """Strip a string path and leave every other type for pydantic to reject.
+
+    Only ``None`` and the empty string mean "no path": returning ``str(value)`` here
+    made ``int``/``dict``/``list`` paths validate and then fail as ``NOT_FOUND``, and an
+    ``or "."`` default would have turned ``False`` into the current directory.
+    """
+    if isinstance(value, str):
+        return value.strip()
+    return value
+
+
 class FileListDirArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -85,8 +97,11 @@ class FileListDirArgs(BaseModel):
 
     @field_validator("path", mode="before")
     @classmethod
-    def _normalize_path(cls, value: Any) -> str:
-        return str(value or ".").strip() or "."
+    def _normalize_path(cls, value: Any) -> Any:
+        normalized = _normalize_path_input(value)
+        if normalized is None or normalized == "":
+            return "."
+        return normalized
 
 
 class FileReadArgs(BaseModel):
@@ -127,9 +142,9 @@ class FileReadArgs(BaseModel):
 
     @field_validator("path", mode="before")
     @classmethod
-    def _normalize_path(cls, value: Any) -> str:
-        normalized = str(value or "").strip()
-        if not normalized:
+    def _normalize_path(cls, value: Any) -> Any:
+        normalized = _normalize_path_input(value)
+        if normalized is None or normalized == "":
             raise ValueError("path is required")
         return normalized
 
@@ -153,9 +168,9 @@ class FileReadRangeArgs(BaseModel):
 
     @field_validator("path", mode="before")
     @classmethod
-    def _normalize_path(cls, value: Any) -> str:
-        normalized = str(value or "").strip()
-        if not normalized:
+    def _normalize_path(cls, value: Any) -> Any:
+        normalized = _normalize_path_input(value)
+        if normalized is None or normalized == "":
             raise ValueError("path is required")
         return normalized
 
@@ -210,9 +225,9 @@ class FileWriteArgs(BaseModel):
 
     @field_validator("path", mode="before")
     @classmethod
-    def _normalize_path(cls, value: Any) -> str:
-        normalized = str(value or "").strip()
-        if not normalized:
+    def _normalize_path(cls, value: Any) -> Any:
+        normalized = _normalize_path_input(value)
+        if normalized is None or normalized == "":
             raise ValueError("path is required")
         return normalized
 
@@ -229,8 +244,11 @@ class FileFindArgs(BaseModel):
 
     @field_validator("path", mode="before")
     @classmethod
-    def _normalize_path(cls, value: Any) -> str:
-        return str(value or ".").strip() or "."
+    def _normalize_path(cls, value: Any) -> Any:
+        normalized = _normalize_path_input(value)
+        if normalized is None or normalized == "":
+            return "."
+        return normalized
 
     @field_validator("pattern", mode="before")
     @classmethod
@@ -245,9 +263,9 @@ class FileTrashArgs(BaseModel):
 
     @field_validator("path", mode="before")
     @classmethod
-    def _normalize_path(cls, value: Any) -> str:
-        normalized = str(value or "").strip()
-        if not normalized:
+    def _normalize_path(cls, value: Any) -> Any:
+        normalized = _normalize_path_input(value)
+        if normalized is None or normalized == "":
             raise ValueError("path is required")
         return normalized
 
@@ -276,8 +294,11 @@ class FileSearchArgs(BaseModel):
 
     @field_validator("path", mode="before")
     @classmethod
-    def _normalize_path(cls, value: Any) -> str:
-        return str(value or ".").strip() or "."
+    def _normalize_path(cls, value: Any) -> Any:
+        normalized = _normalize_path_input(value)
+        if normalized is None or normalized == "":
+            return "."
+        return normalized
 
 
 class FileEditOperation(BaseModel):
@@ -299,9 +320,9 @@ class FileEditArgs(BaseModel):
 
     @field_validator("path", mode="before")
     @classmethod
-    def _normalize_path(cls, value: Any) -> str:
-        normalized = str(value or "").strip()
-        if not normalized:
+    def _normalize_path(cls, value: Any) -> Any:
+        normalized = _normalize_path_input(value)
+        if normalized is None or normalized == "":
             raise ValueError("path is required")
         return normalized
 

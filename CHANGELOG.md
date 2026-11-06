@@ -7,6 +7,14 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- File tools reject non-string `path` values instead of stringifying them: an
+  integer, list or object path is now `invalid_arguments`/`type_mismatch` rather
+  than a `NOT_FOUND` lookup of `str(value)` (Refs #666).
+
+
+
+
+
 - `daemon start` now reports a child that exited before answering separately from a
   live timeout: the observed exit code, the requested endpoint and the log path (or
   that no log file was written), instead of always blaming a health timeout
