@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
@@ -39,6 +40,7 @@ from openminion.modules.a2a.errors import (
     ERROR_CODE_INVALID_ARGUMENT,
     ERROR_CODE_JOB_FAILED,
     ERROR_CODE_JOB_NOT_FOUND,
+    ERROR_CODE_OUTCOME_UNKNOWN,
     ERROR_CODE_POLICY_DENIED,
     ERROR_CODE_STALE_JOB,
 )
@@ -47,6 +49,7 @@ from openminion.modules.a2a.models import (
     AuditRecord,
     Envelope,
     EnvelopeValidationError,
+    IdempotencyRecord,
     JobRecord,
     validate_envelope_contract,
     iso_now,
@@ -54,11 +57,22 @@ from openminion.modules.a2a.models import (
 )
 from openminion.modules.a2a.policy import PolicyEngine
 from openminion.modules.a2a.registry import AgentHandler, AgentRegistry, JobHandler
-from openminion.modules.a2a.storage.base import AuditStore, StateStore
+from openminion.modules.a2a.storage.base import (
+    AuditStore,
+    StateStore,
+    idempotency_slot_is_stale,
+)
 from openminion.modules.a2a.interfaces import A2A_INTERFACE_VERSION
 
 
 _LOG = get_logger("a2a.runtime")
+_RECEIPT_WRITE_ERRORS: tuple[type[Exception], ...] = (OSError, sqlite3.Error)
+try:
+    from sqlalchemy.exc import SQLAlchemyError
+except ImportError:
+    pass
+else:
+    _RECEIPT_WRITE_ERRORS += (SQLAlchemyError,)
 
 
 class A2ARuntime:
@@ -129,45 +143,22 @@ class A2ARuntime:
             )
 
         scope = self._idempotency_scope(envelope, resolved_agent)
-        reserved, existing = self.state_store.reserve_idempotency(
-            envelope.idempotency_key,
-            scope,
-            stale_reclaim_after_sec=self.recovery_stale_heartbeat_sec,
+        reserved, record = self.state_store.reserve_idempotency(
+            envelope.idempotency_key, scope
         )
-        if not reserved and existing is not None:
+        if record is None:
+            return self._unknown_call_result(envelope, resolved_agent, cached=False)
+        if not reserved:
             return self._result_from_idempotency(
-                existing=existing,
+                existing=record,
                 request=envelope,
                 resolved_agent=resolved_agent,
             )
 
         self._audit_call_received(envelope, resolved_agent=resolved_agent)
-        try:
-            return self._execute_call_handler(
-                envelope=envelope,
-                resolved_agent=resolved_agent,
-                handler=route.handler,
-                scope=scope,
-            )
-        except A2AError as exc:
-            return self._call_error_result(
-                envelope=envelope,
-                resolved_agent=resolved_agent,
-                scope=scope,
-                error=exc.to_dict(),
-                error_code=exc.code,
-                error_message=exc.message,
-            )
-        except Exception as exc:  # noqa: BLE001
-            error = {"code": ERROR_CODE_HANDLER_ERROR, "message": str(exc)}
-            return self._call_error_result(
-                envelope=envelope,
-                resolved_agent=resolved_agent,
-                scope=scope,
-                error=error,
-                error_code=ERROR_CODE_HANDLER_ERROR,
-                error_message=str(exc),
-            )
+        return self._execute_call_handler(
+            envelope, resolved_agent, route.handler, record
+        )
 
     def job_start(self, envelope: Envelope) -> str:
         if envelope.type != "job.start":
@@ -452,68 +443,80 @@ class A2ARuntime:
 
     def _execute_call_handler(
         self,
-        *,
         envelope: Envelope,
         resolved_agent: str,
         handler: AgentHandler,
-        scope: str,
+        reservation: IdempotencyRecord,
     ) -> Envelope:
-        result = handler(envelope)
-        result_inline, result_ref = self._store_result_if_needed(
-            result, label=envelope.method
-        )
-        self.state_store.set_idempotency_result(
-            envelope.idempotency_key,
-            scope,
-            A2A_IDEMPOTENCY_STATUS_SUCCESS,
-            result_inline=result_inline,
-            result_ref=result_ref,
-        )
-        response = self._success_result_envelope(
-            request=envelope,
-            resolved_agent=resolved_agent,
-            result_inline=result_inline,
-            result_ref=result_ref,
-            cached=False,
-        )
+        error = None
+        result_inline, result_ref = None, None
+        try:
+            result = handler(envelope)
+        except A2AError as exc:
+            error = exc.to_dict()
+        except Exception as exc:  # noqa: BLE001
+            error = {"code": ERROR_CODE_HANDLER_ERROR, "message": str(exc)}
+        else:
+            try:
+                result_inline, result_ref = self._store_result_if_needed(
+                    result, label=envelope.method
+                )
+            except (OSError, TypeError, ValueError, RecursionError):
+                error = {
+                    "code": ERROR_CODE_OUTCOME_UNKNOWN,
+                    "message": "Call result could not be stored; reconcile the effect before reissuing.",
+                }
+
+        try:
+            finished = self.state_store.finish_idempotency(
+                reservation,
+                A2A_IDEMPOTENCY_STATUS_FAILED
+                if error
+                else A2A_IDEMPOTENCY_STATUS_SUCCESS,
+                result_inline=result_inline,
+                result_ref=result_ref,
+                error=error,
+            )
+        except _RECEIPT_WRITE_ERRORS:
+            _LOG.warning("Could not persist the A2A call receipt")
+            return self._unknown_call_result(envelope, resolved_agent, cached=False)
+        if not finished:
+            return self._unknown_call_result(envelope, resolved_agent, cached=False)
+
+        if error:
+            response = self._error_result_envelope(
+                request=envelope, resolved_agent=resolved_agent, error=error
+            )
+        else:
+            response = self._success_result_envelope(
+                request=envelope,
+                resolved_agent=resolved_agent,
+                result_inline=result_inline,
+                result_ref=result_ref,
+                cached=False,
+            )
         self._append_audit_record(
             envelope=response,
             resolved_agent=response.to_agent,
-            status=A2A_AUDIT_STATUS_SUCCESS,
+            status=A2A_AUDIT_STATUS_FAILED if error else A2A_AUDIT_STATUS_SUCCESS,
+            error_code=error["code"] if error else None,
+            error_message=error["message"] if error else None,
             payload=response.to_dict(),
         )
         return response
 
-    def _call_error_result(
-        self,
-        *,
-        envelope: Envelope,
-        resolved_agent: str,
-        scope: str,
-        error: dict[str, Any],
-        error_code: str,
-        error_message: str,
+    def _unknown_call_result(
+        self, request: Envelope, resolved_agent: str, *, cached: bool
     ) -> Envelope:
-        self.state_store.set_idempotency_result(
-            envelope.idempotency_key,
-            scope,
-            A2A_IDEMPOTENCY_STATUS_FAILED,
-            error=error,
-        )
-        response = self._error_result_envelope(
-            request=envelope,
+        return self._error_result_envelope(
+            request=request,
             resolved_agent=resolved_agent,
-            error=error,
+            cached=cached,
+            error={
+                "code": ERROR_CODE_OUTCOME_UNKNOWN,
+                "message": "Call outcome is unknown; reconcile the effect before reissuing.",
+            },
         )
-        self._append_audit_record(
-            envelope=response,
-            resolved_agent=response.to_agent,
-            status=A2A_AUDIT_STATUS_FAILED,
-            error_code=error_code,
-            error_message=error_message,
-            payload=response.to_dict(),
-        )
-        return response
 
     def _mark_job_running(
         self, *, envelope: Envelope, resolved_agent: str, task_id: str
@@ -676,7 +679,7 @@ class A2ARuntime:
         return f"{base_scope}:{session_id}" if session_id else base_scope
 
     def _result_from_idempotency(
-        self, *, existing: Any, request: Envelope, resolved_agent: str
+        self, *, existing: IdempotencyRecord, request: Envelope, resolved_agent: str
     ) -> Envelope:
         if existing.status == A2A_IDEMPOTENCY_STATUS_SUCCESS:
             return self._success_result_envelope(
@@ -704,6 +707,12 @@ class A2ARuntime:
                 cached=True,
                 task_id=existing.task_id,
             )
+
+        # Age changes what we can report, never who may execute or complete the call.
+        if idempotency_slot_is_stale(
+            existing.updated_at, stale_after_sec=self.recovery_stale_heartbeat_sec
+        ):
+            return self._unknown_call_result(request, resolved_agent, cached=True)
 
         return self._in_progress_result_envelope(
             request=request,
