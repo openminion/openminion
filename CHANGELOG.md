@@ -7,6 +7,13 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `daemon stop` now verifies the recorded PID before signalling it: the process must
+  carry the exact `-m openminion.daemon serve` launch form with matching `--config`,
+  `--pid-file`, `--host` and `--port`, and the PID file must still name it on a final
+  reread, the process executable must still be a Python launcher, and missing,
+  unreadable, duplicated or contradictory identity is refused without a signal
+  (Refs #616).
+
 - File tools reject non-string `path` values instead of stringifying them: an
   integer, list or object path is now `invalid_arguments`/`type_mismatch` rather
   than a `NOT_FOUND` lookup of `str(value)` (Refs #666).
