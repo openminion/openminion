@@ -7,7 +7,7 @@ import argparse
 from openminion import Agent, ProviderError, tool
 
 
-@tool
+@tool(min_scope="READ_ONLY", idempotent=True)
 def lookup_order(order_id: str) -> str:
     """Return the current status for one order."""
 

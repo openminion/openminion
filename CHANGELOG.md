@@ -14,6 +14,12 @@ This file tracks package-facing release notes for `openminion`.
   allow/deny operator decisions, where denial keeps the target from running
   (Refs #526).
 
+- Declare `lookup_order` in `examples/sdk/tool_agent.py` as a read-only,
+  idempotent tool. Since 0.1.11 the bare `@tool` was classified as
+  `write`/unknown reversibility, so the example stopped at a confirmation
+  prompt under the default action policy (#464). Approval logic and the
+  unknown-risk default are unchanged.
+
 - Carry user corrections into the answer and any answer-only retry when the tool
   budget runs out. Apply corrections in order and preserve unchanged request
   requirements (Refs #659).
