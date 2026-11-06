@@ -11,6 +11,10 @@ This file tracks package-facing release notes for `openminion`.
   dependency imports across supported static import forms and run policy,
   closure, replay and steering contracts in the fast regression suite.
 
+- Pass current-turn steering to the closure judge in the order it was applied,
+  preserving the rest of the user's request when the judge revises the final
+  answer (Refs #661).
+
 ## Current package line - 2026-11-06
 
 - Carry user corrections into the final answer and retries when the agent
