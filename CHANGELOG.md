@@ -7,6 +7,13 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Document the handoff approval pause in `examples/sdk/delegation.py` and the
+  SDK examples README. A handoff without an `approval_callback` returns the
+  policy prompt (`respond_kind` `policy_confirmation_prompt`), not the target's
+  answer; the example's `--approval` flag now shows the pause plus explicit
+  allow/deny operator decisions, where denial keeps the target from running
+  (Refs #526).
+
 - Declare `lookup_order` in `examples/sdk/tool_agent.py` as a read-only,
   idempotent tool. Since 0.1.11 the bare `@tool` was classified as
   `write`/unknown reversibility, so the example stopped at a confirmation
