@@ -11,7 +11,11 @@ from openminion.modules.a2a.errors import A2AError
 from openminion.modules.a2a.models import Envelope
 from openminion.modules.a2a.policy import PolicyRule
 from openminion.modules.a2a.runtime import A2ARuntime
-from openminion.modules.a2a.storage import MemoryAuditStore, MemoryStateStore
+from openminion.modules.a2a.storage import (
+    MemoryAuditStore,
+    MemoryStateStore,
+    SQLiteStateStore,
+)
 from openminion.modules.a2a.transport import (
     A2AHTTPServer,
     HTTPTransport,
@@ -43,9 +47,14 @@ def _worker_handler(envelope: Envelope) -> dict:
 
 
 @pytest.fixture
-def runtime() -> A2ARuntime:
+def runtime(request, tmp_path) -> A2ARuntime:
+    store = (
+        SQLiteStateStore(tmp_path / "state.db")
+        if getattr(request, "param", None) == "sqlite"
+        else MemoryStateStore()
+    )
     runtime = A2ARuntime(
-        state_store=MemoryStateStore(),
+        state_store=store,
         audit_store=MemoryAuditStore(),
     )
     runtime.register_agent(
@@ -382,3 +391,26 @@ def test_http_200_bad_progress_raises_internal_error_for_job_ops() -> None:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+@pytest.mark.parametrize("runtime", ["memory", "sqlite"], indirect=True)
+def test_http_call_replay_binds_arguments_and_sender(base_url: str) -> None:
+    first = _envelope(
+        to_agent="agent.echo",
+        method="echo.hello",
+        idempotency_key="shared-key",
+        params={"value": 1},
+    )
+    transport = HTTPTransport(base_url, token=TOKEN)
+    assert transport.call(first).params["cached"] is False
+    changed = Envelope.from_dict({**first.to_dict(), "params": {"value": 2}})
+    with pytest.raises(A2AError, match="IDEMPOTENCY_CONFLICT"):
+        transport.call(changed)
+    response = httpx.post(f"{base_url}/a2a/call", headers=AUTH, json=changed.to_dict())
+    assert response.status_code == 409
+    other_sender = Envelope.from_dict({**changed.to_dict(), "from_agent": "client-b"})
+    second = transport.call(other_sender)
+    assert second.params["data"]["params"] == {"value": 2}
+    assert second.params["cached"] is False
+    assert transport.call(first).params["data"]["params"] == {"value": 1}
+    assert transport.call(first).params["cached"] is True

@@ -64,6 +64,7 @@ def _create_state_schema(record_store: RecordStore) -> None:
             task_id TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
+            request_fingerprint TEXT,
             PRIMARY KEY (scope, key)
         )
         """
@@ -110,6 +111,12 @@ def _create_state_schema(record_store: RecordStore) -> None:
     )
     _ensure_store_column(
         record_store,
+        table_name="idempotency_keys",
+        column_name="request_fingerprint",
+        ddl_tail="TEXT",
+    )
+    _ensure_store_column(
+        record_store,
         table_name="jobs",
         column_name="owner_agent_id",
         ddl_tail="TEXT NOT NULL DEFAULT ''",
@@ -139,20 +146,38 @@ class _StateStoreMixin(StateStore):
         BaseModuleStore.close(self)
 
     def reserve_idempotency(
-        self, key: str, scope: str
+        self,
+        key: str,
+        scope: str,
+        *,
+        request_fingerprint: str | None = None,
     ) -> tuple[bool, IdempotencyRecord | None]:
         now = iso_now()
         inserted = self._record_store.execute_count(
             """
-            INSERT INTO idempotency_keys(scope, key, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO idempotency_keys(
+                scope, key, status, created_at, updated_at, request_fingerprint
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(scope, key) DO NOTHING
             """,
-            (scope, key, A2A_IDEMPOTENCY_STATUS_IN_PROGRESS, now, now),
+            (
+                scope,
+                key,
+                A2A_IDEMPOTENCY_STATUS_IN_PROGRESS,
+                now,
+                now,
+                request_fingerprint,
+            ),
         )
         if inserted > 0:
-            return True, _in_progress_idempotency(key=key, scope=scope, stamped=now)
-        return False, self._get_idempotency(scope, key)
+            return True, _in_progress_idempotency(
+                key=key,
+                scope=scope,
+                stamped=now,
+                request_fingerprint=request_fingerprint,
+            )
+        return False, self.get_idempotency(key, scope)
 
     def finish_idempotency(
         self,
@@ -223,7 +248,7 @@ class _StateStoreMixin(StateStore):
                 now,
             ),
         )
-        rec = self._get_idempotency(scope, key)
+        rec = self.get_idempotency(key, scope)
         if rec is None:
             raise RuntimeError(f"Failed to read idempotency record {scope}:{key}")
         return rec
@@ -403,10 +428,11 @@ class _StateStoreMixin(StateStore):
         )
         return [_agent_from_row(row) for row in rows]
 
-    def _get_idempotency(self, scope: str, key: str) -> IdempotencyRecord | None:
+    def get_idempotency(self, key: str, scope: str) -> IdempotencyRecord | None:
         rows = self._record_store.query_dicts(
             """
-            SELECT scope, key, status, result_inline_json, result_ref, error_json, task_id, created_at, updated_at
+            SELECT scope, key, status, result_inline_json, result_ref, error_json, task_id,
+                   created_at, updated_at, request_fingerprint
             FROM idempotency_keys
             WHERE scope = ? AND key = ?
             """,
@@ -473,11 +499,12 @@ def _idempotency_from_row(row: Mapping[str, Any]) -> IdempotencyRecord:
         task_id=(None if row["task_id"] is None else str(row["task_id"])),
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
+        request_fingerprint=row["request_fingerprint"],
     )
 
 
 def _in_progress_idempotency(
-    *, key: str, scope: str, stamped: str
+    *, key: str, scope: str, stamped: str, request_fingerprint: str | None
 ) -> IdempotencyRecord:
     return IdempotencyRecord(
         key=key,
@@ -485,6 +512,7 @@ def _in_progress_idempotency(
         status=A2A_IDEMPOTENCY_STATUS_IN_PROGRESS,
         created_at=stamped,
         updated_at=stamped,
+        request_fingerprint=request_fingerprint,
     )
 
 

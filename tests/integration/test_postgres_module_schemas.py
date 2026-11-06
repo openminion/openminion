@@ -568,7 +568,7 @@ def _a2a_then_failed_runtime(url: str, tmp_path: Path) -> None:
 def _runtime_then_a2a(url: str, tmp_path: Path) -> None:
     _start_runtime(url, tmp_path / "rt")
     _runtime_rows(url)
-    _legacy_module(url, "a2a")
+    _legacy_module(url, "a2a", "0005_job_idempotency_scope")
     _execute(
         url,
         "INSERT INTO public.audit_records(record_date, ts, msg_id, trace_id, "
@@ -1445,7 +1445,8 @@ def test_relocation_r2_parks_and_copies_the_module_rows(
     runtime_keys = _snapshot(database)["public"]["tables"]["idempotency_keys"]
 
     _execute(database, *_documented_sql("R2-park"))
-    assert _migrate(database, tmp_path, capsys, "a2a")["a2a"]["status"] == "ok"
+    report = _migrate(database, tmp_path, capsys, "a2a")["a2a"]
+    assert report["status"] == "ok", report
     _execute(database, *_documented_sql("R2-copy"))
 
     audit = _a2a_audit(database, tmp_path / "a2a")

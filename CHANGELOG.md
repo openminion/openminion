@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Scope synchronous A2A retries by the declared sender, destination, method,
+  and session. Reusing a key with different arguments returns
+  `IDEMPOTENCY_CONFLICT` (HTTP 409). Matching legacy call records also return
+  a conflict because they lack the sender and argument binding. The handler
+  is not dispatched in either case (Refs #670).
+
 - Strengthen developer safeguards for brain and core changes: detect reverse
   dependency imports across supported static import forms and run policy,
   closure, replay and steering contracts in the fast regression suite.
