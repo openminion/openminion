@@ -9,6 +9,7 @@ from openminion.modules.llm.providers.base import (
     ProviderResponse,
 )
 from openminion.modules.prompting.continuation import build_tool_budget_recovery_hint
+from openminion.modules.tool.base import ToolExecutionResult
 from openminion.modules.tool.errors import tool_result_error_facts
 from openminion.modules.tool.registry import ToolExecutionBatch
 from openminion.services.agent.constants import DEFAULT_TOOL_LOOP_CONTINUE_PROMPT
@@ -41,6 +42,18 @@ from .metadata import (
     finalization_contract_missing_response,
     model_final_response,
 )
+
+
+def _truncation_facts(result: ToolExecutionResult) -> dict[str, int | bool]:
+    """Project a truncated success's lengths into the tool message, else nothing."""
+    if not result.ok or not result.data.get("truncated"):
+        return {}
+    facts: dict[str, int | bool] = {"truncated": True}
+    for key in ("returned_length", "total_length"):
+        value = result.data.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            facts[key] = value
+    return facts
 
 
 @dataclass(slots=True)
@@ -106,6 +119,7 @@ def build_follow_up_request(
                         "status": status,
                         "output": result.content if result.ok else None,
                         "error": error_payload,
+                        **_truncation_facts(result),
                     },
                     ensure_ascii=False,
                 ),

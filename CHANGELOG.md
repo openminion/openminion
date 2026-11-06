@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- A truncated tool result now tells the model that its output is partial: the tool
+  message carries `truncated`, `returned_length` and `total_length` when the result was
+  actually truncated, and carries nothing extra otherwise (Refs #675).
+
+
+
 - The env-guard validator now fails on a rule whose path no longer exists, and the
   fourteen stale rules behind that check are removed so a re-created path cannot
   inherit an old allowance (Refs #668).
