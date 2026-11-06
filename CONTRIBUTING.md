@@ -98,7 +98,11 @@ and comments or docstrings that repeat the code. Names, types and direct control
 flow should carry the explanation; retain only necessary context. See the
 [comment review rule](CODE_QUALITY.md#2-code-should-explain-itself), including its
 public-contract and test exceptions. Green CI alone is not readability approval.
-
+Review each new delta as well as the complete final diff, and record the exact
+head and caller/failure evidence. Follow the
+[merged-code and review evidence rules](CODE_QUALITY.md#11-review-evidence-and-merged-code)
+and the [cleanup ledger requirements](CODE_QUALITY.md#8-for-broad-cleanup-work-start-from-the-live-file-list).
+Do not approve or merge with an unresolved, substantiated quality finding.
 
 1. Follow existing style and project conventions.
 2. Keep PRs small and reviewable.
