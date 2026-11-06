@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import time
@@ -115,6 +116,200 @@ def daemon_start(
     return 0 if result["ok"] else 1
 
 
+_SERVE_IDENTITY_FLAGS: tuple[str, ...] = ("--config", "--host", "--port", "--pid-file")
+
+
+def _serve_identity(argv: list[str]) -> tuple[dict[str, str] | None, str]:
+    """Parse `python -m openminion.daemon serve …` into its identity fields.
+
+    Returns the fields, or ``None`` and the reason the argv is not an unambiguous
+    daemon launch. This runs before any signal, so anything unexpected is a refusal:
+    guessing here means terminating a process that is not ours.
+    """
+    interpreter = Path(argv[0]).name if argv else ""
+    if not interpreter.startswith("python"):
+        return (
+            None,
+            f"executable {interpreter or 'unknown'} is not a Python interpreter",
+        )
+    if argv[1:4] != ["-m", "openminion.daemon", "serve"]:
+        return None, "command line does not launch `openminion.daemon serve`"
+    values: dict[str, str] = {}
+    index = 4
+    while index < len(argv):
+        flag = argv[index]
+        if flag not in _SERVE_IDENTITY_FLAGS:
+            return None, f"unexpected argument {flag!r}"
+        if flag in values:
+            return None, f"duplicate {flag}"
+        if index + 1 >= len(argv):
+            return None, f"missing value for {flag}"
+        values[flag] = argv[index + 1]
+        index += 2
+    missing = [flag for flag in _SERVE_IDENTITY_FLAGS if flag not in values]
+    if missing:
+        return None, f"missing {', '.join(missing)}"
+    return {
+        "config": values["--config"],
+        "host": values["--host"],
+        "port": values["--port"],
+        "pid_file": values["--pid-file"],
+    }, ""
+
+
+def _process_executable(process: psutil.Process) -> str | None:
+    """The resolved executable of the process, or ``None`` when it cannot be read."""
+    try:
+        return str(process.exe() or "").strip() or None
+    except psutil.Error:
+        return None
+
+
+# A macOS framework interpreter lives at ``<framework>/Versions/<x.y>/bin/pythonX.Y``
+# and reports its launcher as one of two exact paths below that same version root.
+_FRAMEWORK_INSTALL = re.compile(
+    r"^(?P<root>.+/Python\.framework)/Versions/(?P<version>\d+\.\d+)/",
+    re.IGNORECASE,
+)
+_FRAMEWORK_LAUNCHER_SUFFIXES = (
+    "Resources/Python.app/Contents/MacOS/Python",
+    "Python.app/Contents/MacOS/Python",
+)
+
+
+def _resolved_executable(path_text: str) -> str:
+    """Canonical file behind an executable path, or ``""`` when it cannot be resolved."""
+    if not path_text.strip():
+        return ""
+    try:
+        return str(Path(path_text).expanduser().resolve())
+    except OSError:
+        return ""
+
+
+def _is_this_interpreter(exe: str) -> bool:
+    """True when ``exe`` is this interpreter, or the launcher of its own installation.
+
+    Identity is a resolved file path, never a name or a prefix: a bare ``python3``
+    elsewhere, a shared ancestor directory and a nested framework tree are all refused.
+    """
+    resolved_exe = _resolved_executable(exe)
+    if resolved_exe and resolved_exe == _resolved_executable(sys.executable):
+        return True
+    install = _FRAMEWORK_INSTALL.match(_resolved_executable(sys.executable))
+    if install is None or not resolved_exe:
+        return False
+    version_root = f"{install.group('root')}/Versions/{install.group('version')}"
+    accepted = {f"{version_root}/{suffix}" for suffix in _FRAMEWORK_LAUNCHER_SUFFIXES}
+    return resolved_exe in accepted
+
+
+def _resolved_path_text(path_text: str) -> str:
+    """Comparable form of a launch path.
+
+    Relative paths are left as-is: the daemon was launched from a directory this
+    command does not know, so resolving them against the caller's cwd would compare
+    two different files.
+    """
+    path = Path(path_text).expanduser()
+    if not path.is_absolute():
+        return str(path)
+    try:
+        return str(path.resolve())
+    except OSError:
+        return str(path)
+
+
+def _stop_identity_refusal(
+    argv: list[str],
+    exe: str | None,
+    *,
+    endpoint: DaemonEndpoint,
+    pid_file: Path,
+    pid: int,
+) -> str | None:
+    """Return the refusal message when PID does not provably own this daemon."""
+    identity, reason = _serve_identity(argv)
+    if identity is None:
+        return f"PID {pid} does not match this daemon's launch form: {reason}. No process was signalled."
+    if exe is None:
+        return (
+            f"PID {pid} executable identity could not be read, so it cannot be "
+            "proven to be the daemon this command launched. No process was signalled."
+        )
+    if not _is_this_interpreter(exe):
+        return (
+            f"PID {pid} runs {exe}, which does not match the interpreter this command "
+            f"runs ({sys.executable}). No process was signalled."
+        )
+    for flag, observed, expected in (
+        ("--config", identity["config"], endpoint.config_path),
+        ("--pid-file", identity["pid_file"], str(pid_file)),
+    ):
+        observed_path = _resolved_path_text(observed)
+        expected_path = _resolved_path_text(expected)
+        if observed_path != expected_path:
+            return (
+                f"PID {pid} was launched with {flag} {observed_path}, but this daemon "
+                f"resolves to {expected_path}. No process was signalled."
+            )
+    if identity["host"] != endpoint.host or identity["port"] != str(endpoint.port):
+        return (
+            f"PID {pid} was launched for {identity['host']}:{identity['port']}, but this "
+            f"daemon resolves to {endpoint.host}:{endpoint.port}. No process was signalled."
+        )
+    return None
+
+
+def _await_daemon_exit(process: psutil.Process, *, pid: int, pid_file: Path) -> int:
+    """Wait for a signalled daemon to go away, force-killing after the deadline."""
+    from openminion.daemon import process_alive
+
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if not process_alive(pid):
+            _unlink_owned(pid_file, pid)
+            print(f"Stopped daemon pid={pid}")
+            return 0
+        time.sleep(0.1)
+
+    try:
+        process.kill()
+    except psutil.Error as exc:
+        print(
+            f"Daemon pid={pid} did not stop within timeout and force kill failed: {exc}"
+        )
+        return 1
+
+    kill_deadline = time.time() + 5
+    while time.time() < kill_deadline:
+        if not process_alive(pid):
+            _unlink_owned(pid_file, pid)
+            print(f"Force-stopped daemon pid={pid} after graceful timeout.")
+            return 0
+        time.sleep(0.1)
+
+    print(f"Daemon pid={pid} did not stop within timeout (including force kill).")
+    return 1
+
+
+def _endpoint_identity_refusal(endpoint: DaemonEndpoint) -> str | None:
+    """Refuse when a reachable endpoint answers for a different config.
+
+    The probe status is the contract: ``mismatch`` is a contradiction, and anything
+    else leaves the PID checks in charge.
+    """
+    probe_status, payload = probe_daemon_endpoint(endpoint)
+    if probe_status != _PROBE_STATUS_MISMATCH:
+        return None
+    remote_config_path = _remote_config_path_from_probe_payload(payload)
+    return (
+        f"Daemon endpoint {endpoint.host}:{endpoint.port} identifies config "
+        f"{remote_config_path or 'unknown'}, but this command resolves to "
+        f"{endpoint.config_path}. No process was signalled."
+    )
+
+
 def daemon_stop(
     config_path: str | None,
     *,
@@ -151,43 +346,70 @@ def daemon_stop(
         return 0
 
     if not process_alive(pid):
-        _safe_unlink(pid_file)
-        print("Removed stale daemon PID file.")
+        if _unlink_owned(pid_file, pid):
+            print("Removed stale daemon PID file.")
+        else:
+            print(
+                f"Stale PID file {pid_file} was left in place: it no longer names "
+                f"PID {pid}."
+            )
         return 0
+
+    endpoint_refusal = _endpoint_identity_refusal(endpoint)
+    if endpoint_refusal is not None:
+        print(endpoint_refusal)
+        print(
+            "Run `openminion daemon status --json` to inspect reachability, PID and "
+            "lifecycle state; if the listener is not the daemon for this config, stop "
+            "it manually."
+        )
+        return 1
 
     try:
         process = psutil.Process(pid)
+        refusal = _stop_identity_refusal(
+            list(process.cmdline()),
+            _process_executable(process),
+            endpoint=endpoint,
+            pid_file=pid_file,
+            pid=pid,
+        )
+    except psutil.Error as exc:
+        print(f"Failed to inspect daemon process {pid}: {exc}")
+        return 1
+
+    if refusal is not None:
+        print(refusal)
+        print(
+            "Run `openminion daemon status --json` to inspect reachability, PID and "
+            "lifecycle state; if the listener is not the daemon for this config, stop "
+            "it manually."
+        )
+        return 1
+
+    # The reread confirms the PID file still names this process; a replacement that
+    # appears after this read but before termination is not covered by the check.
+    if read_pid(pid_file) != pid:
+        print(
+            f"PID file {pid_file} changed while verifying PID {pid}. "
+            "No process was signalled."
+        )
+        return 1
+
+    # The same Process instance inspected above must still be alive: a process that
+    # exited between the reread and this call is not something to signal.
+    if not process.is_running():
+        _unlink_owned(pid_file, pid)
+        print(f"Daemon pid={pid} exited before it could be signalled.")
+        return 0
+
+    try:
         process.terminate()
     except psutil.Error as exc:
         print(f"Failed to terminate daemon process {pid}: {exc}")
         return 1
 
-    deadline = time.time() + 10
-    while time.time() < deadline:
-        if not process_alive(pid):
-            _safe_unlink(pid_file)
-            print(f"Stopped daemon pid={pid}")
-            return 0
-        time.sleep(0.1)
-
-    try:
-        process.kill()
-    except psutil.Error as exc:
-        print(
-            f"Daemon pid={pid} did not stop within timeout and force kill failed: {exc}"
-        )
-        return 1
-
-    kill_deadline = time.time() + 5
-    while time.time() < kill_deadline:
-        if not process_alive(pid):
-            _safe_unlink(pid_file)
-            print(f"Force-stopped daemon pid={pid} after graceful timeout.")
-            return 0
-        time.sleep(0.1)
-
-    print(f"Daemon pid={pid} did not stop within timeout (including force kill).")
-    return 1
+    return _await_daemon_exit(process, pid=pid, pid_file=pid_file)
 
 
 def daemon_restart(
@@ -465,7 +687,7 @@ def _start_daemon(endpoint: DaemonEndpoint) -> dict[str, object]:
             "message": f"PID file exists for running process {existing_pid}, but daemon is unreachable.",
         }
     if existing_pid:
-        _safe_unlink(pid_file)
+        _unlink_owned(pid_file, existing_pid)
 
     process = _spawn_daemon(endpoint, pid_file, log_file)
 
@@ -531,6 +753,23 @@ def _safe_unlink(path: Path) -> None:
         path.unlink(missing_ok=True)
     except OSError:
         return
+
+
+def _unlink_owned(path: Path, expected_pid: int) -> bool:
+    """Remove the PID file only while it still names ``expected_pid``.
+
+    Cleanup runs after a longer window than the verification, so the file can already
+    describe a replacement daemon by the time it is removed. Removing another
+    process's PID file is worse than leaving a stale one behind.
+    """
+    try:
+        current = int(path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return False
+    if current != expected_pid:
+        return False
+    _safe_unlink(path)
+    return True
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
