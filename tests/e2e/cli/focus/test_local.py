@@ -636,6 +636,11 @@ def test_focus_pty_survives_resize_after_launch(
 def test_focus_pty_keeps_top_down_transcript_with_inline_input_across_resize(
     focus_probe: FocusProbe,
 ) -> None:
+    # This empty-startup layout control excludes project-context notices.
+    focus_probe = focus_probe.for_workdir(
+        focus_probe.openminion_root, include_project_context=False
+    )
+
     def assert_blank_row_after(
         screen_rows: tuple[str, ...],
         expected_line: str,
