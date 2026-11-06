@@ -1,8 +1,10 @@
 from openminion.modules.storage.migrations.alembic import (
     apply_ddl_statements,
     drop_sql_objects,
+    require_postgres_column_types,
 )
 from openminion.modules.controlplane.pairing.schema import CP_PAIRING_SCHEMA
+from openminion.modules.controlplane.storage.store import _postgresify_ddl
 
 
 revision = "0001_baseline"
@@ -220,9 +222,26 @@ DDL = (
     "CREATE INDEX IF NOT EXISTS idx_cp_users_role ON cp_users(role, updated_at)",
 )
 
+# PostgreSQL gets the DDL PostgresControlPlaneStore applies: SERIAL PRIMARY KEY
+# for the AUTOINCREMENT ids.
+POSTGRES_DDL = tuple(_postgresify_ddl(statement) for statement in DDL)
+
+# An existing table with another type for its id is not adopted.
+POSTGRES_COLUMN_TYPES = {
+    "cp_inbound_messages": {"id": "SERIAL"},
+    "cp_outbound_messages": {"id": "SERIAL"},
+    "cp_pair_attempts": {"id": "SERIAL"},
+}
+
 
 def upgrade() -> None:
-    apply_ddl_statements(DDL)
+    from alembic import op
+
+    if op.get_bind().dialect.name != "postgresql":
+        apply_ddl_statements(DDL)
+        return
+    require_postgres_column_types(POSTGRES_COLUMN_TYPES)
+    apply_ddl_statements(POSTGRES_DDL)
 
 
 def downgrade() -> None:

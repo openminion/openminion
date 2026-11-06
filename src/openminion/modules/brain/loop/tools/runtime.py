@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from openminion.modules.brain.diagnostics.usage import record_llm_response
 import platform
 import re
 from collections.abc import Mapping
@@ -37,6 +38,7 @@ from openminion.modules.brain.bootstrap.route_catalog import get_route_descripto
 from openminion.modules.brain.tools.schema import collect_runtime_tool_schemas
 from openminion.tools.exec.process import resolve_shell_family
 from .contracts import AdaptiveToolLoopRuntimeUnavailableError
+from ..context.task_budget import task_request_output_limit
 from .response_trailers import (
     TYPED_SIGNAL_SOURCE_STRUCTURED_FIELD,
     TYPED_SIGNAL_SOURCE_TRAILER,
@@ -573,14 +575,20 @@ def _normalize_runtime_response(
 
 
 class DefaultAdaptiveToolLoopLLMRuntime:
-    def __init__(self, llm_client: Any) -> None:
+    def __init__(
+        self, llm_client: Any, *, task_state: Any = None, adapter: Any = None
+    ) -> None:
         self._client = llm_client
+        self._task_state = task_state
+        self._budget_adapter = adapter
         self._use_call_path = not callable(
             getattr(llm_client, "complete", None)
         ) and callable(getattr(llm_client, "call", None))
 
     @classmethod
-    def from_adapter(cls, llm_adapter: Any) -> "DefaultAdaptiveToolLoopLLMRuntime":
+    def from_adapter(
+        cls, llm_adapter: Any, *, task_state: Any = None
+    ) -> "DefaultAdaptiveToolLoopLLMRuntime":
         client = _unwrap_llm_client(llm_adapter)
         if client is None:
             raise AdaptiveToolLoopRuntimeUnavailableError(
@@ -588,7 +596,7 @@ class DefaultAdaptiveToolLoopLLMRuntime:
                 "OpenMinionLLMClient.call(...) path but the current llm_adapter "
                 f"({type(llm_adapter).__name__!r}) does not expose one."
             )
-        return cls(client)
+        return cls(client, task_state=task_state, adapter=llm_adapter)
 
     def complete(
         self,
@@ -600,6 +608,14 @@ class DefaultAdaptiveToolLoopLLMRuntime:
         max_output_tokens: int | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> LLMResponse:
+        max_output_tokens = task_request_output_limit(
+            self._task_state,
+            self._budget_adapter,
+            messages=messages,
+            tools=tools,
+            model=model,
+            requested_output=max_output_tokens,
+        )
         if self._use_call_path:
             request = _build_llm_request(
                 messages=messages,
@@ -610,6 +626,10 @@ class DefaultAdaptiveToolLoopLLMRuntime:
                 metadata=metadata,
             )
             response = self._client.call(request)
+            record_llm_response(
+                purpose=str((metadata or {}).get("purpose", "adaptive")),
+                response=response,
+            )
             record_active_chat_provider_call(
                 purpose=str((metadata or {}).get("purpose", "adaptive")),
                 messages=list(messages),
@@ -634,6 +654,9 @@ class DefaultAdaptiveToolLoopLLMRuntime:
             overrides["metadata"] = metadata
         response = self._client.complete(
             messages, tools if tools else None, **overrides
+        )
+        record_llm_response(
+            purpose=str((metadata or {}).get("purpose", "adaptive")), response=response
         )
         record_active_chat_provider_call(
             purpose=str((metadata or {}).get("purpose", "adaptive")),

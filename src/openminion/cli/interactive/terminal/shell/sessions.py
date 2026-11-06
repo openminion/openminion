@@ -422,6 +422,51 @@ def resume_session(
     )
 
 
+def rename_session(
+    *,
+    runtime: Any,
+    console: Console,
+    text: str,
+    transcript: TerminalTranscript,
+) -> None:
+    del transcript  # kept for symmetry with the other session slash commands
+    parts = str(text or "").strip().split(maxsplit=1)
+    name = parts[1].strip() if len(parts) > 1 else ""
+    if not name:
+        console.print(
+            Text(
+                "Usage: /rename <name>",
+                style=token_rich_style(StyleToken.MUTED, italic=True),
+            )
+        )
+        return
+    session_id = str(getattr(runtime, "session_id", "") or "").strip()
+    if not session_id:
+        console.print(
+            Text(
+                "(no active session to rename)",
+                style=token_rich_style(StyleToken.MUTED, italic=True),
+            )
+        )
+        return
+    try:
+        runtime.rename_session(session_id, name)
+    except (RuntimeError, ValueError) as exc:
+        console.print(
+            Text(
+                f"(could not rename session: {exc})",
+                style=token_rich_style(StyleToken.ERROR),
+            )
+        )
+        return
+    console.print(
+        Text(
+            f"(renamed session to '{name}')",
+            style=token_rich_style(StyleToken.MUTED, italic=True),
+        )
+    )
+
+
 def _session_message_count(item: Any) -> int:
     if isinstance(item, dict):
         value = item.get("message_count")

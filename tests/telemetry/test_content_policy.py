@@ -329,6 +329,24 @@ def test_truncation_records_original_and_retained_size() -> None:
     ]
 
 
+def test_provider_schema_metrics_remain_content_free() -> None:
+    cleaned = apply_content_policy(
+        {
+            "purpose": "act",
+            "tool_schema_count": 1,
+            "tool_schema_bytes": 128,
+            "tool_definitions": [{"name": "private.lookup"}],
+        },
+        allow_sensitive_content=False,
+    )
+
+    assert cleaned["purpose"] == "act"
+    assert cleaned["tool_schema_count"] == 1
+    assert cleaned["tool_schema_bytes"] == 128
+    assert "tool_definitions" not in cleaned
+    assert cleaned["_telemetry_policy"]["removed_fields"] == ["tool_definitions"]
+
+
 def test_local_and_external_content_controls_are_independent(tmp_path) -> None:
     exporter = _Exporter()
     service = TelemetryService(

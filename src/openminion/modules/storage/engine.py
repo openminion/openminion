@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
@@ -326,7 +327,16 @@ class StorageEngine:
         config: StorageEngineConfig,
         registry: BackendRegistry | None = None,
         telemetry_hook: StorageTelemetryHook | None = None,
+        module_id: str | None = None,
     ) -> StorageEngine:
+        if module_id is not None and config.record_backend == "record.postgres":
+            from openminion.modules.storage.migrations.postgres_schema import (
+                module_storage_config,
+            )
+
+            # A module store uses its own PostgreSQL schema under the configured
+            # one, created before its first table (#446).
+            config = module_storage_config(config, module_id)
         root, sqlite, fallback = _storage_engine_paths(config)
         namespace = normalize_namespace(config.default_namespace)
         backend_registry = (
@@ -342,43 +352,50 @@ class StorageEngine:
                 config, sqlite=sqlite, telemetry_hook=effective_hook
             ),
         )
-        blob = backend_registry.create_blob(
-            config.blob_backend,
-            _blob_backend_options(config, root=root),
-        )
-        ensure_interface_compatibility(record, interface="record_store")
-        ensure_interface_compatibility(blob, interface="blob_store")
-        vector_store = _create_vector_store(
-            config,
-            registry=backend_registry,
-            sqlite=sqlite,
-        )
-        hybrid = HybridStore(
-            record_store=record,
-            blob_store=blob,
-            fallback_root=fallback,
-            default_namespace=namespace,
-        )
-        ensure_interface_compatibility(hybrid, interface="hybrid_store")
-
-        return cls(
-            config=_effective_storage_engine_config(
+        vector_store = None
+        try:
+            blob = backend_registry.create_blob(
+                config.blob_backend,
+                _blob_backend_options(config, root=root),
+            )
+            ensure_interface_compatibility(record, interface="record_store")
+            ensure_interface_compatibility(blob, interface="blob_store")
+            vector_store = _create_vector_store(
                 config,
-                root=root,
+                registry=backend_registry,
                 sqlite=sqlite,
-                fallback=fallback,
-                namespace=namespace,
-            ),
-            blob_store=blob,
-            record_store=record,
-            hybrid_store=hybrid,
-            vector_store=vector_store,
-            health_emitter=_start_pool_health_emitter(
-                config,
-                record=record,
-                telemetry_hook=effective_hook,
-            ),
-        )
+            )
+            hybrid = HybridStore(
+                record_store=record,
+                blob_store=blob,
+                fallback_root=fallback,
+                default_namespace=namespace,
+            )
+            ensure_interface_compatibility(hybrid, interface="hybrid_store")
+
+            return cls(
+                config=_effective_storage_engine_config(
+                    config,
+                    root=root,
+                    sqlite=sqlite,
+                    fallback=fallback,
+                    namespace=namespace,
+                ),
+                blob_store=blob,
+                record_store=record,
+                hybrid_store=hybrid,
+                vector_store=vector_store,
+                health_emitter=_start_pool_health_emitter(
+                    config,
+                    record=record,
+                    telemetry_hook=effective_hook,
+                ),
+            )
+        except BaseException:
+            # No engine owns these backends yet: close them as close() does,
+            # each one even when an earlier close fails, and keep the error.
+            _close_backends(vector_store, record, suppress_errors=True)
+            raise
 
     @classmethod
     def from_paths(
@@ -497,19 +514,28 @@ class StorageEngine:
             except Exception:
                 pass
             self._pool_health_emitter = None
-        closed_ids: set[int] = set()
-        for backend in (self.vector_store, self.record_store):
-            if backend is None:
-                continue
-            backend_id = id(backend)
-            if backend_id in closed_ids:
-                continue
-            closed_ids.add(backend_id)
-            close_fn = getattr(backend, "close", None)
-            if callable(close_fn):
-                close_fn()
+        _close_backends(self.vector_store, self.record_store)
 
     def _resolve_namespace(self, namespace: str | None) -> str | None:
         if namespace is None:
             return self.config.default_namespace
         return normalize_namespace(namespace)
+
+
+def _close_backends(*backends: Any, suppress_errors: bool = False) -> None:
+    closed_ids: set[int] = set()
+    for backend in backends:
+        if backend is None:
+            continue
+        backend_id = id(backend)
+        if backend_id in closed_ids:
+            continue
+        closed_ids.add(backend_id)
+        close_fn = getattr(backend, "close", None)
+        if not callable(close_fn):
+            continue
+        if suppress_errors:
+            with suppress(Exception):
+                close_fn()
+        else:
+            close_fn()

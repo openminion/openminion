@@ -78,11 +78,18 @@ def _usage_token_count(usage: dict[str, Any], canonical: str, legacy: str) -> in
 
 
 def _stable_tool_event_id(
-    *, session_id: str, turn_scope_id: str, call_id: str, phase: str
+    *,
+    session_id: str,
+    turn_scope_id: str,
+    call_id: str,
+    phase: str,
+    research_invocation_id: str = "",
 ) -> str:
     key = (
         f"openminion:tool-transcript:v1:{session_id}:{turn_scope_id}:{call_id}:{phase}"
     )
+    if research_invocation_id:
+        key += f":research:{research_invocation_id}"
     return uuid5(NAMESPACE_URL, key).hex
 
 
@@ -94,6 +101,11 @@ def _canonical_tool_payload(
         raise ValueError("canonical tool event requires schema_version=1")
     turn_scope_id = _required_text(payload, "turn_scope_id")
     call_id = _required_text(payload, "call_id")
+    invocation = {}
+    if payload.get("research_invocation_id"):
+        invocation["research_invocation_id"] = _required_text(
+            payload, "research_invocation_id"
+        )
 
     if event_type == "tool.call.requested":
         canonical_name = _required_text(payload, "canonical_name")
@@ -114,6 +126,7 @@ def _canonical_tool_payload(
             "schema_version": 1,
             "turn_scope_id": turn_scope_id,
             "call_id": call_id,
+            **invocation,
             "canonical_name": canonical_name,
             "sanitized_normalized_arguments": _bounded_tool_value(arguments),
             "batch_index": max(0, batch_index),
@@ -143,6 +156,7 @@ def _canonical_tool_payload(
             "schema_version": 1,
             "turn_scope_id": turn_scope_id,
             "call_id": call_id,
+            **invocation,
             "status": "success",
             "output": _bounded_tool_value(payload.get("output")),
         }
@@ -155,6 +169,7 @@ def _canonical_tool_payload(
         "schema_version": 1,
         "turn_scope_id": turn_scope_id,
         "call_id": call_id,
+        **invocation,
         "status": status,
         "error": _bounded_tool_value(error),
     }
@@ -267,14 +282,26 @@ class SessionEventWriter:
         self._invalidate_slice_cache(session_id)
         return turn_id
 
-    def _prepare_tool_event(
+    def _prepare_event(
         self,
         *,
         session_id: str,
         event_name: str,
         payload: dict[str, Any],
         parent_event_id: str | None,
+        trace_id: str | None,
     ) -> tuple[dict[str, Any], str | None]:
+        scope_id = trace_id or str(payload.get("run_id") or "")
+        if (
+            event_name in {"llm.call.completed", "llm.call.failed"}
+            and (call_id := str(payload.get("llm_call_id") or "").strip())
+            and scope_id
+        ):
+            return payload, uuid5(
+                NAMESPACE_URL,
+                f"openminion:llm:v1:{session_id}:{scope_id}:{call_id}:{event_name}",
+            ).hex
+
         is_canonical = event_name == "tool.call.requested" or (
             event_name in _TOOL_TRANSCRIPT_EVENTS and payload.get("schema_version") == 1
         )
@@ -288,6 +315,7 @@ class SessionEventWriter:
             turn_scope_id=str(payload["turn_scope_id"]),
             call_id=str(payload["call_id"]),
             phase=phase,
+            research_invocation_id=str(payload.get("research_invocation_id") or ""),
         )
         if event_name != "tool.call.requested":
             self._validate_tool_result_parent(
@@ -352,16 +380,10 @@ class SessionEventWriter:
         if memory_refs is not None:
             refs_obj["memory_refs"] = list(memory_refs)
 
-        trace_obj = dict(trace or {})
-        trace_id_value = (
-            str(trace_obj["trace_id"]) if trace_obj.get("trace_id") else trace_id
-        )
-        span_id_value = (
-            str(trace_obj["span_id"]) if trace_obj.get("span_id") else span_id
-        )
-        task_id_value = (
-            str(trace_obj["task_id"]) if trace_obj.get("task_id") else task_id
-        )
+        trace_obj = {key: str(value) for key, value in (trace or {}).items() if value}
+        trace_id_value = trace_obj.get("trace_id", trace_id)
+        span_id_value = trace_obj.get("span_id", span_id)
+        task_id_value = trace_obj.get("task_id", task_id)
 
         actor_type_value = str(actor_type).strip() or "system"
         actor_id_value = actor_id or agent_id
@@ -369,17 +391,19 @@ class SessionEventWriter:
             actor_type_value = "agent"
 
         resolved_parent_id = parent_event_id or parent_id
-        payload_obj, event_id = self._prepare_tool_event(
+        payload_obj, event_id = self._prepare_event(
             session_id=session_id,
             event_name=event_name,
             payload=payload_obj,
             parent_event_id=resolved_parent_id,
+            trace_id=trace_id_value,
         )
-        if event_id is not None:
+        if event_id is not None and event_name in _TOOL_TRANSCRIPT_EVENTS:
             redaction = "bounded"
 
         now = self._utc_now_iso()
         with self._record_store.transaction():
+            existed = bool(event_id and self._event_store.get_event_by_id(event_id))
             task_id_value = self._task_plan_step_task_id(
                 session_id=session_id,
                 event_name=event_name,
@@ -403,10 +427,11 @@ class SessionEventWriter:
                 verify_session_exists=True,
                 event_id=event_id,
             )
-            self._maybe_backfill_run_usage(
-                event_type=event_name,
-                payload=payload_obj,
-            )
+            if not existed:
+                self._maybe_backfill_run_usage(
+                    event_type=event_name,
+                    payload=payload_obj,
+                )
             self._touch_session_tx(session_id=session_id, ts=now)
         self._add_artifact_refs(
             session_id=session_id,
@@ -434,6 +459,12 @@ class SessionEventWriter:
             raise ValueError("canonical tool result parent payload is invalid")
         if parent_payload.get("call_id") != payload.get("call_id"):
             raise ValueError("canonical tool result call_id does not match parent")
+        if parent_payload.get("research_invocation_id") != payload.get(
+            "research_invocation_id"
+        ):
+            raise ValueError(
+                "canonical tool result research invocation does not match parent"
+            )
         if parent_payload.get("turn_scope_id") != payload.get("turn_scope_id"):
             raise ValueError(
                 "canonical tool result turn_scope_id does not match parent"

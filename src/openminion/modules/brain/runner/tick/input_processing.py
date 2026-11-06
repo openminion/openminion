@@ -239,8 +239,10 @@ def _interpret_user_input(*, runner, state, logger, tick_ctx, user_input: str) -
 
 
 def _capture_user_message(runner: Any, raw_user_message: str) -> bool:
-    return not _is_explicit_tool_command(raw_user_message) and not bool(
-        getattr(runner, "_capture_excluded_for_turn", False)
+    return (
+        not _is_explicit_tool_command(raw_user_message)
+        and not bool(getattr(runner, "_capture_excluded_for_turn", False))
+        and bool(getattr(runner, "_capture_authorized_for_turn", False))
     )
 
 

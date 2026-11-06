@@ -109,6 +109,6 @@ jobs:
             echo '- State: unsigned development build and signed candidate requested'
             echo "- Version: \`${PRODUCER_TAG#v}\`"
             echo "- Source commit: \`$PRODUCER_COMMIT\`"
-            echo '- Required closeout: publish every unsigned development binary and sidecar to an openminion/runtime prerelease, then verify every public download.'
+            echo '- Required closeout: publish every unsigned development binary and sidecar to a normal openminion/runtime GitHub Release, then verify every public download.'
             echo '- Stable publication remains blocked until signing, notarization, native verification, Desktop qualification, and protected manifest publication complete.'
           } >> "$GITHUB_STEP_SUMMARY"

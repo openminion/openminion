@@ -45,6 +45,24 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(args.command, "autonomy")
         self.assertEqual(args.autonomy_command, "list")
 
+    def test_root_session_reaches_lazy_loaded_run_command(self) -> None:
+        args = build_parser().parse_args(["--session", "probe-x", "run", "hi"])
+
+        self.assertEqual(args.command, "run")
+        self.assertEqual(args.session, "probe-x")
+
+    def test_run_session_flag_overrides_root_session(self) -> None:
+        args = build_parser().parse_args(
+            ["--session", "root-id", "run", "--session", "sub-id", "hi"]
+        )
+
+        self.assertEqual(args.session, "sub-id")
+
+    def test_run_without_session_flags_leaves_default(self) -> None:
+        args = build_parser().parse_args(["run", "hi"])
+
+        self.assertIsNone(args.session)
+
     def test_gateway_once_parse(self) -> None:
         parser = build_parser()
         args = parser.parse_args(
@@ -177,6 +195,16 @@ print(json.dumps(results, sort_keys=True))
         args = parser.parse_args(["--allow-unsandboxed-exec"])
 
         self.assertTrue(args.allow_unsandboxed_exec)
+
+    def test_resume_flag_populates_resume_name(self) -> None:
+        args = build_parser().parse_args(["--resume", "My Session"])
+        self.assertEqual(args.resume_name, "My Session")
+
+        alias_args = build_parser().parse_args(["-c", "Other Session"])
+        self.assertEqual(alias_args.resume_name, "Other Session")
+
+        default_args = build_parser().parse_args([])
+        self.assertIsNone(default_args.resume_name)
 
     def test_daemon_start_parse(self) -> None:
         parser = build_parser()

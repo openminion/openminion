@@ -3,7 +3,7 @@ from collections.abc import Callable
 import logging
 from pathlib import Path
 import subprocess
-from typing import Any
+from typing import Any, cast
 
 from openminion.base.config import resolve_config_path
 from openminion.cli.config import resolve_cli_roots
@@ -152,6 +152,10 @@ def _handle_focus_onboarding_gate(
     return None, args
 
 
+def _resolve_session_by_name(terminal_runtime: Any, name: str) -> str | None:
+    return cast(str | None, terminal_runtime.resolve_session_by_name(name))
+
+
 def _launch_terminal_focus(
     args: argparse.Namespace,
     runtime,
@@ -169,6 +173,15 @@ def _launch_terminal_focus(
 
     requested_agent = str(getattr(args, "agent", "") or "").strip() or None
     requested_session = str(getattr(args, "session", "") or "").strip() or None
+    resume_name = str(getattr(args, "resume_name", "") or "").strip() or None
+    if requested_session and resume_name:
+        import sys
+
+        print(
+            "openminion: --session and --resume are mutually exclusive",
+            file=sys.stderr,
+        )
+        return 2
     runtime_kwargs: dict[str, Any] = {
         "target": "focus",
         "agent_id": requested_agent,
@@ -181,7 +194,19 @@ def _launch_terminal_focus(
     terminal_runtime = OpenMinionRuntime(runtime, **runtime_kwargs)
     if read_only:
         terminal_runtime.set_read_only_mode(True)
-    if requested_session is None:
+    if resume_name:
+        resolved = _resolve_session_by_name(terminal_runtime, resume_name)
+        if resolved is None:
+            import sys
+
+            print(
+                f"openminion: no session named '{resume_name}'",
+                file=sys.stderr,
+            )
+            return 1
+        terminal_runtime.bind_session(resolved)
+        requested_session = resolved
+    elif requested_session is None:
         terminal_runtime.create_new_session()
     if not bool(getattr(args, "no_context", False)):
         terminal_runtime.set_project_context(resolve_project_context(working_dir))

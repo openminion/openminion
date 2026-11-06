@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from openminion.modules.brain.config import TOOL_TRANSCRIPT_MAX_REPLAYED_CALLS
+from openminion.modules.brain.constants import STATE_KEY_MODULE_STATE
 from openminion.modules.brain.schemas import ActionError, ActionResult
 from openminion.modules.llm.schemas import Message, ToolCall
 from openminion.modules.tool.diagnostics.events import (
@@ -172,6 +173,12 @@ def _session_writer(loop_ctx: AdaptiveToolLoopContext) -> tuple[Any | None, str]
     return session_api, session_id
 
 
+def _research_invocation_fields(loop_ctx: AdaptiveToolLoopContext) -> dict[str, str]:
+    research = getattr(loop_ctx.state, STATE_KEY_MODULE_STATE, {}).get("research", {})
+    invocation_id = research.get("invocation_id") if research.get("child") else None
+    return {"research_invocation_id": str(invocation_id)} if invocation_id else {}
+
+
 def persist_requested_tool_calls(
     loop_ctx: AdaptiveToolLoopContext,
     *,
@@ -195,6 +202,7 @@ def persist_requested_tool_calls(
                 "schema_version": 1,
                 "turn_scope_id": turn_scope_id,
                 "call_id": call_id,
+                **_research_invocation_fields(loop_ctx),
                 "canonical_name": call.name,
                 "sanitized_normalized_arguments": _persisted_arguments(
                     call, structural_only=structural_only
@@ -269,6 +277,7 @@ def persist_terminal_tool_result(
                 else {},
             },
         }
+    payload.update(_research_invocation_fields(loop_ctx))
     session_api.append_event(
         session_id,
         type=event_type,

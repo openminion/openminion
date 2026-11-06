@@ -624,7 +624,11 @@ def test_retryable_extraction_failure_leaves_capture_pending() -> None:
     )
     memory_api = MagicMock()
     writer = MagicMock()
-    runner = SimpleNamespace(memory_api=memory_api, terminal_capture_writer=writer)
+    runner = SimpleNamespace(
+        memory_api=memory_api,
+        terminal_capture_writer=writer,
+        _capture_authorized_for_turn=True,
+    )
     result = SimpleNamespace(
         working_state=SimpleNamespace(
             memory_capture_report_root_turn_id="root-1",

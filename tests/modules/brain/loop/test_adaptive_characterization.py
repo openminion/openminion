@@ -873,7 +873,7 @@ def test_execute_builds_profile_variants_and_shortlisting(
     monkeypatch.setattr(
         adaptive_modes.DefaultAdaptiveToolLoopLLMRuntime,
         "from_adapter",
-        staticmethod(lambda adapter: _Runtime()),
+        staticmethod(lambda adapter, *, task_state=None: _Runtime()),
     )
     monkeypatch.setattr(
         adaptive_modes,
@@ -935,6 +935,7 @@ def test_execute_builds_profile_variants_and_shortlisting(
         config={
             "max_adaptive_iterations": 2,
             "max_adaptive_tool_calls_per_loop": 3,
+            "max_adaptive_llm_calls_per_loop": 2,
             "adaptive_reflection_policy": "always",
         },
         runner=SimpleNamespace(
@@ -945,6 +946,7 @@ def test_execute_builds_profile_variants_and_shortlisting(
     result = mode.execute(_ctx())
     assert result.status == "done"
     assert captured[-1]["profile"].profile_name == "general_adaptive_v1"
+    assert captured[-1]["profile"].max_llm_calls_per_loop == 2
     assert "security.scan_code" in captured[-1]["profile"].allowed_tools
     assert captured[-1]["requestable_tool_specs"][0].name == "tool.request"
     assert (
@@ -993,7 +995,7 @@ def test_direct_tool_turn_adds_dynamic_runtime_tool_to_allowed_surface(
     monkeypatch.setattr(
         adaptive_modes.DefaultAdaptiveToolLoopLLMRuntime,
         "from_adapter",
-        staticmethod(lambda adapter: _Runtime()),
+        staticmethod(lambda adapter, *, task_state=None: _Runtime()),
     )
 
     def _fake_build_specs(
@@ -1075,7 +1077,11 @@ def test_prepare_and_execute_error_and_seeded_paths(
     monkeypatch.setattr(
         adaptive_modes.DefaultAdaptiveToolLoopLLMRuntime,
         "from_adapter",
-        staticmethod(lambda adapter: (_ for _ in ()).throw(_Unavailable("no runtime"))),
+        staticmethod(
+            lambda adapter, *, task_state=None: (_ for _ in ()).throw(
+                _Unavailable("no runtime")
+            )
+        ),
     )
     result = mode.prepare(_ctx())
     assert result.mode_result.status == BRAIN_STATE_ERROR

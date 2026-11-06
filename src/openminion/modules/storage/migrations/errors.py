@@ -28,3 +28,7 @@ class RehydrateError(StorageMigrationError):
 
 class RecoveryError(StorageMigrationError):
     """Raised when diagnostics recovery orchestration fails."""
+
+
+class SchemaOwnershipError(StorageMigrationError):
+    """Raised before any write when a PostgreSQL schema is not provably an owner's (#446)."""

@@ -23,7 +23,7 @@ def build_policy_store(
             f"Unsupported policy record backend: {config.record_backend!r}"
         )
 
-    engine = StorageEngine.from_config(config=config)
+    engine = StorageEngine.from_config(config=config, module_id="policy")
     return PostgresPolicyStore(record_store=engine.record_store)
 
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from contextlib import closing
 import json
 from pathlib import Path
+import sqlite3
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -210,6 +212,45 @@ class TestStorageMigrateApply:
 
         assert len(migrated) == 14
         assert any(item["module_id"] == "storage" for item in skipped)
+
+    def test_compress_module_migrates_a_new_sqlite_file(self, tmp_path, capsys):
+        from openminion.cli.commands.storage import run_storage_migrate
+        from openminion.modules.storage.migrations.module_ids import (
+            get_module_application_id,
+        )
+
+        db = tmp_path / "compress.db"
+        sqlite3.connect(db).close()
+
+        code = 0
+        try:
+            run_storage_migrate(
+                _make_args(sqlite=str(db), module="compress", json=True)
+            )
+        except SystemExit as exc:
+            code = exc.code
+
+        assert json.loads(capsys.readouterr().out)["modules"] == [
+            {"module_id": "compress", "status": "ok", "success": True}
+        ]
+        assert code == 0
+        with closing(sqlite3.connect(db)) as conn:
+            revisions = conn.execute("SELECT version_num FROM alembic_version")
+            assert revisions.fetchall() == [("0001_baseline",)]
+            application_id = conn.execute("PRAGMA application_id").fetchone()[0]
+            assert application_id == get_module_application_id("compress")
+            tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+        assert {
+            "compression_runs",
+            "dropped_reasons",
+            "compression_failures",
+            "om_meta",
+        } <= tables
 
 
 class TestStorageVerify:

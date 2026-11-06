@@ -15,6 +15,11 @@ remain owner-specific unless documented here or in `API_COMPATIBILITY.md`.
 `Agent` accepts `config_path` and `agent_id` for normal application setup,
 owns an isolated session by default, and supports context-manager cleanup.
 Pass an existing `APIRuntime` only when the application owns runtime lifecycle.
+When an `APIRuntime` start (`from_config_path()`, `from_config()` or
+`from_manager()`) raises, what it had already built is closed with the same
+closes as `APIRuntime.close()` before the original error reaches the caller,
+which gets no runtime to close. The start does not undo the `runtime.env`
+values it applied to the process environment or its logging configuration.
 Use `APIRuntime.submit_turn()` when the application needs typed iterator
 streaming, cancellation, or streamed approval resolution. `Agent.run_stream()`
 is the synchronous callback-progress convenience API.

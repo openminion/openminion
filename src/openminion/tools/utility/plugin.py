@@ -105,9 +105,16 @@ def _eval_expression(expression: str) -> float:
             right = _eval(node.right)
             if type(node.op) in {ast.Div, ast.FloorDiv, ast.Mod} and right == 0:
                 raise ToolRuntimeError("INVALID_ARGUMENT", "Division by zero")
-            if type(node.op) is ast.Pow and abs(right) > 64:
-                raise ToolRuntimeError("INVALID_ARGUMENT", "Exponent is too large")
+            if type(node.op) is ast.Pow:
+                if abs(right) > 64:
+                    raise ToolRuntimeError("INVALID_ARGUMENT", "Exponent is too large")
+                if right < 0 and left == 0:
+                    raise ToolRuntimeError("INVALID_ARGUMENT", "Division by zero")
             result = operator_fn(left, right)
+            if isinstance(result, complex):
+                raise ToolRuntimeError(
+                    "INVALID_ARGUMENT", "Expression result is not finite"
+                )
             if not math.isfinite(result):
                 raise ToolRuntimeError(
                     "INVALID_ARGUMENT", "Expression result is not finite"

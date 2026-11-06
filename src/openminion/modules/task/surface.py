@@ -1,8 +1,10 @@
+"""Authorized projections of persisted task and schedule state."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 from urllib.parse import quote
 
 from .constants import TASK_LIST_MAX_LIMIT
@@ -415,6 +417,9 @@ def _lifecycle_record_payload(
         else:
             payload["last_run"] = metadata.get("last_run")
         payload["daemon_required"] = True
+        security_scan = _security_scan_payload(job_payload, metadata)
+        if security_scan is not None:
+            payload["security_scan"] = security_scan
     project = _project_payload(metadata)
     if project:
         payload["project"] = project
@@ -422,6 +427,61 @@ def _lifecycle_record_payload(
     if activity:
         payload["activity"] = activity
     return payload
+
+
+def _security_scan_payload(
+    job_payload: Mapping[str, Any], metadata: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    admission = job_payload.get("security_scan")
+    if not isinstance(admission, Mapping):
+        return None
+    state = dict(metadata.get("security_scan") or {})
+    maximum = admission.get("max_runs")
+    admitted = state.get("admitted_runs")
+    completed = state.get("completed_run_id")
+    attempt = state.get("last_attempt")
+    current_attempt = (
+        isinstance(attempt, Mapping)
+        and completed is not None
+        and attempt.get("run_id") == completed
+        and state.get("status") != "running"
+    )
+    evidence_keys = (
+        "run_id",
+        "revision",
+        "report_ref",
+        "sarif_ref",
+        "comparison_ref",
+        "baseline_ref",
+    )
+    return {
+        **{
+            key: admission.get(key)
+            for key in (
+                "checks",
+                "expires_at",
+                "timeout_seconds",
+                "max_runs",
+                "baseline_ref",
+            )
+        },
+        "admitted_runs": admitted,
+        "remaining_runs": maximum - admitted
+        if maximum is not None and admitted is not None
+        else None,
+        "last_admitted_run_id": state.get("last_admitted_run_id"),
+        "status": state.get("status"),
+        "completed_run_id": completed,
+        "last_attempt": {
+            key: cast(Mapping[str, Any], attempt).get(key)
+            for key in (*evidence_keys, "status", "reason_code", "evidence_refs")
+        }
+        if current_attempt
+        else None,
+        "last_successful_evidence": {key: state.get(key) for key in evidence_keys}
+        if state.get("report_ref")
+        else None,
+    }
 
 
 def _activity_links(metadata: Mapping[str, Any]) -> dict[str, str]:

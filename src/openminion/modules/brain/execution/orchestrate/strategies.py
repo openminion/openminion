@@ -1,4 +1,5 @@
 import json
+from openminion.modules.brain.execution.task_context import execution_task_text
 from dataclasses import replace
 from typing import Any
 
@@ -398,6 +399,9 @@ def build_child_state(
     child_context: ChildContext,
 ) -> WorkingState:
     child_state = parent_state.model_copy(deep=True)
+    from ..task_context import inherit_child_task
+
+    inherit_child_task(child_state, parent_state)
     child_state.trace_id = new_uuid()
     child_state.goal = child_context.goal
     child_state.last_user_input = child_context.prompt
@@ -450,7 +454,7 @@ class LLMSynthesizer(ResultSynthesizer):
         if llm_profiles is not None:
             model = str(getattr(llm_profiles, "summarize_model", model) or model)
         context = {
-            "user_input": ctx.user_input,
+            "user_input": execution_task_text(ctx),
             "subtasks": [
                 {
                     "subtask_id": item.subtask_id,
@@ -569,9 +573,24 @@ class SummaryInheritancePolicy(ContextInheritancePolicy):
         dependency_results: list[SubtaskResult] | None = None,
     ) -> ChildContext:
         summary_parts: list[str] = []
-        goal = str(getattr(parent_state, "goal", "") or "").strip()
+        from openminion.modules.brain.loop.context.task_context import (
+            task_context_message,
+        )
+
+        task = getattr(parent_state, "resolved_task_context", None)
+        goal = (
+            str(task_context_message(task).content)
+            if task is not None
+            else str(getattr(parent_state, "goal", "") or "").strip()
+        )
         if goal:
             summary_parts.append(f"Parent goal: {goal}")
+        inherited = getattr(parent_state, "inherited_task_conditions", {})
+        if task is None and inherited:
+            summary_parts.append(
+                "INHERITED USER CONDITIONS (applicable to this subtask):\n"
+                + json.dumps(inherited, ensure_ascii=False)
+            )
         last_result = getattr(parent_state, "last_result", None)
         last_summary = str(getattr(last_result, "summary", "") or "").strip()
         if last_summary:

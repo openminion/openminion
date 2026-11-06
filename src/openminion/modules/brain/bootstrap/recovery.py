@@ -102,6 +102,8 @@ def _recover_simple_tool_parity_decision(
     llm_call_id: str,
 ) -> Decision | None:
     del capability_category
+    if state.task_context_needs_update:
+        return None
     from openminion.modules.brain.loop.tools.transcript import (
         replay_tool_messages,
         successful_replayed_tool_names,

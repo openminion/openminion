@@ -134,6 +134,8 @@ def build_tool_transcript(events: list[dict[str, Any]]) -> dict[str, Any]:
         if not isinstance(parent_payload, dict) or (
             parent_payload.get("call_id") != payload.get("call_id")
             or parent_payload.get("turn_scope_id") != payload.get("turn_scope_id")
+            or parent_payload.get("research_invocation_id")
+            != payload.get("research_invocation_id")
         ):
             raise ValueError("tool transcript replay error: conflicting linkage")
         if parent_id in terminal_parent_ids:

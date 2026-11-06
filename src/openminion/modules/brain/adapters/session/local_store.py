@@ -156,8 +156,21 @@ class LocalSessionStore:
             json.dumps(existing, ensure_ascii=True, indent=2), encoding="utf-8"
         )
 
-    def list_events(self, session_id: str) -> list[dict[str, Any]]:
-        return self._read_jsonl(self._events_path(session_id))
+    def list_events(
+        self,
+        session_id: str,
+        *,
+        event_type: str | None = None,
+        trace_id: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        events = [
+            event
+            for event in self._read_jsonl(self._events_path(session_id))
+            if (event_type is None or event.get("type") == event_type)
+            and (trace_id is None or event.get("trace_id") == trace_id)
+        ]
+        return events[-max(1, limit) :] if limit is not None else events
 
     def get_tool_transcript(self, session_id: str) -> dict[str, Any]:
         from openminion.modules.session.storage.replay import build_tool_transcript

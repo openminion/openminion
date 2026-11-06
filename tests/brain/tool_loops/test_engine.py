@@ -8819,7 +8819,13 @@ def test_engine_keeps_retryable_duplicate_batch_on_normal_tool_path() -> None:
                     status="retry",
                     summary="retry with a fresh snapshot",
                 ),
-            )
+            ),
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(), status="success", summary="fresh snapshot"
+                ),
+            ),
         ],
     )
 
@@ -8834,7 +8840,7 @@ def test_engine_keeps_retryable_duplicate_batch_on_normal_tool_path() -> None:
 
     assert duplicate_outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert duplicate_outcome.final_text == "done after retry guidance"
-    assert len(duplicate_ctx.commands) == 1
+    assert len(duplicate_ctx.commands) == 2
     assert len(duplicate_runtime.calls) == 3
     assert duplicate_runtime.calls[2]["tool_choice"] == "auto"
 

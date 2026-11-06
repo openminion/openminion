@@ -99,9 +99,22 @@ class FileReadArgs(BaseModel):
         validation_alias=AliasChoices("path", "file_path", "filename"),
     )
     max_chars: int = Field(
-        default=FILE_DEFAULT_MAX_READ_CHARS, ge=1, le=FILE_MAX_READ_CHARS
+        default=FILE_DEFAULT_MAX_READ_CHARS,
+        ge=1,
+        le=FILE_MAX_READ_CHARS,
+        description=(
+            "Maximum characters to return "
+            f"(default {FILE_DEFAULT_MAX_READ_CHARS}, max {FILE_MAX_READ_CHARS})"
+        ),
     )
-    offset: int = Field(default=0, ge=0)
+    offset: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Character offset into the decoded text; 0 starts at the beginning. "
+            "Use next_offset from a truncated read to continue"
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -171,6 +184,15 @@ class FileWriteArgs(BaseModel):
         description="Content to write",
         validation_alias=AliasChoices("content", "text", "body"),
     )
+    expected_content_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+        description="Write only if the full content matches content_sha256 from file.read.",
+    )
+    expected_version: str | None = Field(
+        default=None,
+        description="Write only if the file version from file.read is unchanged.",
+    )
     append: bool = Field(default=False, description="Append to existing file")
     create_dirs: bool = Field(
         default=True, description="Create parent directories if missing"
@@ -234,7 +256,15 @@ class FileSearchArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     path: str | None = Field(default=".", description="Directory to search")
-    query: str = Field(..., min_length=1, description="Search query")
+    query: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Search query (alias: pattern). Unlike file.find, this is text or a "
+            "regex over file contents, not a glob; use file_glob to filter files"
+        ),
+        validation_alias=AliasChoices("query", "pattern"),
+    )
     regex: bool = Field(default=False, description="Use regex matching")
     case_sensitive: bool = Field(default=False, description="Case-sensitive matching")
     context_lines: int = Field(
@@ -439,7 +469,7 @@ def _h_read_file(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
         seam_id="tools.file.plugin.read_file",
         provenance_ref=str(resolved),
     )
-    return {
+    payload = {
         "ok": True,
         "path": resolved,
         "content": result.content,
@@ -448,6 +478,17 @@ def _h_read_file(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
         "returned_length": result.returned_length,
         "source": _FILE_TOOL_SOURCE,
     }
+    if result.version is not None:
+        payload["version"] = result.version
+    if result.content_sha256 is not None:
+        payload["content_sha256"] = result.content_sha256
+    if result.truncated:
+        payload["next_offset"] = validated.offset + result.returned_length
+        payload["hint"] = (
+            "pass next_offset as offset to continue, or use file.read_range for "
+            "line-based access"
+        )
+    return payload
 
 
 def _h_read_range(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
@@ -512,6 +553,15 @@ def _h_write_file(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
             content,
             append=validated.append,
             create_dirs=validated.create_dirs,
+            **(
+                {
+                    "expected_content_sha256": validated.expected_content_sha256,
+                    "expected_version": validated.expected_version,
+                }
+                if validated.expected_content_sha256 is not None
+                or validated.expected_version is not None
+                else {}
+            ),
         )
     except ToolRuntimeError as e:
         return _tool_error_result_from_exception(e)

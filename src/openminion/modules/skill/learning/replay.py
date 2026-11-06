@@ -32,6 +32,7 @@ class ReplayProof(BaseModel):
     command: str = ""
     evidence_refs: list[str] = Field(default_factory=list)
     summary: str = ""
+    measurement_ref: str | None = None
 
     @property
     def passed(self) -> bool:
@@ -52,6 +53,7 @@ class ReplayEvaluationResult(BaseModel):
     command: str = ""
     evidence_refs: list[str] = Field(default_factory=list)
     summary: str = ""
+    measurement_ref: str | None = None
 
     def to_proof(self, *, result_ref: str) -> ReplayProof:
         return ReplayProof(
@@ -66,7 +68,18 @@ class ReplayGateError(ValueError):
 
 
 def proposal_draft_hash(proposal: SkillProposal) -> str:
-    return str(stable_hash(proposal.proposed_skill_definition.model_dump(mode="json")))
+    draft = proposal.proposed_skill_definition.model_dump(mode="json")
+    if draft.pop("procedure", None) is None:
+        return str(stable_hash(draft))
+    return str(
+        stable_hash(
+            {
+                "kind": "authored-workflow-proposal/v1",
+                "agent_id": proposal.agent_id,
+                "draft": proposal.proposed_skill_definition.model_dump(mode="json"),
+            }
+        )
+    )
 
 
 def require_replay_passed(proof: ReplayProof, proposal: SkillProposal) -> None:

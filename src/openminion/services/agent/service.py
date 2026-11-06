@@ -11,10 +11,14 @@ from openminion.modules.context.input_boundaries import (
     route_and_ledger as _pidf_route_and_ledger,
 )
 from openminion.modules.brain.runtime.reasoning import (
+    THINKING_ROUTE_BRIDGE,
+    THINKING_ROUTE_DIRECT,
+    THINKING_ROUTE_OLLAMA,
     ThinkingCtl,
     ThinkingRequest,
     ThinkingResolutionInput,
 )
+from openminion.modules.llm.reasoning.mapping import reconcile_route_support_metadata
 from openminion.modules.llm.client_call import (
     provider_history_payload,
     usage_payload_from_response_usage as _provider_usage_payload,
@@ -131,6 +135,15 @@ def _thinking_on_default_profile(cfg: OpenMinionConfig) -> str:
     return str(getattr(profile, "thinking", "") or "")
 
 
+def _thinking_execution_route(*, provider_name: str, uses_llm_runtime: bool) -> str:
+    """Return the execution route a thinking resolution will take."""
+    if not uses_llm_runtime:
+        return cast(str, THINKING_ROUTE_BRIDGE)
+    if provider_name.strip().lower() == "ollama":
+        return cast(str, THINKING_ROUTE_OLLAMA)
+    return cast(str, THINKING_ROUTE_DIRECT)
+
+
 def _provider_facade(
     provider: object | None, llm_runtime: object | None
 ) -> object | None:
@@ -176,7 +189,9 @@ def _tool_result_resolution_metadata(data: dict[str, Any]) -> dict[str, str]:
     }
 
 
-def _tool_result_payload_entry(item: Any) -> dict[str, Any]:
+def _tool_result_payload_entry(
+    item: Any, *, threshold_chars: int = TOOL_OUTPUT_FRAME_THRESHOLD_CHARS
+) -> dict[str, Any]:
     data = getattr(item, "data", {}) or {}
     entry_data = data if isinstance(data, dict) else {}
     entry_chain = entry_data.get("runtime_fallback_chain", []) or []
@@ -188,6 +203,7 @@ def _tool_result_payload_entry(item: Any) -> dict[str, Any]:
     content, output_frame = _tool_output_content_and_frame(
         content=str(getattr(item, "content", "") or ""),
         data=entry_data,
+        threshold_chars=threshold_chars,
     )
     payload_entry = {
         "id": str(getattr(item, "call_id", "") or ""),
@@ -562,8 +578,33 @@ class AgentService(AgentTurnFlowMixin):
             str(key): str(value)
             for key, value in dict(getattr(request, "metadata", {}) or {}).items()
         }
-        if metadata.get("thinking_reasoning_profile"):
+        provider_name = str(
+            getattr(self._llm_runtime, "name", "")
+            or getattr(self._provider, "name", "")
+            or ""
+        ).strip()
+        model_name = str(
+            getattr(self._llm_runtime, "model", "")
+            or getattr(self._provider, "model", "")
+            or ""
+        ).strip()
+        route = _thinking_execution_route(
+            provider_name=provider_name,
+            uses_llm_runtime=self._llm_runtime is not None,
+        )
+        reasoning_profile = str(
+            metadata.get("thinking_reasoning_profile", "") or ""
+        ).strip()
+        if reasoning_profile:
+            reconcile_route_support_metadata(
+                reasoning_profile=reasoning_profile,
+                provider_name=provider_name or None,
+                model_name=model_name or None,
+                route=route,
+                metadata=metadata,
+            )
             request.metadata = metadata
+            request.thinking = str(metadata.get("thinking_provider_effort") or "")
             return
 
         from openminion.base.config.core import resolve_default_agent_id
@@ -581,16 +622,6 @@ class AgentService(AgentTurnFlowMixin):
                 )
         except Exception:  # noqa: BLE001
             agent_runtime_thinking = None
-        provider_name = str(
-            getattr(self._llm_runtime, "name", "")
-            or getattr(self._provider, "name", "")
-            or ""
-        ).strip()
-        model_name = str(
-            getattr(self._llm_runtime, "model", "")
-            or getattr(self._provider, "model", "")
-            or ""
-        ).strip()
         resolved = self._thinking_ctl.resolve(
             request=ThinkingRequest(
                 purpose=str(metadata.get("purpose", "") or "").strip() or None,
@@ -598,6 +629,7 @@ class AgentService(AgentTurnFlowMixin):
                 or None,
                 provider=provider_name or None,
                 model=model_name or None,
+                route=route,
                 metadata=metadata,
             ),
             layers=ThinkingResolutionInput(
@@ -627,6 +659,7 @@ class AgentService(AgentTurnFlowMixin):
         model_name: str = "",
         allowed_tool_names: list[str] | None = None,
     ) -> ProviderResponse:
+        usage_payload = _provider_usage_payload(getattr(response, "usage", None))
         if not bool(getattr(response, "ok", False)):
             error = getattr(response, "error", None)
             error_code = str(getattr(error, "code", "") or "").strip()
@@ -649,7 +682,7 @@ class AgentService(AgentTurnFlowMixin):
                             or self._provider_name()
                             or "model"
                         ),
-                        usage={},
+                        usage=usage_payload,
                         tool_calls=[],
                         finish_reason=str(getattr(response, "finish_reason", "") or ""),
                         normalization=normalization,
@@ -667,8 +700,6 @@ class AgentService(AgentTurnFlowMixin):
                 code=error_code or "PROVIDER_ERROR",
                 details=dict(getattr(error, "details", {}) or {}),
             )
-
-        usage_payload = _provider_usage_payload(getattr(response, "usage", None))
 
         tool_calls: list[ProviderToolCall] = []
         for call in list(getattr(response, "tool_calls", []) or []):
@@ -899,7 +930,11 @@ class AgentService(AgentTurnFlowMixin):
         self, *, batch: Any, tool_calls_count: int
     ) -> dict[str, str]:
         results = list(getattr(batch, "results", []) or [])
-        tool_results_payload = [_tool_result_payload_entry(item) for item in results]
+        threshold_chars = self._config.runtime.agent_loop_tool_result_max_chars
+        tool_results_payload = [
+            _tool_result_payload_entry(item, threshold_chars=threshold_chars)
+            for item in results
+        ]
         resolution_metadata = self._empty_tool_resolution_metadata()
         for item in results:
             data = getattr(item, "data", {}) or {}

@@ -26,9 +26,9 @@ from .transport.client import ProviderHTTPClient
 _as_float = _base_as_float
 
 _SCHEMA_ONLY_SUBMIT_OUTPUT_NATIVE_INSTRUCTION = (
-    "Schema-only control phase:\n"
-    "1. This phase returns structured control output; it must not execute the "
-    "user's task.\n"
+    "Structured output contract:\n"
+    "1. Return the result required by the phase instructions using the supplied "
+    "schema.\n"
     "2. Use only the `submit_output` tool. Do not call, describe, or wrap any "
     "other tool.\n"
     "3. Do not emit XML, JSON, markdown, or prose tool envelopes for task tools."
@@ -520,8 +520,7 @@ def _insert_openai_like_extra_instructions(
     if str(extra_system_instruction or "").strip():
         extra_instruction_parts.append(str(extra_system_instruction).strip())
     if schema_only and not include_fallback_instruction:
-        # Native-only providers still need an explicit phase boundary; otherwise
-        # schema-only control calls can be tempted into task-tool envelopes.
+        # Tool names determine output format, not the semantic role of the phase.
         extra_instruction_parts.append(_SCHEMA_ONLY_SUBMIT_OUTPUT_NATIVE_INSTRUCTION)
     if extra_instruction_parts:
         messages.insert(

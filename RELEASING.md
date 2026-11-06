@@ -1,7 +1,7 @@
 # OpenMinion Releasing
 
 Status: active
-Last updated: 2026-10-08
+Last updated: 2026-10-30
 
 Purpose: give maintainers a compact package-local release smoke checklist for
 the public `openminion` package surface on the active alpha line defined by
@@ -49,8 +49,8 @@ Use these completion labels exactly:
 2. **source manifest published**: the null-bound production-wheel record is on
    protected main and passes anonymous readback,
 3. **development binaries published**: paired unsigned CLI and daemon binaries
-   for macOS arm64, Linux x86_64 and Windows x86_64 are in a public prerelease
-   and every asset passes anonymous digest readback,
+   for macOS arm64, Linux x86_64 and Windows x86_64 are in a normal public
+   GitHub Release and every asset passes anonymous digest readback,
 4. **Desktop source update certified**: a later immutable same-wheel record has
    reviewed compatibility bounds and commit-pinned Desktop qualification,
 5. **binary runtime published**: signed/native-qualified binary assets and their
@@ -69,7 +69,7 @@ dispositions; omission is not a valid completed state:
 
 1. **binary runtime published**: the signed, notarized, native-qualified public
    runtime release and binary manifest are complete, or
-2. **binary blocked**: record the public unsigned development prerelease, the
+2. **binary blocked**: record the public unsigned development Release, the
    private signed-candidate run and the exact unmet gate, such as macOS
    signing/notarization, Windows signing, native verification, Desktop
    compatibility, or immutable public-release review.
@@ -126,10 +126,12 @@ local files and passing tests are not deployment evidence. Verify without publis
    matrix is a visible release failure; it must not be omitted from closeout.
 7. Transfer every unsigned `openminion` and `openminiond` executable, `.json`
    metadata file and `.sha256` sidecar to the public
-   `runtime-dev-v<version>-build.<number>` prerelease in `openminion/runtime`.
-   Add `runtime-release.json` and `SHA256SUMS`, mark the Release as a prerelease
-   and explicitly unsigned, then anonymously download every asset and verify
-   all digests. Delete the temporary private draft only after public readback.
+   `runtime-dev-v<version>-build.<number>` normal GitHub Release in
+   `openminion/runtime`. Add `runtime-release.json` and `SHA256SUMS`, publish
+   with `prerelease=false`, mark the newest runtime build as `latest`, and keep
+   the `-dev-` tag, manifest, and notes explicitly unsigned and non-stable.
+   Then anonymously download every asset and verify all digests. Delete the
+   temporary private draft only after public readback.
    Never add these bytes to the stable manifest or call them
    **binary runtime published**.
 8. Run the normal PR checks, then merge with a **merge commit**. Keep only one
@@ -493,7 +495,7 @@ Keep an evidence row per release with the selected mode, the RC TestPyPI run
 when used, final TestPyPI run, final producer run and tag SHA, both index hashes
 and install-smoke results, metadata observer run/attempt, metadata PR merge
 commit, successful `verify-main` run, and post-publication back-merge PR. Record
-the unsigned build run, public development-prerelease URL and anonymous digest
+the unsigned build run, public development-release URL and anonymous digest
 readback separately from the private signed candidate, signed final runtime
 Release and public binary-feed verification.
 

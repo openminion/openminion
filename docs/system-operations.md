@@ -227,6 +227,9 @@ required by `tasks update`.
 Run-now queues an ordinary run without changing the recurring deadline. Paused,
 terminal, busy, foreign, and specialized watch/consolidation tasks are rejected
 rather than guessed or rewritten.
+A memory consolidation job created by a package before 0.1.15 is paused on its
+first run; replace it as in
+[Memory consolidation jobs from earlier packages](runtime-database-upgrades.md#memory-consolidation-jobs-from-earlier-packages).
 
 Terminal history deletion and global scheduler pause/resume are dangerous
 controls. They require explicit confirmation unless the active policy provides

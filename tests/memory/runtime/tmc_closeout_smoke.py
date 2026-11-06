@@ -232,7 +232,7 @@ def run_closeout_smoke(
         rate_limit_remaining_percent_probe=lambda _session_id, _agent_id: 80,
     )
 
-    maintenance = state.module_state["memory_context_maintenance"]
+    maintenance = state.module_state.get("memory_context_maintenance", {})
     old_after = store.get("old-1")
     redacted = any(
         "[REDACTED_SECRET]" in str(item.get("content_preview", "") or "")
@@ -259,9 +259,9 @@ def run_closeout_smoke(
         "supersession_set_valid_to": bool(
             old_after is not None and old_after.valid_to and old_after.superseded_by_id
         ),
-        "maintenance_marker_updated": bool(
-            maintenance.get("last_consolidation_marker")
-            and maintenance.get("last_consolidation_state_hash")
+        "maintenance_marker_skipped_when_pending": bool(
+            not maintenance.get("last_consolidation_marker")
+            and not maintenance.get("last_consolidation_state_hash")
         ),
     }
     return TmcCloseoutArtifact(

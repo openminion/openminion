@@ -1,7 +1,7 @@
 """Close API runtime resources in dependency-safe order."""
 
 from contextlib import suppress
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Protocol, cast
 import weakref
 
@@ -102,6 +102,39 @@ def close_unregistered_runtime_components(runtime: object) -> None:
         ops_service=getattr(runtime, "ops_service", None),
         telemetry_service=getattr(runtime, "telemetry_service", None),
         llm_runtime=getattr(runtime, "llm_runtime", None),
+    )
+
+
+def close_runtime_infrastructure(
+    infrastructure: Mapping[str, object],
+    *,
+    agent: object | None = None,
+    gateway: object | None = None,
+) -> None:
+    """Close what a failed start built before a runtime object owned it.
+
+    The keys are those that `build_runtime_infrastructure` returns. Each one goes
+    to its parameter of `close_runtime_components`, so the closes run in that
+    order. There is no runtime yet, so no runtime manager or lifecycle bridge.
+    """
+    memory_assembly = infrastructure.get("runtime_memory_assembly")
+    close_runtime_components(
+        channel_supervisor=infrastructure.get("channel_supervisor"),
+        retrieve_ctl=infrastructure.get("retrieve_ctl"),
+        gateways=None if gateway is None else {"": gateway},
+        agent_services=None if agent is None else {"": agent},
+        memory_assemblies=None if memory_assembly is None else {"": memory_assembly},
+        action_policy=infrastructure.get("action_policy"),
+        runtime_manager=None,
+        lifecycle_bridge=None,
+        tools=infrastructure.get("tools"),
+        runtime_storage=infrastructure.get("runtime_storage"),
+        sandbox_runner=infrastructure.get("sandbox_runner"),
+        security_lab_runner=infrastructure.get("security_lab_runner"),
+        authored_tools=infrastructure.get("authored_tools"),
+        ops_service=infrastructure.get("ops_service"),
+        telemetry_service=infrastructure.get("telemetry_service"),
+        llm_runtime=infrastructure.get("llm_runtime"),
     )
 
 

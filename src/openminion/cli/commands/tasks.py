@@ -244,57 +244,82 @@ def _print_human(*, action: str, payload: dict[str, Any]) -> None:
         return
     task = payload.get("task")
     if isinstance(task, dict):
-        print("Task")
-        print("====")
-        print(f"id: {task.get('id')}")
-        print(f"title: {task.get('title')}")
-        print(f"status: {task.get('status')}")
-        due = task.get("due_at")
-        if due:
-            print(f"due: {due}")
-        if task.get("schedule_summary"):
-            print(f"schedule: {task.get('schedule_summary')}")
-        if task.get("daemon_required"):
-            scheduler = dict(payload.get("scheduler") or {})
-            if scheduler.get("paused"):
-                print(
-                    f"scheduler: paused (daemon: {scheduler.get('state', 'unknown')})"
-                )
-                if scheduler.get("reason"):
-                    print(f"scheduler_reason: {scheduler['reason']}")
-            else:
-                print(f"scheduler: {scheduler.get('state', 'unknown')}")
-            if scheduler.get("check_command"):
-                print(f"scheduler_check: {scheduler['check_command']}")
-        if task.get("last_run"):
-            last_run = task["last_run"]
-            print(f"last_run: {last_run.get('state')}")
-            if last_run.get("isolated_session_id"):
-                print(f"result_session: {last_run['isolated_session_id']}")
-            if last_run.get("last_error"):
-                error = last_run["last_error"]
-                print(f"last_error: {error.get('code')}: {error.get('message')}")
-            delivery = last_run.get("delivery") or {}
-            if delivery:
-                print(
-                    f"delivery: {delivery.get('state') or delivery.get('mode') or '-'}"
-                )
-                if delivery.get("error"):
-                    print(f"delivery_error: {delivery['error']}")
-            if last_run.get("delivery_targets"):
-                print(f"delivery_targets: {', '.join(last_run['delivery_targets'])}")
-        recent_runs = list(task.get("recent_runs") or [])
-        if recent_runs:
-            print("recent_runs:")
-            for run in recent_runs:
-                print(
-                    f"- {run.get('run_id')}: {run.get('state')} "
-                    f"session={run.get('isolated_session_id') or '-'}"
-                )
-        if task.get("valid_actions"):
-            print(f"actions: {', '.join(task['valid_actions'])}")
+        _print_task_detail(task, dict(payload.get("scheduler") or {}))
         return
     print(f"Task action {payload.get('action')} completed")
+
+
+def _print_task_detail(task: dict[str, Any], scheduler: dict[str, Any]) -> None:
+    print("Task")
+    print("====")
+    print(f"id: {task.get('id')}")
+    print(f"title: {task.get('title')}")
+    print(f"status: {task.get('status')}")
+    due = task.get("due_at")
+    if due:
+        print(f"due: {due}")
+    if task.get("schedule_summary"):
+        print(f"schedule: {task.get('schedule_summary')}")
+    if task.get("security_scan") is not None:
+        _print_security_scan(task["security_scan"])
+    if task.get("daemon_required"):
+        if scheduler.get("paused"):
+            print(f"scheduler: paused (daemon: {scheduler.get('state', 'unknown')})")
+            if scheduler.get("reason"):
+                print(f"scheduler_reason: {scheduler['reason']}")
+        else:
+            print(f"scheduler: {scheduler.get('state', 'unknown')}")
+        if scheduler.get("check_command"):
+            print(f"scheduler_check: {scheduler['check_command']}")
+    if task.get("last_run"):
+        last_run = task["last_run"]
+        print(f"last_run: {last_run.get('state')}")
+        if last_run.get("isolated_session_id"):
+            print(f"result_session: {last_run['isolated_session_id']}")
+        if last_run.get("last_error"):
+            error = last_run["last_error"]
+            print(f"last_error: {error.get('code')}: {error.get('message')}")
+        delivery = last_run.get("delivery") or {}
+        if delivery:
+            print(f"delivery: {delivery.get('state') or delivery.get('mode') or '-'}")
+            if delivery.get("error"):
+                print(f"delivery_error: {delivery['error']}")
+        if last_run.get("delivery_targets"):
+            print(f"delivery_targets: {', '.join(last_run['delivery_targets'])}")
+    recent_runs = list(task.get("recent_runs") or [])
+    if recent_runs:
+        print("recent_runs:")
+        for run in recent_runs:
+            print(
+                f"- {run.get('run_id')}: {run.get('state')} "
+                f"session={run.get('isolated_session_id') or '-'}"
+            )
+    if task.get("valid_actions"):
+        print(f"actions: {', '.join(task['valid_actions'])}")
+
+
+def _print_security_scan(scan: dict[str, Any]) -> None:
+    print("security_scan:")
+    for key in (
+        "checks",
+        "expires_at",
+        "timeout_seconds",
+        "max_runs",
+        "admitted_runs",
+        "remaining_runs",
+        "last_admitted_run_id",
+        "status",
+        "completed_run_id",
+    ):
+        value = scan[key]
+        print(f"  {key}: {value if value is not None else 'unavailable'}")
+    for section in ("last_attempt", "last_successful_evidence"):
+        evidence = scan[section]
+        print(f"  {section}: {'unavailable' if evidence is None else ''}")
+        if evidence is not None:
+            for key, value in evidence.items():
+                if value is not None:
+                    print(f"    {key}: {value}")
 
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:

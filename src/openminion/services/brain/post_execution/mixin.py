@@ -20,6 +20,7 @@ from openminion.modules.brain.diagnostics.status import (
     StatusDetailCode,
     normalize_phase_status,
 )
+from openminion.modules.policy.adapters.memory import memory_capture_allowed
 from openminion.modules.session.capture import (
     capture_is_excluded,
     capture_run_kwargs,
@@ -37,6 +38,7 @@ from openminion.services.security.blast_radius.wiring import (
 from openminion.services.security.tool_execution import (
     build_execution_boundary_policy_adapter,
 )
+from openminion.services.agent.execution.composition import AgentServiceTurnFlowAdapter
 from openminion.services.agent.identity_binding import issue_execution_identity
 from openminion.modules.telemetry.execution_lifecycle import AgentExecutionTelemetry
 
@@ -75,7 +77,11 @@ def _bind_tool_workspace_root(
     workspace_path = (
         Path(workspace_root).expanduser() if workspace_root else tool_api.workspace_root
     )
-    return tool_api.workspace_override(workspace_path, added_roots=added_roots)
+    return tool_api.workspace_override(
+        workspace_path,
+        added_roots=added_roots,
+        security_scan_context=metadata_source.get("security_scan_context"),
+    )
 
 
 def _take_added_workspace_roots(metadata: dict[str, Any]) -> tuple[Path, ...]:
@@ -177,6 +183,14 @@ class BrainBridgeTurnMixin:
         runner._terminal_capture_enabled_for_turn = terminal_capture_is_enabled(
             message.metadata or {}
         )
+        runner._memory_write_allowed_for_turn = self._turn_memory_write_allowed(
+            message=message, session_id=session_id
+        )
+        runner._capture_authorized_for_turn = (
+            runner._memory_write_allowed_for_turn
+            and runner._terminal_capture_enabled_for_turn
+            and not runner._capture_excluded_for_turn
+        )
         self._inject_gateway_system_context(
             runner=runner,
             session_id=session_id,
@@ -199,6 +213,20 @@ class BrainBridgeTurnMixin:
             await self._telemetryctl.emit_tick(session_id, turn_id, 0)
 
         return runner, session_id, request_id, turn_id, turn_start_time
+
+    def _turn_memory_write_allowed(self, *, message: Message, session_id: str) -> bool:
+        capture = capture_run_kwargs(message.metadata or {})
+        service_port = AgentServiceTurnFlowAdapter(self)
+        return bool(
+            memory_capture_allowed(
+                capture["runtime_session_id"] or session_id,
+                capture["root_turn_id"] or "",
+                channel=str(message.channel or "brain"),
+                policy=service_port.security_policy,
+                tools=service_port.tools,
+                agent_id=service_port.identity_agent_id,
+            )
+        )
 
     def _refresh_prep_identity_state(self) -> None:
         self._last_identity_snippet = None
@@ -552,13 +580,11 @@ from .context import (  # noqa: E402
     _append_runtime_grounding_block,
     _apply_runtime_system_prompt_override,
     _build_runtime_memory_context,
-    _collect_llm_call_counts_by_purpose,
     _collect_system_history_context,
     _hydrate_runner_session_context,
     _inject_gateway_system_context,
     _inject_resume_task_hints,
     _is_state_machine_error_text,
-    _normalize_llm_purpose,
     _normalize_turn_content,
     _pending_history_turns_to_hydrate,
     _prior_turn_context_hint,
@@ -610,10 +636,6 @@ from .reset import (  # noqa: E402
 )
 
 BrainBridgeTurnMixin._resolve_turn_session_ids = staticmethod(_resolve_turn_session_ids)
-BrainBridgeTurnMixin._normalize_llm_purpose = staticmethod(_normalize_llm_purpose)
-BrainBridgeTurnMixin._collect_llm_call_counts_by_purpose = staticmethod(
-    _collect_llm_call_counts_by_purpose
-)
 BrainBridgeTurnMixin._append_runtime_grounding_block = _append_runtime_grounding_block
 BrainBridgeTurnMixin._build_runtime_memory_context = _build_runtime_memory_context
 BrainBridgeTurnMixin._inject_gateway_system_context = _inject_gateway_system_context

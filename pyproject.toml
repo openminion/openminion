@@ -214,6 +214,7 @@ package-dir = { "" = "src" }
 [tool.setuptools.package-data]
 "openminion" = ["py.typed"]
 "openminion.cli.presentation.bundled_commands" = ["*.md"]
+"openminion.modules.storage.migrations" = ["postgres_histories.json"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from openminion.modules.storage.backends.postgres import (
         RecordStorePostgres,
     )
+    from openminion.modules.storage.migrations.postgres_schema import ModuleSchema
 
 
 ARCHIVE_TABLE_NAME = "a2a_audit_archive"
@@ -58,8 +59,10 @@ class PostgresAuditArchiveStore:
         audit_root: str | Path,
         engine: "Engine | None" = None,
         owns_engine: bool = False,
+        postgres_schema: ModuleSchema | None = None,
     ) -> None:
         self._record_store = record_store
+        self._postgres_schema = postgres_schema
         self.audit_root = Path(audit_root).expanduser().resolve(strict=False)
         self.audit_root.mkdir(parents=True, exist_ok=True)
         self._engine = engine
@@ -153,6 +156,7 @@ class PostgresAuditArchiveStore:
             module_application_id=MODULE_APPLICATION_ID,
             backend_type="postgres",
             engine=engine,
+            postgres_schema=self._postgres_schema,
         )
         report = runner.migrate(target="head")
         if not report.success:

@@ -422,9 +422,9 @@ def test_cortensor_portal_preserves_tool_continuation_and_response_facts() -> No
         {
             "role": "system",
             "content": (
-                "Schema-only control phase:\n"
-                "1. This phase returns structured control output; it must not execute "
-                "the user's task.\n"
+                "Structured output contract:\n"
+                "1. Return the result required by the phase instructions using the supplied "
+                "schema.\n"
                 "2. Use only the `submit_output` tool. Do not call, describe, or wrap "
                 "any other tool.\n"
                 "3. Do not emit XML, JSON, markdown, or prose tool envelopes for task tools."

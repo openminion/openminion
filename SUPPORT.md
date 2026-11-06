@@ -36,3 +36,12 @@ For usage questions or bug reports:
 If the issue only reproduces in a larger host deployment or with a specific
 provider/integration stack, call that out explicitly; that usually means the
 problem is partly or fully outside the standalone package contract.
+
+You do not need to submit a fix or purchase provider access to report a problem.
+We may invite a focused PR and agree on timing. If you cannot contribute code or
+collect the requested evidence, say so: maintainers will own the investigation
+or fix and record the next step on the issue. See the
+[report-to-fix process](CONTRIBUTING.md#from-a-report-to-a-fix).
+
+A merged fix remains open for verification in a published package. The issue's
+checklist records what must pass before closure.

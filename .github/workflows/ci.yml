@@ -603,4 +603,6 @@ jobs:
           python -m pytest -q -m postgres tests/integration/test_runtime_storage_postgres.py
           python -m pytest -q -m postgres tests/integration/test_runtime_memory_postgres.py
           python -m pytest -q -m postgres tests/integration/test_storage_migrate_report_postgres.py
+          python -m pytest -q -m postgres tests/integration/test_module_baselines_postgres.py
           python -m pytest -q -m postgres tests/memory/test_gc_postgres.py
+          python -m pytest -q -m postgres tests/integration/test_postgres_module_schemas.py

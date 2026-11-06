@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 _NESTED_MODULE_STORAGE_IMPORT_PATHS: dict[str, list[str]] = {
     "authoring": ["openminion.modules.tool.authoring.storage"],
     "commerce": ["openminion.tools.commerce.storage"],
+    "compress": ["openminion.modules.context.compress.storage"],
 }
 
 
@@ -218,3 +219,50 @@ def drop_sql_objects(
         bind.exec_driver_sql(f'DROP INDEX IF EXISTS "{index_name}"')
     for table_name in reversed(list(table_names)):
         bind.exec_driver_sql(f'DROP TABLE IF EXISTS "{table_name}"')
+
+
+def require_postgres_column_types(expected: dict[str, dict[str, str]]) -> None:
+    """Stop a PostgreSQL revision before it keeps an existing table of another type.
+
+    ``expected`` maps a table to ``{column: type}``, with the type the revision's
+    DDL gives the column: ``SERIAL`` (an ``integer`` whose default is a sequence)
+    or the upper-cased ``information_schema.columns.data_type``. Tables that do
+    not exist in the current schema are skipped: the revision creates them.
+    """
+    from alembic import op
+    from sqlalchemy import text
+
+    from openminion.modules.storage.migrations.errors import MigrationApplyError
+
+    bind = op.get_bind()
+    mismatches: list[str] = []
+    for table_name, column_types in expected.items():
+        rows = bind.execute(
+            text(
+                "SELECT column_name, data_type, column_default "
+                "FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = :table_name"
+            ),
+            {"table_name": table_name},
+        ).all()
+        found = {
+            str(name): (
+                "SERIAL"
+                if data_type == "integer" and str(default or "").startswith("nextval(")
+                else str(data_type).upper()
+            )
+            for name, data_type, default in rows
+        }
+        if not found:
+            continue
+        for column_name, column_type in column_types.items():
+            actual = found.get(column_name, "missing")
+            if actual != column_type:
+                mismatches.append(
+                    f"{table_name}.{column_name} is {actual}, expected {column_type}"
+                )
+    if mismatches:
+        raise MigrationApplyError(
+            "Existing tables differ from this revision and are not adopted: "
+            + "; ".join(mismatches)
+        )

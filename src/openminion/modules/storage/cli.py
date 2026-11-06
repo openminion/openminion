@@ -817,17 +817,30 @@ def _run_a2a_archive_old(args: argparse.Namespace, env_map) -> int:
         )
         audit_root = (resolved_data_root / "a2a" / "audit").resolve()
 
-    engine = create_engine(postgres_url, future=True)
+    from openminion.modules.storage.migrations.errors import SchemaOwnershipError
+    from openminion.modules.storage.migrations.postgres_schema import (
+        select_postgres_module_schema,
+    )
+
+    # The archive table belongs to the a2a module's own schema (#446).
+    try:
+        selection = select_postgres_module_schema(postgres_url, "a2a")
+    except SchemaOwnershipError as exc:
+        _print_json({"ok": False, "error": str(exc)})
+        return 2
+    engine = create_engine(selection.url(postgres_url), future=True)
     record_store = RecordStorePostgres(engine)
     keep_files = bool(getattr(args, "keep_files", False))
 
-    archive_store = PostgresAuditArchiveStore(
-        record_store=record_store,
-        audit_root=audit_root,
-        engine=engine,
-        owns_engine=False,
-    )
+    archive_store = None
     try:
+        archive_store = PostgresAuditArchiveStore(
+            record_store=record_store,
+            audit_root=audit_root,
+            engine=engine,
+            owns_engine=False,
+            postgres_schema=selection,
+        )
         report = archive_store.archive_files_older_than(
             older_than_days, keep_files=keep_files
         )
@@ -835,7 +848,8 @@ def _run_a2a_archive_old(args: argparse.Namespace, env_map) -> int:
         return 0
     finally:
         try:
-            archive_store.close()
+            if archive_store is not None:
+                archive_store.close()
         except Exception:  # noqa: BLE001
             pass
         try:

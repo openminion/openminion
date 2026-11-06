@@ -99,12 +99,65 @@ Inside Focus, `/permissions` opens four session postures. Read only permits
 only registered read-only tools and still blocks `exec.run`. Ask requests
 approval for non-read effects. Workspace auto skips ordinary prompts only for
 `file.write` and `file.edit` inside the allowed workspace. Full access skips
-ordinary prompts after confirmation, but configured blocks, selected denies,
-workspace paths, host-execution enablement, exact financial, commerce,
+ordinary prompts after confirmation, but configured block/ask rules, selected
+denies, workspace paths, host-execution enablement, exact financial, commerce,
 blockchain, and operations authorization, and `project.start` confirmation
 still apply. These controls are application policy, not an operating-system
 sandbox. Use `/permissions grants` and `/permissions revoke <grant-id>` to
 inspect or remove active session grants.
+
+### Persistent action-policy defaults
+
+The top-level `action_policy` is the default for every agent without its own
+policy. Keep the normal policy-driven behavior with:
+
+```json
+{
+  "action_policy": {
+    "mode": "auto",
+    "default_action": "require_confirm",
+    "allow_read_only_without_prompt": true
+  }
+}
+```
+
+Set an agent-specific replacement under `agents.<id>.action_policy`:
+
+```json
+{
+  "default_agent": "local-coder",
+  "agents": {
+    "local-coder": {
+      "provider": "openai",
+      "action_policy": {
+        "mode": "bypass"
+      }
+    }
+  }
+}
+```
+
+`action_policy.mode = "bypass"` disables ordinary action-policy enforcement
+for that agent. It does not set Focus Full access by itself because Full access
+also sets the session tool permission mode. `permission_mode` is not a
+supported field under `agents.<id>`.
+
+For interactive use, open `/permissions`, select **Full access**, and return to
+the same named session when you want to reuse the posture. For API-driven work,
+combine the per-agent action policy above with a request/session input:
+
+```json
+{
+  "agent_id": "local-coder",
+  "session_id": "trusted-local-work",
+  "permission_mode": "bypass",
+  "message": "Run the requested local workflow."
+}
+```
+
+These controls do not expose missing tools, enable host execution, widen
+workspace roots, override explicit blocks, or replace exact one-time
+authorization for financial, commerce, blockchain, and operations actions.
 
 ### Start a local human-plus-agents room
 
@@ -164,6 +217,15 @@ Setup shows the three identities that matter during first run:
 For built-in providers, OpenMinion selects the API adapter automatically. The
 adapter describes compatibility, not provider identity. MiniMax remains the
 provider when it uses the OpenAI-compatible adapter.
+
+Provider settings in `agents.json` have one edit location: the top-level
+`providers` block. `openminion config init` writes `providers.<id>` once and
+does not duplicate it under `system.providers`, so editing
+`providers.openai.base_url` (or another field) takes effect on the next load.
+Older configs that define only `system.providers` still load, and a config that
+deliberately defines both blocks keeps the existing precedence (`system.providers`
+wins); a save then writes the effective values back to the top-level block and
+removes the duplicate mirror.
 
 Environment credentials are preferred. For example, OpenAI setup reads
 `OPENAI_API_KEY`; MiniMax setup reads `MINIMAX_API_KEY` while using the existing
@@ -258,6 +320,26 @@ with, an existing config. Credentials are not included in a normal export, so
 set the referenced provider environment variables on the destination machine.
 Token limits, context budgets and credential environment-variable names remain
 in the export; credential values, including authentication headers, do not.
+See [turn budgets and token cost](turn-budgets.md) before changing limits to
+address an early stop or an expensive turn.
+
+A `file.read` includes `content_sha256` for the full UTF-8 text before newline
+conversion or slicing. Local reads retain their existing universal-newline text
+view; the fingerprint distinguishes the original LF, CRLF and CR bytes. In-memory
+reads preserve the original newline characters. Complete local reads also include
+an opaque `version`. For conditional overwrites, `file.write` accepts
+`expected_content_sha256` (pass `content_sha256` from the read directly)
+and `expected_version`. A mismatch returns
+`PRECONDITION_FAILED` before truncation. Conditional append is rejected. Local
+conditional replacement requires advisory file locking and fails closed when it
+is unavailable; the locks coordinate participating writers, not arbitrary external
+processes. The in-memory backend supports the content precondition.
+
+The adaptive loop permits one identical safe read retry after a structured
+transient failure. It can also retry an identical overwrite once after a complete,
+same-path readback contradicts the acknowledged content, adding the content and
+available version preconditions. Permissions and budgets are checked again.
+Append, external effects and partial readbacks do not receive this recovery.
 
 File tools preserve newline bytes outside edited spans and reject invalid UTF-8
 content before modifying a file. `file.read_range` counts the actual file and
@@ -355,6 +437,7 @@ changing other profiles:
 
 The executable must resolve from a trusted host directory. Existing dangerous
 command approval rules still apply; this profile setting does not bypass them.
+Executable names are exact; `"*"` is not a supported allow-all entry.
 If no command sandbox is configured, `exec.run` returns
 `SANDBOX_UNAVAILABLE` and recommends structured file tools, a configured
 sandbox, or restarting with `--allow-unsandboxed-exec`. The flag runs commands

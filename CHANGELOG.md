@@ -1,7 +1,7 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-10-28
+Last updated: 2026-11-05
 
 This file tracks package-facing release notes for `openminion`.
 
@@ -12,6 +12,397 @@ This file tracks package-facing release notes for `openminion`.
   `write`/unknown reversibility, so the example stopped at a confirmation
   prompt under the default action policy (#464). Approval logic and the
   unknown-risk default are unchanged.
+
+- Carry user corrections into the answer and any answer-only retry when the tool
+  budget runs out. Apply corrections in order and preserve unchanged request
+  requirements (Refs #659).
+
+- Keep synchronous A2A call reservations exclusive even after they age past
+  the recovery threshold. A repeated key returns `OUTCOME_UNKNOWN` when an old
+  reservation has no receipt or the result could not be published. Reconcile
+  the downstream effect before reissuing the call with a new key.
+
+- Recover one identical transient safe read and one guarded file overwrite after
+  a contradictory complete readback. Preserve duplicate suppression after a
+  successful write with LF, CRLF or CR content, recheck permissions and budgets,
+  and refuse stale replacement preconditions.
+
+- Preserve runtime-tool schema definitions when adding task updates. Include
+  tool schemas and structured messages in task request budget checks, bound
+  explicit output limits by the remaining allowance, and debit each returned
+  entry retry. Preserve unset output limits and plain text answers; require a
+  valid task update before executing an uncommitted change. Reserve required
+  task context and schemas before trimming optional entry context.
+
+- Carry bounded, revisioned task conditions through clarification and execution
+  (Refs #529). Entry can return user-grounded condition deltas alongside its
+  existing action; unchanged conditions survive, corrections overwrite their
+  keys, and explicit replacement detaches the previous local workflow. Preserve
+  pending-question context for short answers, retain state across restarts, and
+  stop execution on invalid updates or insufficient context capacity. Reuse the
+  execution context owner and canonical tool replay without duplicate tool-event
+  excerpts. Source tests do not establish live-model semantic accuracy or
+  installed-package verification.
+
+- Honour `runtime.agent_loop_tool_result_max_chars`: the setting was declared and
+  range-checked but never read, so inline tool output was always framed at the
+  hardcoded 8192-character threshold. The configured value now drives it, so the
+  4000 default takes effect for existing configurations; raise the setting to 8192
+  to keep the previous threshold (Refs #604).
+
+- Reconcile research child budget consumption before allocating the next pass,
+  and include their terminal tool results in the turn's tool/error statistics.
+  Preserve isolated child state and settle consumption on partial, failed and
+  cancelled execution; resumed findings do not charge completed work again.
+  Whole-turn LLM response reporting continues to use the existing canonical
+  event projection introduced by #596 (Refs #531, Refs #542).
+
+- Document `file.read`'s numeric arguments (character offset, default and maximum
+  length) and return `next_offset` plus a continuation hint when a read is
+  truncated, so following a large file no longer means deriving the window by hand
+  (Refs #605).
+
+- Retain a completed research child's answer ahead of raw tool-output prefixes,
+  with the existing source URLs and evidence references. Use a successful
+  action summary when the completed message is empty and usable tool evidence
+  exists. Keep partial-child evidence salvage and the 200/800-character prompt
+  projections unchanged (Refs #543).
+
+- Require a subcommand for `openminion status` and `openminion service`: a bare
+  group now prints that group's usage and exits 2 instead of falling through to
+  the no-handler interactive/onboarding route (Refs #591).
+
+- Check Focus terminal layout against one screen-and-cursor snapshot so resize
+  repaint fragments cannot invalidate an already accepted test frame. Preserve
+  the compositor assertions and existing wait limits (Refs #610).
+
+- Await async `@tool` handlers in the shared execution path: an `async def` tool
+  registered successfully but was never awaited, so callers received a coroutine
+  object instead of the handler's return value (Refs #612).
+
+- Make identity `clear_cache` prefix matching case-sensitive, so it no longer deletes other agents' snippets through a case-insensitive `LIKE`. (Refs #485)
+
+- Forward the query string on POST requests, so query-parameter POST routes resolve their parameters. (Refs #486)
+
+- Accept `pattern` as an alias for `file.search`'s `query`, matching the argument
+  name `file.find` uses, and say in the description that it is a content search
+  rather than a glob (Refs #606).
+
+- Expand cron day-of-week ranges before normalizing Sunday-as-7, so ranges that contain Sunday parse correctly. (Refs #488)
+
+- Honour the root `--session` value for one-shot `run`: the subcommand declared
+  its own `--session` with a default, which overwrote the root value so
+  `openminion --session <id> run ...` silently ran in `cli-run` (Refs #593).
+
+- `daemon stop` now names the resolved endpoint and the expected PID-file path when
+  the endpoint answers but no PID file exists, states that nothing was signalled,
+  and still exits 1 instead of a bare reachable-without-PID line (Refs #592).
+
+- Describe `--dir` accurately: it selects the interactive workspace and the
+  one-shot `run` tool root, and the root-option form must precede the command
+  (Refs #594).
+
+## Current package line - 2026-11-04
+
+- Add a reviewed learning lifecycle that can retain successful substantive
+  work, author a procedure, evaluate transfer separately, and admit or roll
+  back an exact agent-scoped version. Application remains pending until an
+  operator admits it, and the available source support does not establish a
+  live learning-benefit claim.
+
+- Add finite read-only recurring security assessments with visible consumed
+  and remaining attempts, separate latest-attempt and last-successful evidence,
+  and exact-task pause and resume controls. Source support is available, but
+  the composed live lifecycle has not completed acceptance and does not provide
+  unlimited monitoring, autonomous repair, or security certification.
+
+- Account for LLM responses across a whole turn, including reflection, action,
+  judgment, and continuation steps, in public stats and persisted usage facts.
+  Preserve reported cache usage and missing-usage coverage, and prevent call-event
+  replay from counting tokens twice (Refs #516). Child tool-result accounting and
+  research budget settlement remain separate (#531, #542).
+
+- Ratchet `skip`/`skipif`/`xfail` markers in the test suite against a per-file
+  baseline, so silencing a case becomes a counted, reviewed change: adding a
+  marker fails the build, and a literal conditional skip turned unconditional
+  fails even when the total is unchanged. Only literal marker forms are
+  classified; the count records which markers apply, not whether a case runs
+  (see `CODE_QUALITY.md`).
+
+- Log the identity-profile fallback at `DEBUG` instead of `WARNING`: a missing
+  identity profile is the default state, so a stock install no longer warns on
+  every single turn (Refs #572).
+
+- Run one-shot `run` turns with the caller's working directory as the tool
+  workspace root when `runtime.tool_workspace_root` is unset, so file tools see
+  the files the user is working on; an explicit `--dir` overrides a configured
+  root (Refs #575).
+
+- Treat a `4xx` daemon response as the definitive answer instead of falling back
+  to the in-process runtime, so a rejected or failed tool call is neither executed
+  twice nor replaced by a locally produced error (Refs #574).
+
+- Make `openminion run` acknowledge delivery of its returned one-shot reply, so a
+  follow-up `run --session <id>` executes the new input instead of replaying the
+  settled first turn; continuing that thread still requires `--resume` (Refs #556).
+
+- Parse porcelain v2 rename/copy records without the rename score and old-path suffix, keeping the destination path (including spaces). (Refs #491)
+
+- Reject unsupported arithmetic in `calculate_expression` — zero to a negative power and complex-valued results now use the structured `INVALID_ARGUMENT` path instead of raising raw exceptions. (Refs #490)
+
+- Support positional-only parameters in `@tool` handlers, so a function with a positional-only argument no longer crashes during argument binding. (Refs #474)
+
+- Record the memory-consolidation marker only when the review resolved every
+  candidate with a terminal decision (keep/promote/discard) and nothing was
+  deferred or failed to write. A cycle that deferred any candidate, or whose
+  writes partly failed, leaves `last_consolidation_state_hash` untouched, so
+  those still-`proposed` candidates stay eligible for the next consolidation
+  cycle instead of being blocked as already consolidated. Such a cycle still
+  reports the terminal writes it did make (`PARTIALLY_CONSOLIDATED`) rather than
+  claiming nothing was consolidated (Refs #477).
+
+- Normalize raw SQLite bm25 scores in the correct direction, so a stronger match scores higher instead of lower. (Refs #479)
+
+- Keep runtime migration 14 portable to SQLite older than 3.33: the
+  join-sequence backfill now uses a correlated subquery instead of
+  `UPDATE ... FROM`, preserving the per-session `(joined_at, id)` numbering on
+  SQLite and PostgreSQL (Refs #564).
+
+- Write provider settings to one place: `config init` no longer emits a duplicate
+  `system.providers` mirror, so editing the top-level `providers` block takes
+  effect on the next load. Older system-only configs and deliberate mixed input
+  keep their existing load precedence (Refs #566).
+
+- Keep the Focus PTY test emulator cursor aligned with rows clipped during resize,
+  preventing stale composer copies during split redraws. Runtime rendering and
+  the existing layout assertions are unchanged (Refs #569).
+
+## Current package line - 2026-11-01
+
+- Recognize Ubuntu 26.04's system coreutils directory for allowlisted host
+  commands. Commands such as `whoami` resolve through `/usr/bin` symlinks to
+  `/usr/lib/cargo/bin/coreutils`; that specific directory is now trusted by
+  default. Executable-name restrictions, resolved-target checks, host-execution
+  enablement, approvals and explicit trusted-directory overrides still apply
+  (Refs #557).
+
+- Honor `since_ts`/`until_ts` in the in-memory audit store. `MemoryAuditStore`
+  ignored the time-window filters when listing audit records; it now filters
+  by `since_ts` and `until_ts` the same way the SQLite store does (Refs #489).
+
+- Add interactive session naming: `/rename <name>` sets the active session's
+  runtime name (its `name` metadata field), and `openminion --resume "<name>"`
+  (alias `-c`) resumes the session with that name, scoped to the current agent
+  and directory with most-recent duplicate ordering. This runtime name is
+  distinct from the standalone `sessctl` session `title` field, which lives in
+  a separate session store.
+
+- Reject duplicate Handoff resolved names when an agent is built or a delegate
+  family is compiled, so two handoffs resolving to the same name fail with an
+  actionable message instead of a `profile_id values must be unique` error at
+  registration time (Refs #476).
+
+- Resolve reasoning-effort support by the execution route actually selected.
+  The direct OpenAI/Anthropic/Groq/Cerebras/OpenRouter adapters never carry the
+  effort in their request payloads, so they no longer claim `supported=true`
+  for it; the llmctl bridge and the ollama adapter (which maps the effort to an
+  explicit `think` flag) still do, and echo is never labeled as transmitted
+  effort (Refs #481).
+
+- Close the call-owned storage probe on every health service exit so the
+  probe's storage handle is released on all exit paths (Refs #487).
+
+- Make the filesystem blob store's repeated put of the same bytes idempotent:
+  `put_bytes` and `put_file` reuse the existing representation and preserve its
+  first-write metadata, and `gc` evicts every owned payload of an evicted
+  digest together with its metadata sidecar so the digest is not left reachable
+  through a sibling representation, accounts for eviction at the same digest
+  unit it deletes at, and ignores unrelated files that merely share a digest's
+  hash prefix (Refs #484).
+
+- Add a cross-machine A2A HTTP transport with mandatory token auth. The new
+  `HTTPTransport` client and stdlib `A2AHTTPServer`/`serve_a2a` server let two
+  OpenMinion machines call each other's agents over HTTP, and `a2actl serve`
+  (with `--host`/`--port`/`--token`, generating a secret when omitted) plus
+  `a2actl call --url ... --token ...` expose it from the CLI. The server binds
+  to `127.0.0.1` by default, requires a non-empty `Bearer` token on every
+  endpoint, and serves a Google-A2A-style agent card at
+  `/.well-known/agent.json`. This is an OpenMinion custom endpoint transport
+  (its `/a2a/...` endpoints speak OpenMinion's own `Envelope` JSON), not a
+  complete interoperable Google A2A protocol server; `a2actl serve` only
+  registers the built-in `agent.echo`/`agent.worker` demo agents, which do not
+  demonstrate cross-machine calls to configured application agents. Error
+  code/message/details are preserved across the wire. See
+  `docs/a2a-remote.md`.
+
+- Keep native structured-output instructions limited to formatting so research
+  synthesis can answer from supplied evidence. Preserve forced `submit_output`,
+  schema validation, and caller-owned routing/judgment contracts (Refs #530).
+
+- Give the first two decision turns the normal `2,200`-token context-pack
+  target instead of the former `1,500`-token target. This leaves more room for
+  the user's initial request, instructions and early clarification without
+  changing later-turn scaling, completion budgets, provider output limits or
+  saved agent profiles.
+
+- Stage no `tool_outcome` memory candidate for an outcome classified as
+  `policy_denied`. When the user denied a tool call, or the call was still
+  waiting for the user's confirmation, the brain staged a `policy_denied`
+  `tool_outcome` candidate in agent scope whose content and metadata held the
+  call's arguments, also when the agent's memory policy allowed the write. No
+  candidate is now staged for any `policy_denied` outcome: an ask-user command
+  returned for a tool call, such as the user's denial, a pending confirmation
+  or a policy denial, and a tool result with status `needs_user` or
+  `blocked`, which includes a tool that ran and returned
+  `requires_user_takeover`. Failure, timeout and allowlisted success
+  candidates, the turn's `memory.write` answer and the policy and approval
+  events are unchanged (Refs #524).
+
+- Give each PostgreSQL module its own schema, and refuse a layout whose
+  ownership is not proven before any table is written. Runtime storage and
+  every module wrote into the one schema the configured URL selects, so they
+  shared `alembic_version` and `om_meta`, and `CREATE TABLE IF NOT EXISTS`
+  let one owner adopt another's `sessions`, `events`, `idempotency_keys`,
+  `memory_records`, `migrations` or `agents`. Runtime storage keeps that
+  schema; each module now uses `<base>__<module id>`, created inside its
+  migration transaction (or, for a store without Alembic, in its own
+  transaction before its first table), on a connection that keeps the URL's
+  options and adds `-c search_path`. A module whose history is already in the
+  base schema, such as a dedicated PostgreSQL memory database, stays there
+  with no move or stamp. A table counts as an owner's only when that owner's
+  ledger is recorded in the schema and the table exactly matches one listed
+  for that ledger in `postgres_histories.json`, which was measured from every
+  published release and this code. An existing `<base>__<module id>` is used
+  only when it is empty or holds the module's proven history; one with tables
+  but no ledger of the module, such as a first start stopped before
+  `om_meta`, is refused. A shared or unknown layout, for example
+  the A2A audit store on the runtime URL, or memory first and then runtime
+  storage, is refused with a message that names its tables, for the owners
+  that use them only. Upgrade: run `openminion storage migrate --backend
+  postgres` before the module stores start, and connect the module stores
+  directly or through a pooler that passes the `options` startup parameter.
+  `docs/runtime-database-upgrades.md` gives the details and the operator's
+  relocation steps (Refs #446).
+
+- Document the upgrade for memory consolidation jobs from packages before
+  0.1.15. Since 0.1.15 the daemon runs a job as memory consolidation only when
+  its task record has the `memory_consolidation` kind that
+  `task.consolidate_memory` stores. A job created by `task.consolidate_memory`
+  of a package before 0.1.15, or any job with the reserved payload and no such
+  record, fails its first run with the provenance message, without a turn or
+  capture recovery, and is paused. `docs/runtime-database-upgrades.md` now
+  describes how to inspect those jobs, cancel or pause each one before
+  creating its replacement through `task.consolidate_memory`, and check that
+  the old job is not enabled and the replacement is, for the same agent; that
+  jobs created by 0.1.15 or later keep running next to the replacements and
+  are not replaced on later upgrades; that the raw cron API rejects the
+  reserved payload; and that pending capture intents are kept and recovered as
+  before. New tests create the job through the tool's handler and run it
+  through the daemon's scheduler, whose own task manager reads the stored kind
+  (Refs #456).
+
+- Let `Agent.run()` and `Agent.run_stream()` answer a waiting confirmation.
+  A second `run()` after "Policy confirmation required." started a new thread,
+  so the reply did not reach the tool call waiting on the first one. Both
+  methods now accept an optional `thread_id` that sends the turn to that
+  thread, and `AgentRunResult.thread_id` returns the turn's thread. Omitted or
+  blank, it changes nothing (Refs #541).
+
+- Order the `memory` and `self_awareness` context segments before
+  `turn_input` so that recalled memories and the self model render ahead of
+  the final user input (Refs #483).
+
+- Honour `Field` defaults and `default_factory` declared inside `Annotated`
+  (e.g. `x: Annotated[int, Field(default=5)]` or
+  `x: Annotated[list[int], Field(default_factory=list)]`) when a `@tool`
+  argument has no Python default, while still preserving `Field` defaults,
+  `default_factory`, aliases and constraints declared as the argument's Python
+  default (e.g. `x: int = Field(default=7, alias="external", ge=1)` or
+  `x: list[int] = Field(default_factory=list)`) (Refs #475).
+
+- Apply the recent-window mode budget bias (respond halving / act -120) only
+  once. The recent-window trimmer read the already-biased budget and applied
+  the mode adjustment a second time, halving the respond budget or subtracting
+  120 tokens from the act budget again; it now reads the biased budget
+  directly, so the adjustment lands exactly once (Refs #482).
+
+## Current package line - 2026-10-29
+
+- Ask the agent's `memory.write` authorization before a turn captures memory.
+  A turn's auto fact extraction and its capture bundle write ran without a
+  policy decision, so with an identity hard constraint such as `NEVER write
+  memory records` an ordinary turn still wrote its candidate, receipt and
+  `memory.capture.result`, while pending-capture recovery was refused for the
+  same capture. The brain bridge now asks once per turn, with the check and
+  internal actor that recovery uses and the turn's channel, session and root
+  turn. When the write is not allowed, including when it needs approval, the
+  turn makes no extraction request, writes nothing for its capture and asks no
+  approval for it, and its reply is unchanged. Its intent stays pending with
+  `CAPTURE_RECOVERY_UNAUTHORIZED`, and recovery commits it once the write is
+  allowed. A diagnostic turn (`openminion agent-check` and the turn smoke
+  check of `openminion doctor`), whose capture is disabled, no longer makes
+  the extraction request whose result it never wrote (Refs #448).
+
+- Close what a failed `APIRuntime` start built. When a start step raised,
+  what the start had already built stayed open: the runtime storage (its
+  SQLite connection, or the PostgreSQL connection pool and its pool-health
+  emitter thread), the telemetry store, the module databases and the
+  services. The caller got the original error, but those objects stayed open
+  until a garbage collection freed them, and the PostgreSQL pool and emitter
+  not even then. Each step of the start now closes what it built with the
+  existing closes and re-raises the original error, also when one of those
+  closes fails. Once the runtime object exists, a later failure closes it
+  with `APIRuntime.close()`, which also stops a runtime manager that already
+  started. A successful start hands the same objects to the runtime as
+  before (Refs #447).
+- Find the compress module's migrations in `openminion storage migrate`.
+  Migration discovery looked for a module's storage package as
+  `openminion.modules.<id>.storage`, but the compress package is
+  `openminion.modules.context.compress.storage`, so `storage migrate --module
+  compress` and compress's own `run_migrations` failed with `Alembic
+  configuration missing` on SQLite and PostgreSQL and wrote nothing.
+  Discovery's map of nested module packages now lists compress, as it lists
+  `authoring` and `commerce`, and compress migrates to `0001_baseline` with
+  its tables. The compress migration and discovery for other modules are
+  unchanged (Refs #493).
+
+- Skip a turn's decision record and tool outcome candidate when the agent's
+  `memory.write` is not allowed. The brain wrote a `decision` record for every
+  routed turn and staged a `tool_outcome` candidate for a refused tool call,
+  with the call's arguments, without asking the memory policy, so with an
+  identity hard constraint such as `NEVER write memory records` a refused
+  `memory.write` call still left its content in the memory candidates. Both
+  writes now use the turn's `memory.write` answer, which the brain bridge asks
+  on every turn, including scheduled consolidation and diagnostic turns. When
+  it is not `allow`, including when it needs approval, the decision record is
+  skipped (`brain.decision_memory.skipped`, `memory_write_not_authorized`) and
+  no candidate is staged. The working state keeps the decision metadata, and
+  nothing asks for approval for these writes (Refs #496).
+- Keep a room's selected active agent a participant when the selection runs
+  at the same time as a leave of that agent on another connection.
+  `set_active_agent` checked that the agent was an active participant and
+  then wrote `active_agent_id` in a separate statement, outside the
+  session-row lock that joins and leaves take, so a leave (`/kick`) could
+  commit between the two and the selection (`/activate`) then stored an agent
+  that had left. The selection now reads the agent's membership after taking
+  that lock and writes the active agent in the same transaction. A leave
+  during a selection waits for it to commit and then runs its fallback; a
+  selection during a leave waits for it and is refused with the existing
+  `Agent ... is not an active participant` error. The errors and the
+  returned session are unchanged (Refs #495).
+- Migrate the `controlplane` and `telemetry` modules on PostgreSQL. Their
+  `0001_baseline` revisions applied SQLite's `INTEGER PRIMARY KEY
+  AUTOINCREMENT` on every dialect, so `openminion storage migrate --backend
+  postgres --module controlplane` and `--module telemetry` failed with a
+  syntax error and wrote nothing. On PostgreSQL they now create the column
+  types the modules' PostgreSQL stores already use: `SERIAL PRIMARY KEY` ids
+  and a `DOUBLE PRECISION` telemetry timestamp. Tables the stores created
+  before the migration are kept with their rows; an existing table whose id
+  or timestamp has another type stops the upgrade with an error naming the
+  column, and nothing is written. The controlplane store also opens a
+  database the baseline created, where it failed with a duplicate
+  `next_attempt_at` column, on SQLite too. The SQLite DDL and the revisions
+  are unchanged (Refs #494).
 
 ## Current package line - 2026-10-28
 

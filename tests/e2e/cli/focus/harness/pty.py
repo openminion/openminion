@@ -92,6 +92,15 @@ class PtySession:
         return tuple(self._screen_display_lines())
 
     @property
+    def screen_snapshot(self) -> tuple[tuple[str, ...], tuple[int, int]]:
+        """Read physical rows and cursor together, without advancing between them."""
+        self._read_available(timeout=0.05)
+        return (
+            tuple(self._screen_display_lines()),
+            (self._screen.cursor.y + 1, self._screen.cursor.x + 1),
+        )
+
+    @property
     def cursor_position(self) -> tuple[int, int]:
         """Return the one-based physical cursor row and column."""
 
@@ -172,9 +181,14 @@ class PtySession:
     def resize(self, *, rows: int, cols: int) -> None:
         if self._master_fd is None or self._process is None:
             raise RuntimeError("PTY session is not running")
+        clipped_rows = max(0, self.rows - rows)
         self.rows = rows
         self.cols = cols
         self._screen.resize(lines=rows, columns=cols)
+        # pyte clips top rows on shrink but restores the old cursor coordinates.
+        self._screen.cursor.y = max(0, self._screen.cursor.y - clipped_rows)
+        self._screen.ensure_hbounds()
+        self._capture_screen()
         self._set_window_size(self._master_fd)
         os.kill(self._process.pid, signal.SIGWINCH)
         self._read_available(timeout=0.1)

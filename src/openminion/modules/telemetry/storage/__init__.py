@@ -22,7 +22,7 @@ def build_telemetry_store(
             f"Unsupported telemetry record backend: {config.record_backend!r}"
         )
 
-    engine = StorageEngine.from_config(config=config)
+    engine = StorageEngine.from_config(config=config, module_id="telemetry")
     return PostgresTelemetryStore(record_store=engine.record_store)
 
 

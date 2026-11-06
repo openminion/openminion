@@ -32,7 +32,7 @@ def build_compress_telemetry_store(
             f"Unsupported compress record backend: {config.record_backend!r}"
         )
 
-    engine = StorageEngine.from_config(config=config)
+    engine = StorageEngine.from_config(config=config, module_id="compress")
     return PostgresTelemetryStore(record_store=engine.record_store)
 
 

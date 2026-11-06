@@ -23,7 +23,7 @@ def _profile() -> AgentProfile:
         max_ticks_per_user_turn=3,
         max_tool_calls=2,
         max_a2a_calls=1,
-        max_total_llm_tokens=1000,
+        max_total_llm_tokens=20000,
         max_elapsed_ms=10000,
     )
     llm_profiles = LLMProfiles(

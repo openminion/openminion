@@ -38,10 +38,13 @@ from tests._room_participant_scenarios import (
     check_joins_selection_and_leaves_on_two_connections,
     check_leave_and_rejoin_wait_for_each_other,
     check_leave_during_a_join_applies_after_it,
+    check_leave_during_a_selection_applies_after_it,
     check_joins_write_no_session_value,
     check_legacy_owner_join_order,
     check_legacy_owner_records_activate_no_agent,
+    check_legacy_session_selection,
     check_selection_during_a_join_applies_after_it,
+    check_selection_during_a_leave_is_refused,
     check_tied_join_order,
 )
 from tests._run_status_scenarios import (
@@ -1941,6 +1944,15 @@ class SessionStoreTests(unittest.TestCase):
 
     def test_join_treats_a_blank_active_agent_as_none(self) -> None:
         check_blank_active_agent_counts_as_none(self.store)
+
+    def test_leave_during_a_selection_waits_and_then_applies(self) -> None:
+        self._check_on_two_connections(check_leave_during_a_selection_applies_after_it)
+
+    def test_selection_during_a_leave_waits_and_is_refused(self) -> None:
+        self._check_on_two_connections(check_selection_during_a_leave_is_refused)
+
+    def test_legacy_session_keeps_its_selection_rules(self) -> None:
+        check_legacy_session_selection(self.store)
 
     # --- RSSD-01 characterization tests ---
 

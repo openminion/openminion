@@ -19,7 +19,6 @@ from openminion.modules.a2a.storage.base import (
     AuditStore,
     StateStore,
     audit_record_for_storage,
-    idempotency_slot_is_stale,
 )
 
 
@@ -31,28 +30,11 @@ class MemoryStateStore(StateStore):
         self._agents: dict[str, AgentDescriptor] = {}
 
     def reserve_idempotency(
-        self, key: str, scope: str, *, stale_reclaim_after_sec: int | None = None
+        self, key: str, scope: str
     ) -> tuple[bool, IdempotencyRecord | None]:
         with self._lock:
             row = self._idempotency.get((scope, key))
             if row is not None:
-                if (
-                    stale_reclaim_after_sec is not None
-                    and row.status == A2A_IDEMPOTENCY_STATUS_IN_PROGRESS
-                    and idempotency_slot_is_stale(
-                        row.updated_at, stale_after_sec=stale_reclaim_after_sec
-                    )
-                ):
-                    now = iso_now()
-                    reclaimed = IdempotencyRecord(
-                        key=key,
-                        scope=scope,
-                        status=A2A_IDEMPOTENCY_STATUS_IN_PROGRESS,
-                        created_at=now,
-                        updated_at=now,
-                    )
-                    self._idempotency[(scope, key)] = reclaimed
-                    return True, copy.deepcopy(reclaimed)
                 return False, copy.deepcopy(row)
             now = iso_now()
             rec = IdempotencyRecord(
@@ -64,6 +46,34 @@ class MemoryStateStore(StateStore):
             )
             self._idempotency[(scope, key)] = rec
             return True, copy.deepcopy(rec)
+
+    def finish_idempotency(
+        self,
+        reservation: IdempotencyRecord,
+        status: str,
+        *,
+        result_inline: dict[str, Any] | None = None,
+        result_ref: str | None = None,
+        error: dict[str, Any] | None = None,
+    ) -> bool:
+        key = (reservation.scope, reservation.key)
+        with self._lock:
+            row = self._idempotency.get(key)
+            if (
+                row is None
+                or row.status != A2A_IDEMPOTENCY_STATUS_IN_PROGRESS
+                or row.created_at != reservation.created_at
+            ):
+                return False
+            self._idempotency[key] = replace(
+                row,
+                status=status,
+                result_inline=copy.deepcopy(result_inline),
+                result_ref=result_ref,
+                error=copy.deepcopy(error),
+                updated_at=iso_now(),
+            )
+            return True
 
     def set_idempotency_result(
         self,
@@ -191,6 +201,8 @@ class MemoryAuditStore(AuditStore):
             _as_text(filter_by.get(key))
             for key in ("trace_id", "from_agent", "to_agent", "method", "status")
         )
+        since_ts = _as_text(filter_by.get("since_ts"))
+        until_ts = _as_text(filter_by.get("until_ts"))
         error_only = bool(filter_by.get("error_only"))
         limit = max(1, min(int(filter_by.get("limit", 1000)), 50_000))
 
@@ -205,6 +217,10 @@ class MemoryAuditStore(AuditStore):
             if method and row.method != method:
                 continue
             if status and row.status != status:
+                continue
+            if since_ts and row.ts < since_ts:
+                continue
+            if until_ts and row.ts > until_ts:
                 continue
             if error_only and not row.error_code:
                 continue

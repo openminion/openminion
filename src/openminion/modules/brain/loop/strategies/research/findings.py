@@ -1,6 +1,9 @@
 from datetime import datetime
 from typing import Any
 
+from openminion.base.constants import STATE_KEY_WORKING
+from openminion.modules.brain.constants import BRAIN_STATE_DONE
+
 _TEMPORAL_FACT_DATE_KEYS = (
     "published_at",
     "query_time",
@@ -322,3 +325,29 @@ def usable_child_action_result_text(action_result: Any) -> str:
 def usable_child_working_state_text(working_state: Any) -> str:
     tool_results = _working_state_tool_results(working_state)
     return _usable_tool_result_snippets(tool_results) if tool_results else ""
+
+
+def usable_child_result_text(result: Any) -> str:
+    """Prefer a completed conclusion; salvage tool evidence for partial children.
+
+    Source metadata is collected independently by the handoff owner. Summary
+    fallback requires both a successful action and usable successful-tool text;
+    it must not turn an empty/failed evidence handoff into a new finding.
+    """
+    action_result = getattr(result, "action_result", None)
+    evidence_text = usable_child_action_result_text(action_result)
+    if not evidence_text:
+        evidence_text = usable_child_working_state_text(
+            getattr(result, STATE_KEY_WORKING, None)
+        )
+    if normalized_text(result.status).lower() == BRAIN_STATE_DONE:
+        conclusion = normalized_text(result.message)
+        if (
+            not conclusion
+            and evidence_text
+            and getattr(action_result, "status", None) == "success"
+        ):
+            conclusion = normalized_text(getattr(action_result, "summary", ""))
+        if conclusion:
+            return conclusion
+    return evidence_text

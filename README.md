@@ -177,11 +177,32 @@ sandbox and approval-free command parity are not provided yet.
 In Focus, `/permissions` opens Read only, Ask, Workspace auto, and Full access.
 Workspace auto is intentionally narrow: only `file.write` and `file.edit` skip
 their ordinary prompt, and workspace/path enforcement remains active. Full
-access requires confirmation and does not bypass configured blocks, selected
-denies, host-execution enablement, exact financial or operations authorization,
-or `project.start`. Permission posture and exact-session grants persist with the
-OpenMinion session; `/permissions grants` lists active grants and
+access requires confirmation and does not bypass configured block/ask rules,
+selected denies, host-execution enablement, exact financial or operations
+authorization, or `project.start`. Permission posture and exact-session grants
+persist with the OpenMinion session; `/permissions grants` lists active grants and
 `/permissions revoke <grant-id>` removes one.
+
+For a durable action-policy default, put `action_policy` at the config root or
+under one agent profile. The per-agent form is:
+
+```json
+{
+  "agents": {
+    "local-coder": {
+      "provider": "openai",
+      "action_policy": {"mode": "bypass"}
+    }
+  }
+}
+```
+
+This disables ordinary action-policy prompts for that agent, but it is not a
+persistent Full access switch: Full access also sets the session tool
+permission mode. `permission_mode` is not supported inside `agents.<id>`.
+Select Full access through `/permissions` and reuse the same session, or pass
+`permission_mode` as a trusted API/request input. See
+[Getting Started](docs/getting-started.md#persistent-action-policy-defaults).
 
 When setup finishes and the interactive CLI opens, ask: `List this workspace
 using the file tools.` The default config is saved at

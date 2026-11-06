@@ -59,7 +59,8 @@ def build_module_session_store(
             record_backend_options=dict(config.record_backend_options),
             blob_backend_options=dict(config.blob_backend_options),
             vector_backend_options=dict(config.vector_backend_options),
-        )
+        ),
+        module_id="session",
     )
     if record_backend == "record.sqlite":
         return SQLiteSessionStore(

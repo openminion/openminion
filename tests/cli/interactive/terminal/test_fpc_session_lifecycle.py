@@ -4,6 +4,7 @@ import asyncio
 import io
 from dataclasses import dataclass
 from types import SimpleNamespace
+from typing import Any
 
 from rich.console import Console
 
@@ -132,7 +133,7 @@ def _make_console() -> tuple[Console, io.StringIO]:
 async def _dispatch(
     text: str,
     *,
-    runtime: _FakeRuntime,
+    runtime: Any,
     overlay: _StubOverlay,
     transcript: TerminalTranscript | None = None,
 ):
@@ -318,3 +319,35 @@ def test_configured_auto_and_bypass_restore_matching_action_policy_modes() -> No
             ]
             == permission_mode
         )
+
+
+class _RenameRuntime:
+    def __init__(self) -> None:
+        self.session_id = "focus-live"
+        self.renamed: list[tuple[str, str]] = []
+
+    def rename_session(self, session_id: str, name: str) -> None:
+        self.renamed.append((session_id, name))
+
+
+def test_rename_updates_active_session_name() -> None:
+    runtime = _RenameRuntime()
+    overlay = _StubOverlay(None)
+
+    _, out, should_exit = asyncio.run(
+        _dispatch("/rename My Project", runtime=runtime, overlay=overlay)
+    )
+
+    assert should_exit is False
+    assert runtime.renamed == [("focus-live", "My Project")]
+    assert "renamed session to 'My Project'" in out
+
+
+def test_rename_without_name_prints_usage() -> None:
+    runtime = _RenameRuntime()
+    overlay = _StubOverlay(None)
+
+    _, out, _ = asyncio.run(_dispatch("/rename", runtime=runtime, overlay=overlay))
+
+    assert runtime.renamed == []
+    assert "usage: /rename <name>" in out.lower()

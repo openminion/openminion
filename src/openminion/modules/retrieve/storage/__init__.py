@@ -25,7 +25,7 @@ def build_retrieve_store(
             f"Unsupported retrieve record backend: {config.record_backend!r}"
         )
 
-    engine = StorageEngine.from_config(config=config)
+    engine = StorageEngine.from_config(config=config, module_id="retrieve")
     return PostgresRetrieveStore(record_store=engine.record_store)
 
 

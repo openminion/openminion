@@ -1,5 +1,7 @@
 from typing import Any
 
+from openminion.modules.brain.execution.task_context import execution_task_text
+
 from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_NEEDS_USER,
     BRAIN_CONFIRM_RESPONSE_AFFIRM,
@@ -170,7 +172,7 @@ class CodingResumeMixin:
         self._resume_prepared = False
 
     def _apply_resume_input(self: Any, ctx: ExecutionContext) -> None:
-        text = (ctx.user_input or "").strip()
+        text = execution_task_text(ctx) if str(ctx.user_input or "").strip() else ""
         if text:
             self._loop_state.task_plan_revision = None
             self._loop_state.task_plan_abandoned = None

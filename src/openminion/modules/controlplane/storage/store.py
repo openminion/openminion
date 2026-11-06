@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +30,9 @@ def _postgresify_ddl(statement: str) -> str:
     return statement.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
 
 
+_ADD_COLUMN = re.compile(r"ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)", re.IGNORECASE)
+
+
 class _ControlPlaneStoreMixin(PairTokenStoreMixin, ControlplaneStore):
     contract_version = CONTROLPLANE_INTERFACE_VERSION
 
@@ -54,6 +58,19 @@ class _ControlPlaneStoreMixin(PairTokenStoreMixin, ControlplaneStore):
 
     def _ddl_for_backend(self, statement: str) -> str:
         return statement
+
+    def _column_names(self, table_name: str) -> set[str]:
+        rows = self._query_dicts(f"PRAGMA table_info({table_name})")
+        return {str(row["name"]) for row in rows}
+
+    def _adds_existing_column(self, statement: str) -> bool:
+        # The Alembic baseline creates cp_inbox with next_attempt_at and leaves
+        # cp_migrations empty, so version 6 finds its column already there.
+        match = _ADD_COLUMN.match(statement)
+        if match is None:
+            return False
+        table_name, column_name = match.groups()
+        return column_name in self._column_names(table_name)
 
     def _query_dicts(
         self, sql: str, params: tuple[Any, ...] | list[Any] | None = None
@@ -91,6 +108,8 @@ class _ControlPlaneStoreMixin(PairTokenStoreMixin, ControlplaneStore):
                     continue
                 with self._record_store.transaction():
                     for statement in _split_sql_statements(sql):
+                        if self._adds_existing_column(statement):
+                            continue
                         self._execute_count(self._ddl_for_backend(statement))
                     self._execute_count(
                         """
@@ -864,6 +883,17 @@ class PostgresControlPlaneStore(BaseModuleStore, _ControlPlaneStoreMixin):
 
     def _ddl_for_backend(self, statement: str) -> str:
         return _postgresify_ddl(statement)
+
+    def _column_names(self, table_name: str) -> set[str]:
+        rows = self._query_dicts(
+            """
+            SELECT column_name AS name
+            FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = ?
+            """,
+            (table_name,),
+        )
+        return {str(row["name"]) for row in rows}
 
     def _init_schema(self) -> None:
         self._apply_migrations()

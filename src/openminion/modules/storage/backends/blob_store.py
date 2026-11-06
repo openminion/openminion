@@ -104,6 +104,10 @@ class BlobStoreFS(BlobStore):
         meta: dict[str, Any] | None = None,
     ) -> BlobRef:
         hash_value = _normalize_hash(digest)
+        existing = self._existing_ref(hash_value)
+        if existing is not None:
+            return existing
+
         ext_value = _normalize_ext(ext)
         target = self._target_path(hash_value, ext=ext_value)
         created_at = iso_now()
@@ -172,6 +176,10 @@ class BlobStoreFS(BlobStore):
     ) -> BlobRef:
         src = Path(path).expanduser().resolve(strict=True)
         hash_value = _normalize_hash(digest)
+        existing = self._existing_ref(hash_value)
+        if existing is not None:
+            return existing
+
         ext_value = _normalize_ext(ext)
         target = self._target_path(hash_value, ext=ext_value)
         created_at = iso_now()
@@ -235,10 +243,10 @@ class BlobStoreFS(BlobStore):
             return False
 
     def delete(self, ref: BlobRef | str) -> None:
-        path = self._resolve_path(ref)
         hash_value = _ref_to_hash(ref)
-        path.unlink(missing_ok=True)
         self._meta_path(hash_value).unlink(missing_ok=True)
+        for path in self._owned_payload_paths(hash_value):
+            path.unlink(missing_ok=True)
 
     def path_for(self, digest: str) -> str:
         hash_value = _normalize_hash(digest)
@@ -261,47 +269,59 @@ class BlobStoreFS(BlobStore):
         max_age_days = int(policy.get("max_age_days", -1))
         max_total_bytes = int(policy.get("max_total_bytes", -1))
 
-        files = sorted(
-            (
-                path
-                for path in self.blob_root.rglob("*")
-                if path.is_file() and not path.name.endswith(".meta.json")
-            ),
-            key=lambda item: item.stat().st_mtime,
-        )
-        total_bytes = sum(int(item.stat().st_size) for item in files)
+        # Inventory owned payloads grouped by digest. Unrelated files that
+        # merely share a digest's hash prefix (e.g. <digest>backup) have a
+        # stem that is not the owned digest's hash, so they are excluded from
+        # both candidate selection and byte accounting below.
+        groups = self._owned_payload_groups()
+        units: list[tuple[float, str, list[Path], int]] = []
+        total_files = 0
+        total_bytes = 0
+        for hash_value, paths in groups.items():
+            size = sum(int(p.stat().st_size) for p in paths)
+            oldest = min(float(p.stat().st_mtime) for p in paths)
+            total_files += len(paths)
+            total_bytes += size
+            units.append((oldest, hash_value, paths, size))
 
-        candidates: list[Path] = []
+        selected: set[str] = set()
         if max_age_days >= 0:
             now_ts = time.time()
-            for path in files:
-                age_days = (now_ts - path.stat().st_mtime) / 86_400
+            for oldest, hash_value, _paths, _size in units:
+                age_days = (now_ts - oldest) / 86_400
                 if age_days >= float(max_age_days):
-                    candidates.append(path)
+                    selected.add(hash_value)
 
         if max_total_bytes >= 0 and total_bytes > max_total_bytes:
             running = total_bytes
-            for path in files:
+            for _oldest, hash_value, _paths, size in sorted(units):
                 if running <= max_total_bytes:
                     break
-                if path not in candidates:
-                    candidates.append(path)
-                running -= int(path.stat().st_size)
+                selected.add(hash_value)
+                running -= size
 
+        # Evict each selected digest's whole owned representation so the digest
+        # is not left reachable through a sibling payload (e.g. a legacy
+        # <hash>.bin alongside <hash>.txt). Selection and deletion both operate
+        # at this same digest unit, so the byte accounting above agrees with
+        # what is actually removed.
+        evicting: list[Path] = []
         deleted_bytes = 0
-        for path in candidates:
-            deleted_bytes += int(path.stat().st_size)
+        for hash_value in sorted(selected):
+            owned = groups[hash_value]
+            evicting.extend(owned)
+            deleted_bytes += sum(int(item.stat().st_size) for item in owned)
             if not dry_run:
-                path.unlink(missing_ok=True)
-                hash_value = path.stem
+                for item in owned:
+                    item.unlink(missing_ok=True)
                 self._meta_path(hash_value).unlink(missing_ok=True)
 
         return {
             "dry_run": dry_run,
-            "total_files": len(files),
+            "total_files": total_files,
             "total_bytes": total_bytes,
-            "candidates": [str(path) for path in candidates],
-            "deleted_files": 0 if dry_run else len(candidates),
+            "candidates": [str(path) for path in evicting],
+            "deleted_files": 0 if dry_run else len(evicting),
             "deleted_bytes": 0 if dry_run else deleted_bytes,
         }
 
@@ -359,6 +379,28 @@ class BlobStoreFS(BlobStore):
             },
         )
 
+    def _existing_ref(self, hash_value: str) -> BlobRef | None:
+        sidecar = self._meta_path(hash_value)
+        if not sidecar.exists():
+            return None
+        try:
+            meta = json.loads(sidecar.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return None
+        recorded_ext = _normalize_ext(meta.get("ext"))
+        target = self._target_path(hash_value, ext=recorded_ext)
+        if not target.exists():
+            return None
+        return BlobRef(
+            algo="sha256",
+            hash=hash_value,
+            path=str(target),
+            size=int(meta.get("size", target.stat().st_size)),
+            media_type=str(meta.get("media_type", "application/octet-stream")),
+            created_at=str(meta.get("created_at", "")),
+            ext=recorded_ext or None,
+        )
+
     def _write_meta(self, hash_value: str, payload: dict[str, Any]) -> None:
         sidecar = self._meta_path(hash_value)
         atomic_write_text(
@@ -366,6 +408,44 @@ class BlobStoreFS(BlobStore):
             json.dumps(
                 payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
             ),
+        )
+
+    def _owned_payload_groups(self) -> dict[str, list[Path]]:
+        """Map each owned digest hash to its owned payload paths.
+
+        A file is an owned payload only when its stem equals a valid sha256
+        digest hash. Unrelated files that merely share a digest's hash prefix
+        (e.g. <digest>backup) and the .meta.json sidecar are excluded.
+        """
+        groups: dict[str, list[Path]] = {}
+        for path in self.blob_root.rglob("*"):
+            if not path.is_file() or path.name.endswith(".meta.json"):
+                continue
+            hash_value = path.stem
+            if not _is_sha256_hash(hash_value):
+                continue
+            groups.setdefault(hash_value, []).append(path)
+        return {hash_value: sorted(paths) for hash_value, paths in groups.items()}
+
+    def _owned_payload_paths(self, hash_value: str) -> list[Path]:
+        """Owned payload siblings for one digest, scoped to its shard.
+
+        Lists only the shard directory derived from the digest's hash prefix
+        and keeps files whose stem is the digest's own valid sha256 hash,
+        excluding sidecars and unrelated hash-prefix files (e.g.
+        <digest>backup). This resolves the siblings locally instead of
+        walking the whole store on every single-digest delete.
+        """
+        shard = self.blob_root / hash_value[:2]
+        if not shard.is_dir():
+            return []
+        return sorted(
+            path
+            for path in shard.iterdir()
+            if path.is_file()
+            and not path.name.endswith(".meta.json")
+            and path.stem == hash_value
+            and _is_sha256_hash(path.stem)
         )
 
     def _resolve_path(self, ref: BlobRef | str) -> Path:
@@ -393,9 +473,13 @@ class BlobStoreFS(BlobStore):
         return self.blob_root / prefix / f"{hash_value}.meta.json"
 
 
+def _is_sha256_hash(value: str) -> bool:
+    return len(value) == 64 and all(ch in "0123456789abcdef" for ch in value)
+
+
 def _normalize_hash(value: str) -> str:
     text = str(value or "").strip().lower()
-    if len(text) != 64 or any(ch not in "0123456789abcdef" for ch in text):
+    if not _is_sha256_hash(text):
         raise ValueError(f"invalid sha256 hash: {value}")
     return text
 

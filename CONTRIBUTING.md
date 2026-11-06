@@ -46,6 +46,60 @@ boundary summary than the broader docs.
 
 ## Development basics
 
+### From a report to a fix
+
+Reporting a bug does not require submitting a PR or having paid provider
+credentials. Maintainers remain responsible for triage and follow-through.
+
+1. **Validate first.** Check the supported behavior, current source and existing
+   fixes. Record a reproduction or the specific evidence still missing. Separate
+   confirmed defects, enhancements and provider-specific behavior; a proposed
+   workaround is not proof that a default or contract should change.
+2. **Invite a focused contribution.** Ask whether the reporter wants to submit a
+   fix, describe the smallest accepted scope and regression checks, and agree on
+   an ETA. For design-sensitive changes, review a concrete proposal first. A
+   report without a PR remains valid.
+3. **Give contributors room.** Honor an agreed ETA. If there is no response,
+   follow up after seven calendar days; if an ETA slips, ask for an update.
+   Allow three calendar days after either follow-up before taking over. State
+   those dates on the issue.
+   These are coordination windows, not a guaranteed fix or release date.
+4. **Take ownership when needed.** If the contributor declines, cannot implement
+   the fix or cannot obtain required evidence, a maintainer owns that next step
+   immediately. After the follow-up window expires, record the handoff before
+   starting overlapping work. Urgent correctness or security work may proceed
+   sooner with an explanation; security details follow `SECURITY.md`.
+5. **Make the handoff visible.** Name the maintainer, next action and next update
+   date; assign the issue when possible, remove obsolete contributor-wait labels,
+   and link the focused PR as soon as it exists. Preserve reporter credit and
+   useful contributor work. Ownership of an investigation does not establish a
+   bug or justify an unmeasured value change. If blocked, record the missing
+   prerequisite and a revisit date rather than repeatedly asking an unavailable
+   reporter. Do not close a confirmed bug merely because its reporter cannot fix
+   it.
+6. **Review and verify.** Apply the same engineering, regression and CI gates to
+   maintainer and contributor PRs. Reconcile with current `dev`, review the final
+   diff and require successful checks on that head. Keep fixed issues open with
+   `status:awaiting-release`, non-closing PR references and an installed published
+   package verification checklist. Close only after the checklist passes on a
+   release containing the fix. Invalid, duplicate or out-of-scope reports may be
+   closed with an evidence-backed explanation.
+
+When checking reports, inspect unanswered maintainer requests as well as new
+issues and PRs. Continue agreed contributor work, take over explicit inability
+or expired handoffs, and avoid duplicate reminders when nothing has changed.
+
+### Implementation and review
+
+Every contributor and coding agent, including maintainers and contributors
+using code-generation tools, must follow [Code Quality and Hygiene](CODE_QUALITY.md). Before requesting
+review, inspect the final diff for duplicate helpers, unnecessary abstractions,
+and comments or docstrings that repeat the code. Names, types and direct control
+flow should carry the explanation; retain only necessary context. See the
+[comment review rule](CODE_QUALITY.md#2-code-should-explain-itself), including its
+public-contract and test exceptions. Green CI alone is not readability approval.
+
+
 1. Follow existing style and project conventions.
 2. Keep PRs small and reviewable.
 3. Include validation commands and results in the PR description.

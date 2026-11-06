@@ -9,6 +9,7 @@ from openminion.base.time import utc_now_iso
 from openminion.modules.llm import ProviderError
 from openminion.modules.memory.errors import (
     CaptureBundleIntegrityError,
+    CaptureRecoveryUnauthorizedError,
     CaptureRecoveryUnsupportedError,
     MemctlError,
 )
@@ -55,6 +56,7 @@ from ..config import RunnerOptions
 from ..execution.public_taxonomy import public_surface_payload_for_state
 from ..state import MetaApplication
 from ..diagnostics.telemetry import emit_brain_operation
+from ..diagnostics.usage import llm_usage_scope
 
 
 def _resolve_run_capture_identity(
@@ -132,6 +134,8 @@ class BrainRunner:
         self.turn_input_queue = turn_input_queue
         self.terminal_capture_writer = terminal_capture_writer
         self._terminal_capture_enabled_for_turn = True
+        self._capture_authorized_for_turn = True
+        self._memory_write_allowed_for_turn = True
         self._lgmh_hydrated_sessions: set[str] = set()
         self._pending_run_trigger: str | None = None
         self._pending_gateway_system_context: str | None = None
@@ -227,6 +231,13 @@ class BrainRunner:
         state = result.working_state
         writer = self.terminal_capture_writer
         if self.memory_api is None or writer is None:
+            return
+        if not self._capture_authorized_for_turn:
+            result.memory_capture_bundle_result = {
+                "capture_id": identity.capture_id,
+                "disposition": "pending",
+                "error_code": CaptureRecoveryUnauthorizedError.code,
+            }
             return
         if state.memory_capture_report_root_turn_id != identity.root_turn_id:
             return
@@ -639,16 +650,19 @@ class BrainRunner:
             )
         result: StepOutput | None = None
         try:
-            result = run_step(
-                self,
-                session_id=session_id,
-                user_input=user_input,
-                trace_id=effective_trace_id,
-                forced_tools=forced_tools,
-                capability_category=capability_category,
-                capture_identity=identity,
-                runtime_conversation_id=runtime_conversation_id,
-            )
+            with llm_usage_scope(
+                self.session_api, session_id, effective_trace_id, identity.root_turn_id
+            ):
+                result = run_step(
+                    self,
+                    session_id=session_id,
+                    user_input=user_input,
+                    trace_id=effective_trace_id,
+                    forced_tools=forced_tools,
+                    capability_category=capability_category,
+                    capture_identity=identity,
+                    runtime_conversation_id=runtime_conversation_id,
+                )
             if not run_owns_turn_outcome:
                 turn_id = (
                     str(result.working_state.trace_id or "").strip()

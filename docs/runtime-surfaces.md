@@ -66,10 +66,43 @@ iterator streaming, cancellation, or explicit approval resolution, call
 `timeout_seconds`, `approval_callback`, and `cancel_event` controls already
 owned by runtime ingress. Their results expose the canonical result ID,
 metadata, and stats alongside the existing output and continuity fields.
+Turn `stats` report observed LLM calls and provider-reported input, output, and
+cache-read tokens across reflection, entry, action, and judgment, including
+continuation steps in the same run. These totals also populate response
+metadata and persisted outbound-message stats. Canonical call events support
+the detailed token-usage view; replaying the same call event does not add usage
+again. Action-loop subtotals are not added to those events.
+
+Calls count logical client requests, not their transport retry attempts. A
+structured-output correction that makes another request is another call.
+Known usage survives rejected empty responses and response-policy failures.
+Unreported usage, including usage from failed transport attempts, is unknown;
+zero in a numeric summary is not proof of zero billing. The response metadata's
+`llm_usage_coverage` records reported, missing, and invalid token dimensions.
+When event facts are unavailable, legacy action totals and inference counts
+remain a fallback, with counts labeled `unknown` rather than a guessed phase.
+This reporting does not settle child execution budgets or aggregate child tool
+results; those are separate from LLM usage observations.
+
 Action-policy confirmations reach `approval_callback` before tool execution.
 Returning true grants that invocation once; false or a callback failure prevents
 execution. Without a callback, the interactive confirmation flow remains in
 place. Submitted turns deliver the same request through approval stream events.
+
+In that flow the turn ends with `respond_kind` `policy_confirmation_prompt` in
+its metadata, and the call waits on the turn's thread. A later `run()` without
+a thread starts a new thread, so it does not answer the confirmation. To answer
+it, pass the earlier result's `thread_id` to `run()` or `run_stream()`: the
+runtime then resumes that thread. Omitted or blank, `thread_id` changes
+nothing. A thread id from another session does not answer that session's
+confirmation, and with `approval_callback` the callback still decides.
+
+```python
+first = agent.run("Remember that I write code in Iosevka 14.")
+if first.metadata.get("respond_kind") == "policy_confirmation_prompt":
+    # Answer the confirmation on the thread that is waiting for it.
+    answer = agent.run("yes", thread_id=first.thread_id)
+```
 
 Stable exported root symbols are recorded in `API_COMPATIBILITY.md`.
 Advanced turn lifecycle types are exported from `openminion.api` rather than

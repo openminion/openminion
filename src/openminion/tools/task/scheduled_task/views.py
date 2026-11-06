@@ -128,6 +128,11 @@ def _task_show_payload(
         "runs": runs,
         "watch": watch,
         "consolidation": consolidation,
+        **(
+            {"security_scan": canonical["security_scan"]}
+            if "security_scan" in canonical
+            else {}
+        ),
     }
 
 

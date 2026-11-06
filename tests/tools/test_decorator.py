@@ -95,6 +95,26 @@ def test_decorator_handler_invokes_underlying_function() -> None:
     assert decl.handler(args) == 12
 
 
+def test_decorator_handler_supports_positional_only_parameters() -> None:
+    @tool
+    def add(a: int, b: int, /) -> int:
+        return a + b
+
+    decl = add.tool_decl
+    assert decl.handler(decl.args_model(a=2, b=3)) == 5
+    assert decl.handler({"a": 4, "b": 5}) == 9
+
+
+def test_decorator_handler_supports_mixed_positional_only_parameters() -> None:
+    @tool
+    def mix(a: int, /, b: int, *, c: int = 3) -> tuple[int, int, int]:
+        return a, b, c
+
+    decl = mix.tool_decl
+    assert decl.handler(decl.args_model(a=1, b=2, c=7)) == (1, 2, 7)
+    assert decl.handler({"a": 1, "b": 2}) == (1, 2, 3)
+
+
 def test_decorator_tool_family_spec_wraps_decl() -> None:
     @tool
     def ping() -> str:
@@ -164,6 +184,70 @@ def test_decorator_default_arguments_become_optional_fields() -> None:
     args_model = fetch.tool_args_model
     instance = args_model(url="https://example.com")
     assert instance.timeout == 30
+
+
+def test_decorator_preserves_annotated_field_default_without_python_default() -> None:
+    @tool
+    def a(x: Annotated[int, Field(default=5)]) -> int:
+        return x
+
+    @tool
+    def b(x: Annotated[list[int], Field(default_factory=list)]) -> list[int]:
+        return x
+
+    a_field = a.tool_args_model.model_fields["x"]
+    assert a_field.default == 5
+    assert not a_field.is_required()
+    assert a.tool_args_model().x == 5
+    assert a.tool_args_model(x=9).x == 9
+
+    b_field = b.tool_args_model.model_fields["x"]
+    assert b_field.default_factory is list
+    assert not b_field.is_required()
+    assert b.tool_args_model().x == []
+    assert b.tool_args_model(x=[1]).x == [1]
+
+
+def test_decorator_python_default_precedes_annotated_field_default() -> None:
+    @tool
+    def pick(x: Annotated[int, Field(default=5, ge=1)] = 7) -> int:
+        return x
+
+    field = pick.tool_args_model.model_fields["x"]
+    assert field.default == 7
+    assert not field.is_required()
+    assert pick.tool_args_model().x == 7
+    with pytest.raises(ValidationError):
+        pick.tool_args_model(x=0)
+
+
+def test_decorator_field_default_alias_and_constraints_reach_handler() -> None:
+    @tool
+    def scalar(x: int = Field(default=7, alias="external", ge=1)) -> int:
+        return x
+
+    field = scalar.tool_args_model.model_fields["x"]
+    assert field.default == 7
+    assert not field.is_required()
+    assert field.alias == "external"
+    assert scalar.tool_decl.handler({}) == 7
+    assert scalar.tool_decl.handler({"external": 9}) == 9
+    with pytest.raises(ValidationError):
+        scalar.tool_decl.handler({"x": -1})
+    with pytest.raises(ValidationError):
+        scalar.tool_decl.handler({"external": 0})
+
+
+def test_decorator_field_default_factory_reaches_handler() -> None:
+    @tool
+    def factory(x: list[int] = Field(default_factory=list)) -> list[int]:
+        return x
+
+    field = factory.tool_args_model.model_fields["x"]
+    assert field.default_factory is list
+    assert not field.is_required()
+    assert factory.tool_decl.handler({}) == []
+    assert factory.tool_decl.handler({"x": [1, 2]}) == [1, 2]
 
 
 def test_decorator_handles_missing_type_hints_as_any() -> None:

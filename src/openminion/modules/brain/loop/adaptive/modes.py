@@ -51,8 +51,7 @@ from openminion.modules.brain.loop.tools.budget import _debit_llm_usage  # noqa:
 from openminion.modules.brain.loop.tools.budget_extension import (
     consume_approved_extension,
 )
-from openminion.modules.brain.loop.tools.transcript import replay_tool_messages
-from openminion.modules.llm.schemas import Message
+from openminion.modules.brain.execution.task_context import execution_input
 from openminion.modules.memory.runtime.consolidation import (
     apply_memory_consolidation_decisions,
 )
@@ -118,6 +117,19 @@ def _seed_requests_inactive_tool(seed_response: Any) -> bool:
     return any(
         str(getattr(call, "name", "") or "").strip() == "tool.request"
         for call in list(getattr(seed_response, "tool_calls", []) or [])
+    )
+
+
+def _runtime_unavailable_result(
+    ctx: ExecutionContext, error: Exception
+) -> ExecutionResult:
+    return ExecutionResult(
+        status=BRAIN_STATE_ERROR,
+        working_state=ctx.state,
+        message=str(error),
+        action_result=_build_error_result(
+            str(error), "act_adaptive_runtime_unavailable"
+        ),
     )
 
 
@@ -209,6 +221,7 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
     def __init__(self) -> None:
         self._max_iterations = ADAPTIVE_MAX_ITERATIONS
         self._max_tool_calls_per_loop = ADAPTIVE_MAX_TOOL_CALLS
+        self._max_llm_calls_per_loop: int | None = None
         self._tool_schema_shortlisting_enabled = TOOL_SCHEMA_SHORTLISTING_ENABLED
         self._reflection_policy: Literal["never", "always", "anomaly"] = "never"
 
@@ -216,6 +229,7 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
         del profile
         max_iterations = getattr(config, "max_adaptive_iterations", None)
         max_tool_calls = getattr(config, "max_adaptive_tool_calls_per_loop", None)
+        max_llm_calls = getattr(config, "max_adaptive_llm_calls_per_loop", None)
         reflection_policy = getattr(config, "adaptive_reflection_policy", None)
         tss_enabled = getattr(config, "tool_schema_shortlisting_enabled", None)
         if isinstance(config, dict):
@@ -223,6 +237,8 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
                 max_iterations = config.get("max_adaptive_iterations")
             if max_tool_calls is None:
                 max_tool_calls = config.get("max_adaptive_tool_calls_per_loop")
+            if max_llm_calls is None:
+                max_llm_calls = config.get("max_adaptive_llm_calls_per_loop")
             if reflection_policy is None:
                 reflection_policy = config.get("adaptive_reflection_policy")
             if tss_enabled is None:
@@ -241,6 +257,9 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
         self._max_tool_calls_per_loop = max(
             1,
             int(max_tool_calls or ADAPTIVE_MAX_TOOL_CALLS),
+        )
+        self._max_llm_calls_per_loop = (
+            max(1, int(max_llm_calls)) if max_llm_calls is not None else None
         )
         if tss_enabled is not None:
             self._tool_schema_shortlisting_enabled = bool(tss_enabled)
@@ -289,14 +308,7 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
                 },
             )
             return ModePreparation(
-                mode_result=ExecutionResult(
-                    status=BRAIN_STATE_ERROR,
-                    working_state=ctx.state,
-                    message=str(exc),
-                    action_result=_build_error_result(
-                        str(exc), "act_adaptive_runtime_unavailable"
-                    ),
-                ),
+                mode_result=_runtime_unavailable_result(ctx, exc),
                 consume_user_input_for_command=False,
             )
 
@@ -334,22 +346,16 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
         if self._seeded_commands(ctx):
             return self._execute_seeded_commands(ctx)
         try:
-            runtime = DefaultAdaptiveToolLoopLLMRuntime.from_adapter(ctx.llm_adapter)
-        except AdaptiveToolLoopRuntimeUnavailableError as exc:
-            return ExecutionResult(
-                status=BRAIN_STATE_ERROR,
-                working_state=ctx.state,
-                message=str(exc),
-                action_result=_build_error_result(
-                    str(exc), "act_adaptive_runtime_unavailable"
-                ),
+            runtime = DefaultAdaptiveToolLoopLLMRuntime.from_adapter(
+                ctx.llm_adapter, task_state=ctx.state
             )
+        except AdaptiveToolLoopRuntimeUnavailableError as exc:
+            return _runtime_unavailable_result(ctx, exc)
         if not ctx.state.intent_execution_states and ctx.state.decision_sub_intent_refs:
             ctx.state.intent_execution_states = build_intent_execution_states(
                 ctx.state.decision_sub_intent_refs,
                 existing=[],
             )
-
         runner = runner_from_context(ctx)
         consolidation_overrides = _memory_consolidation_profile_overrides(ctx)
         watch_overrides = (
@@ -380,18 +386,15 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
                 frozenset(effective_allowed_tools)
             )
         model = resolve_loop_model(ctx)
-        messages = replay_tool_messages(
-            getattr(runner, "session_api", None),
-            str(ctx.state.session_id or ""),
-        )
         seeded_replay_without_new_input = bool(
             self._seeded_continue_stays_autonomous(ctx)
             and not str(ctx.user_input or "").strip()
         )
-        if ctx.user_input:
-            messages.append(Message(role="user", content=ctx.user_input))
-        elif ctx.state.goal and not seeded_replay_without_new_input:
-            messages.append(Message(role="user", content=str(ctx.state.goal or "")))
+        messages, task_error = execution_input(
+            ctx, autonomous=seeded_replay_without_new_input
+        )
+        if task_error is not None:
+            return task_error
         seed_response = getattr(ctx.decision, "_entry_response", None)
         direct_tool_turn = _direct_tool_turn_context(
             ctx=ctx,
@@ -477,6 +480,7 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
             ),
             max_iterations=_effective_max_iterations,
             max_tool_calls_per_loop=self._max_tool_calls_per_loop,
+            max_llm_calls_per_loop=self._max_llm_calls_per_loop,
             reflection_policy=self._reflection_policy,
             max_macro_corrections=2,
             macro_correction_cooldown=1,

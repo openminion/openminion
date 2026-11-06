@@ -19,6 +19,7 @@ from openminion.base.constants import (
     OPENMINION_HOME_ENV,
 )
 from openminion.base.logging import configure_logging
+from openminion.api.core.lifecycle import close_runtime_infrastructure
 from openminion.modules.llm.providers.factory import build_runtime_llm_handle
 from openminion.modules.storage.runtime import (
     build_runtime_storage,
@@ -130,83 +131,137 @@ def build_runtime_infrastructure(
     filtered_env = {k: v for k, v in runtime_env.items() if k not in _ROOT_ENV_KEYS}
     apply_runtime_environment(filtered_env)
     base_config.runtime.env = manager.env.snapshot()
-    telemetry_service = TelemetryService(
-        home_root=paths.home,
-        env=manager.env.snapshot(),
-        otel_exporter_config=getattr(base_config.runtime, "telemetry_exporter", None),
-    )
-    telemetryctl = TelemetryCtl(telemetry_service)
-    runtime_storage = build_runtime_storage(
-        paths.storage,
-        env=manager.env,
-        record_backend=base_config.storage.record_backend(),
-        record_backend_options=base_config.storage.record_backend_options(),
-        telemetry_hook=storage_hook.TelemetryServiceStorageHook(telemetry_service),
-    )
-    logger = configure_logging(base_config.runtime.log_level, mode=logging_mode)
-    security_policy = _build_security_policy(base_config, telemetryctl)
-    agent_security_policy = None if disable_security_policy else security_policy
-    extension_runtime = LifecycleService.from_config(
-        base_config,
-        config_path=str(paths.config),
-        home_root=paths.home,
-        data_root=paths.data,
-        logger=logger,
-    ).build(
-        security_policy=security_policy,
-        on_before_activate=lambda manifest: enforce_plugin_activation_policy(
+    # Until this returns, a failure closes what it built and keeps the error.
+    telemetry_service = runtime_storage = extension_runtime = None
+    try:
+        telemetry_service = TelemetryService(
+            home_root=paths.home,
+            env=manager.env.snapshot(),
+            otel_exporter_config=getattr(
+                base_config.runtime, "telemetry_exporter", None
+            ),
+        )
+        telemetryctl = TelemetryCtl(telemetry_service)
+        runtime_storage = build_runtime_storage(
+            paths.storage,
+            env=manager.env,
+            record_backend=base_config.storage.record_backend(),
+            record_backend_options=base_config.storage.record_backend_options(),
+            telemetry_hook=storage_hook.TelemetryServiceStorageHook(telemetry_service),
+        )
+        logger = configure_logging(base_config.runtime.log_level, mode=logging_mode)
+        security_policy = _build_security_policy(base_config, telemetryctl)
+        agent_security_policy = None if disable_security_policy else security_policy
+        extension_runtime = LifecycleService.from_config(
+            base_config,
+            config_path=str(paths.config),
+            home_root=paths.home,
+            data_root=paths.data,
+            logger=logger,
+        ).build(
             security_policy=security_policy,
-            agent_id=resolve_default_agent_id(base_config),
-            manifest=manifest,
-        ),
-        load_tool_plugins=True,
-    )
-    _bind_channel_supervisor_telemetry(extension_runtime, telemetry_service)
+            on_before_activate=lambda manifest: enforce_plugin_activation_policy(
+                security_policy=security_policy,
+                agent_id=resolve_default_agent_id(base_config),
+                manifest=manifest,
+            ),
+            load_tool_plugins=True,
+        )
+        _bind_channel_supervisor_telemetry(extension_runtime, telemetry_service)
+        return {
+            "telemetry_service": telemetry_service,
+            "telemetryctl": telemetryctl,
+            "runtime_storage": runtime_storage,
+            "logger": logger,
+            "security_policy": security_policy,
+            "agent_security_policy": agent_security_policy,
+            **_extension_runtime_components(extension_runtime),
+            "security_lab_runner": security_lab_runner,
+            "tools": extension_runtime.tools,
+            **_build_agent_infrastructure(
+                base_config=base_config,
+                manager=manager,
+                paths=paths,
+                effective_run_profile_overrides=effective_run_profile_overrides,
+                logger=logger,
+                runtime_storage=runtime_storage,
+                tools=extension_runtime.tools,
+            ),
+        }
+    except BaseException:
+        close_runtime_infrastructure(
+            {
+                "security_lab_runner": security_lab_runner,
+                "telemetry_service": telemetry_service,
+                "runtime_storage": runtime_storage,
+                "channel_supervisor": getattr(
+                    extension_runtime, "channel_supervisor", None
+                ),
+                "tools": getattr(extension_runtime, "tools", None),
+            }
+        )
+        raise
+
+
+def _build_agent_infrastructure(
+    *,
+    base_config: OpenMinionConfig,
+    manager: ConfigManager,
+    paths: RuntimePaths,
+    effective_run_profile_overrides: RunProfileOverrides,
+    logger: Any,
+    runtime_storage: Any,
+    tools: Any,
+) -> dict[str, object]:
     default_config = build_runtime_config(
         base_config, overrides=effective_run_profile_overrides
     )
     default_agent = default_config.agents[resolve_default_agent_id(default_config)]
     llm_runtime = build_runtime_llm_handle(default_config, logger.getChild("provider"))
-    tools = extension_runtime.tools
-    action_policy, ops_service = _build_ops_services(
-        base_config, manager, paths.data, tool_registry=tools
-    )
-    support = _build_runtime_support(
-        base_config=base_config,
-        manager=manager,
-        paths=paths,
-        logger=logger,
-        default_agent=default_agent,
-        runtime_storage=runtime_storage,
-        tools=tools,
-        action_policy=action_policy,
-    )
-    return {
-        "telemetry_service": telemetry_service,
-        "telemetryctl": telemetryctl,
-        "runtime_storage": runtime_storage,
-        "logger": logger,
-        "security_policy": security_policy,
-        "agent_security_policy": agent_security_policy,
-        **_extension_runtime_components(extension_runtime),
-        "default_config": default_config,
-        "security_lab_runner": security_lab_runner,
-        "default_agent": default_agent,
-        "llm_runtime": llm_runtime,
-        "provider": SimpleNamespace(
-            name=llm_runtime.name,
-            model=llm_runtime.model,
-            tool_call_strategy=llm_runtime.tool_call_strategy,
-        ),
-        "tools": tools,
-        "self_improvement": SelfImprovementEngine.from_config(base_config),
-        "channel_authenticity_policy": build_channel_authenticity_policy(
-            base_config.channel_authenticity
-        ),
-        "action_policy": action_policy,
-        "ops_service": ops_service,
-        **support,
-    }
+    # Until this returns, a failure closes what it built and keeps the error.
+    action_policy = ops_service = None
+    support: dict[str, object] = {}
+    try:
+        action_policy, ops_service = _build_ops_services(
+            base_config, manager, paths.data, tool_registry=tools
+        )
+        support = _build_runtime_support(
+            base_config=base_config,
+            manager=manager,
+            paths=paths,
+            logger=logger,
+            default_agent=default_agent,
+            runtime_storage=runtime_storage,
+            tools=tools,
+            action_policy=action_policy,
+        )
+        return {
+            "default_config": default_config,
+            "default_agent": default_agent,
+            "llm_runtime": llm_runtime,
+            "provider": SimpleNamespace(
+                name=llm_runtime.name,
+                model=llm_runtime.model,
+                tool_call_strategy=llm_runtime.tool_call_strategy,
+            ),
+            "self_improvement": SelfImprovementEngine.from_config(base_config),
+            "channel_authenticity_policy": build_channel_authenticity_policy(
+                base_config.channel_authenticity
+            ),
+            "action_policy": action_policy,
+            "ops_service": ops_service,
+            **support,
+        }
+    except BaseException:
+        close_runtime_infrastructure(
+            {
+                "llm_runtime": llm_runtime,
+                "action_policy": action_policy,
+                "ops_service": ops_service,
+                **support,
+            }
+        )
+        raise
 
 
 def _build_security_policy(
@@ -239,19 +294,23 @@ def _build_ops_services(
         data_root=data_root,
     )
     credential_audit = InMemoryCredentialAuditLog()
-    ops_service = configured_ops_service(
-        base_config.runtime.ops,
-        data_root=data_root,
-        credential_reader=lambda ref: resolve_credential_env_value(
-            ref,
-            caller_agent_id="",
-            caller_profile_id="ops",
-            access_site="tools.ops.ssh",
-            audit_log=credential_audit,
-            env=manager.env,
-        ),
-        action_policy=action_policy,
-    )
+    try:
+        ops_service = configured_ops_service(
+            base_config.runtime.ops,
+            data_root=data_root,
+            credential_reader=lambda ref: resolve_credential_env_value(
+                ref,
+                caller_agent_id="",
+                caller_profile_id="ops",
+                access_site="tools.ops.ssh",
+                audit_log=credential_audit,
+                env=manager.env,
+            ),
+            action_policy=action_policy,
+        )
+    except BaseException:
+        close_runtime_infrastructure({"action_policy": action_policy})
+        raise
     return action_policy, ops_service
 
 
@@ -296,47 +355,62 @@ def _build_runtime_support(
         config=retrieve_config,
         logger=logger.getChild("retrieve"),
     )
-    session_context = build_session_context_service(
-        config=base_config,
-        sessions=runtime_storage.sessions,
-        logger=logger.getChild("gateway.session_context"),
-        config_path=paths.config,
-        storage_path=paths.storage,
-        memory_root=paths.memory,
-        data_root=paths.data,
-        retrieve_ctl=retrieve_ctl,
-    )
-    memory_assembly = build_runtime_memory_assembly(
-        config=base_config,
-        agent_id=default_agent.name,
-        memory_root=paths.memory,
-        logger=logger.getChild("gateway.agent_memory"),
-        config_manager=manager,
-        home_root=paths.home,
-        data_root=paths.data,
-        session_context=session_context,
-        retrieve_ctl=retrieve_ctl,
-        storage_path=paths.storage,
-        vector_adapter=vector_adapter,
-        scheduler=vector_scheduler,
-    )
-    memory_assembly.start()
-    knowledge_graphs = build_knowledge_graph_source_service(config=base_config)
-    sandbox_runner = build_daytona_runner(config=base_config, config_manager=manager)
-    authored_tools = build_tool_authoring_service(
-        config=base_config,
-        data_root=paths.data,
-        tool_registry=tools,
-        sandbox_runner=sandbox_runner,
-        policy_ctl=action_policy,
-    )
-    return {
-        "retrieve_ctl": retrieve_ctl,
-        "session_context": session_context,
-        "runtime_memory_assembly": memory_assembly,
-        "agent_memory": memory_assembly.gateway,
-        "vector_adapter": vector_adapter,
-        "knowledge_graphs": knowledge_graphs,
-        "sandbox_runner": sandbox_runner,
-        "authored_tools": authored_tools,
-    }
+    # Until this returns, a failure closes what it built and keeps the error.
+    memory_assembly = sandbox_runner = authored_tools = None
+    try:
+        session_context = build_session_context_service(
+            config=base_config,
+            sessions=runtime_storage.sessions,
+            logger=logger.getChild("gateway.session_context"),
+            config_path=paths.config,
+            storage_path=paths.storage,
+            memory_root=paths.memory,
+            data_root=paths.data,
+            retrieve_ctl=retrieve_ctl,
+        )
+        memory_assembly = build_runtime_memory_assembly(
+            config=base_config,
+            agent_id=default_agent.name,
+            memory_root=paths.memory,
+            logger=logger.getChild("gateway.agent_memory"),
+            config_manager=manager,
+            home_root=paths.home,
+            data_root=paths.data,
+            session_context=session_context,
+            retrieve_ctl=retrieve_ctl,
+            storage_path=paths.storage,
+            vector_adapter=vector_adapter,
+            scheduler=vector_scheduler,
+        )
+        memory_assembly.start()
+        knowledge_graphs = build_knowledge_graph_source_service(config=base_config)
+        sandbox_runner = build_daytona_runner(
+            config=base_config, config_manager=manager
+        )
+        authored_tools = build_tool_authoring_service(
+            config=base_config,
+            data_root=paths.data,
+            tool_registry=tools,
+            sandbox_runner=sandbox_runner,
+            policy_ctl=action_policy,
+        )
+        return {
+            "retrieve_ctl": retrieve_ctl,
+            "session_context": session_context,
+            "runtime_memory_assembly": memory_assembly,
+            "agent_memory": memory_assembly.gateway,
+            "vector_adapter": vector_adapter,
+            "knowledge_graphs": knowledge_graphs,
+            "sandbox_runner": sandbox_runner,
+            "authored_tools": authored_tools,
+        }
+    except BaseException:
+        close_runtime_infrastructure(
+            {
+                "retrieve_ctl": retrieve_ctl,
+                "runtime_memory_assembly": memory_assembly,
+                "sandbox_runner": sandbox_runner,
+                "authored_tools": authored_tools,
+            }
+        )
+        raise

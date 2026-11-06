@@ -8,6 +8,8 @@ import threading
 import time
 from typing import Any
 
+from tests.task_context_fixture import replace_entry_task
+
 
 class OllamaFixtureHandler(BaseHTTPRequestHandler):
     requests: list[dict[str, Any]] = []
@@ -109,6 +111,7 @@ class OllamaFixtureHandler(BaseHTTPRequestHandler):
             ]
             type(self).turn_response_index += 1
             type(self).last_turn_response_message = response_message
+        response_message = replace_entry_task(request_payload, response_message)
         payload = json.dumps(
             {
                 "model": "qwen2.5:14b",

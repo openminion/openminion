@@ -36,7 +36,9 @@ from openminion.modules.telemetry.trace.metadata import (
 )
 from openminion.modules.telemetry.trace.structured import write_structured_trace
 from openminion.modules.llm.thinking import serialize_thinking_blocks
-from openminion.modules.tool.dispatch import get_registry_manager
+from openminion.modules.telemetry.trace.phase_timing import (
+    provider_tool_schema_payload,
+)
 
 
 def _public_trace_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
@@ -68,34 +70,6 @@ def _trace_enabled() -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _provider_request_tools_payload(tools) -> list[dict[str, Any]]:
-    manager = get_registry_manager()
-
-    def _schema_for_tool_name(tool_name: str) -> dict[str, Any]:
-        if manager is None or not callable(getattr(manager, "schema_for", None)):
-            return {}
-        try:
-            schema = manager.schema_for(tool_name)
-        except Exception:
-            return {}
-        return dict(schema) if isinstance(schema, dict) else {}
-
-    payload: list[dict[str, Any]] = []
-    for tool in tools or []:
-        name = str(getattr(tool, "name", "") or "")
-        payload.append(
-            {
-                "name": name,
-                "description": str(getattr(tool, "description", "") or ""),
-                "parameters": _schema_for_tool_name(name)
-                or getattr(tool, "parameters", {})
-                or {},
-                "risk": str(getattr(tool, "risk", "") or ""),
-            }
-        )
-    return payload
-
-
 def _provider_request_payload(
     *,
     provider_request: ProviderRequest,
@@ -117,7 +91,7 @@ def _provider_request_payload(
             {"role": item.role, "content": item.content}
             for item in list(provider_request.history or [])
         ],
-        "tools": _provider_request_tools_payload(list(provider_request.tools or [])),
+        "tools": provider_tool_schema_payload(list(provider_request.tools or [])),
         "tool_choice": getattr(provider_request, "tool_choice", "auto"),
         "tool_call_strategy": str(
             getattr(provider_request, "tool_call_strategy", "") or ""
@@ -457,6 +431,21 @@ async def generate_with_provider_call_telemetry(
 
     llm_call_id = str(uuid4())
     correlation = _llm_correlation_fields(request)
+    tool_payload = provider_tool_schema_payload(list(request.tools or []))
+    call_fields = {
+        "llm_call_id": llm_call_id,
+        "provider": provider_name,
+        "provider_name": provider_name,
+        "service_vendor": service_vendor or provider_name,
+        "purpose": str(request.metadata.get("purpose") or "act"),
+        **correlation,
+    }
+    terminal_fields = dict(call_fields, tool_schema_count=len(tool_payload))
+    terminal_fields["tool_schema_bytes"] = len(
+        json.dumps(
+            tool_payload, sort_keys=True, separators=(",", ":"), default=str
+        ).encode()
+    )
     started_at = time.monotonic()
     publication = read_trace_publication()
     await _emit_llm_call_event(
@@ -465,13 +454,8 @@ async def generate_with_provider_call_telemetry(
         turn_id=turn_id,
         event_type="llm.call.started",
         payload={
-            "llm_call_id": llm_call_id,
             "model": str(getattr(request, "model", "") or ""),
-            "provider": provider_name,
-            "provider_name": provider_name,
-            "service_vendor": service_vendor or provider_name,
-            "purpose": str(request.metadata.get("purpose") or "act"),
-            **correlation,
+            **call_fields,
             **publication.event_fields(final=False),
         },
         status="started",
@@ -488,14 +472,10 @@ async def generate_with_provider_call_telemetry(
                 turn_id=turn_id,
                 event_type="llm.call.failed",
                 payload={
-                    "llm_call_id": llm_call_id,
-                    "provider": provider_name,
                     "model": str(getattr(request, "model", "") or ""),
-                    "provider_name": provider_name,
-                    "service_vendor": service_vendor or provider_name,
                     "provider_round_trip_ms": (time.monotonic() - started_at) * 1000,
                     "error": _llm_error_payload(exc),
-                    **correlation,
+                    **terminal_fields,
                     **publication.event_fields(final=True),
                 },
                 status="failed",
@@ -508,11 +488,7 @@ async def generate_with_provider_call_telemetry(
         turn_id=turn_id,
         event_type="llm.call.completed",
         payload={
-            "llm_call_id": llm_call_id,
-            "provider": provider_name,
             "model": str(getattr(response, "model", "") or ""),
-            "provider_name": provider_name,
-            "service_vendor": service_vendor or provider_name,
             "response_model": str(getattr(response, "model", "") or ""),
             "provider_round_trip_ms": (time.monotonic() - started_at) * 1000,
             "usage": usage_payload_from_response_usage(
@@ -520,7 +496,7 @@ async def generate_with_provider_call_telemetry(
             ),
             **response_cost_payload(response),
             "finish_reason": str(getattr(response, "finish_reason", "") or ""),
-            **correlation,
+            **terminal_fields,
             **publication.event_fields(final=True),
         },
         status="completed",

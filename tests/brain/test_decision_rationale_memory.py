@@ -265,6 +265,36 @@ def test_write_decision_memory_skips_without_memory_api() -> None:
     assert logger.events[-1]["payload"]["reason"] == "memory_api_unavailable"
 
 
+def test_write_decision_memory_skips_when_the_turn_may_not_write_memory() -> None:
+    memory = _MemoryAPI()
+    logger = _Logger()
+    decision = RespondDecision(
+        respond_kind="answer",
+        reason_code="entry_text_response",
+        rationale="model-authored rationale",
+        answer="done",
+    )
+    runner = SimpleNamespace(memory_api=memory, _memory_write_allowed_for_turn=False)
+
+    result = write_decision_memory(
+        runner,
+        state=_state(),
+        decision=decision,
+        logger=logger,
+    )
+
+    assert result == []
+    assert memory.records == []
+    assert logger.events[-1]["event"] == "brain.decision_memory.skipped"
+    assert logger.events[-1]["payload"] == {"reason": "memory_write_not_authorized"}
+
+    # The same runner on a turn that may write.
+    runner._memory_write_allowed_for_turn = True
+    assert write_decision_memory(runner, state=_state(), decision=decision) == [
+        "mem_decision_1"
+    ]
+
+
 def test_dispatch_writes_decision_memory_once_after_finalized_decision(
     monkeypatch,
 ) -> None:
@@ -368,3 +398,58 @@ def test_dispatch_decision_memory_failure_does_not_change_route(
     assert state.decision_memory_refs == []
     assert logger.events[-1]["event"] == "brain.decision_memory.skipped"
     assert logger.events[-1]["payload"]["reason"] == "write_failed"
+
+
+def test_dispatch_keeps_decision_metadata_when_the_turn_may_not_write_memory(
+    monkeypatch,
+) -> None:
+    memory = _MemoryAPI()
+    logger = _Logger()
+    decision = RespondDecision(
+        respond_kind="answer",
+        reason_code="entry_text_response",
+        rationale="The model selected direct response.",
+        answer="hello",
+    )
+    runner = SimpleNamespace(
+        memory_api=memory,
+        profile=None,
+        options=SimpleNamespace(),
+        _decide=lambda **_: decision,
+        _evaluate_meta=lambda **_: None,
+        _memory_write_allowed_for_turn=False,
+    )
+    state = _working_state("s-drm-02-not-authorized")
+
+    monkeypatch.setattr(entry_module, "prepare_decision_direct", lambda *_, **__: None)
+    monkeypatch.setattr(entry_module, "validate_decision_direct", lambda *_, **__: None)
+    monkeypatch.setattr(
+        entry_module,
+        "invoke_decision_direct",
+        lambda *_, **__: ExecutionResult(
+            status="done",
+            working_state=state,
+            message="ok",
+        ),
+    )
+
+    output = entry_module.dispatch(
+        runner=runner,
+        state=state,
+        logger=logger,
+        request=build_execution_entry_request(
+            user_input="hello",
+            forced_tools=None,
+            capability_category=None,
+        ),
+    )
+
+    assert output.status == "done"
+    assert output.message == "ok"
+    assert memory.records == []
+    assert state.decision_memory_refs == []
+    assert logger.events[-1]["event"] == "brain.decision_memory.skipped"
+    assert logger.events[-1]["payload"]["reason"] == "memory_write_not_authorized"
+    # The working state keeps the decision metadata.
+    assert state.decision_reason_code == "entry_text_response"
+    assert state.decision_rationale == "The model selected direct response."

@@ -60,6 +60,7 @@ class AgentRunResult(Generic[OutputT]):
     id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     stats: dict[str, Any] = field(default_factory=dict)
+    thread_id: str | None = None
 
 
 class Agent(Generic[InputT, OutputT]):
@@ -121,8 +122,12 @@ class Agent(Generic[InputT, OutputT]):
         self._owns_runtime = runtime is None
 
         if self.handoffs:
-            from openminion.api.handoff import build_delegate_tool
+            from openminion.api.handoff import (
+                _validate_unique_resolved_names,
+                build_delegate_tool,
+            )
 
+            _validate_unique_resolved_names(self.handoffs)
             self.handoff_tool_names: list[str] = [
                 build_delegate_tool(h).name for h in self.handoffs
             ]
@@ -156,12 +161,18 @@ class Agent(Generic[InputT, OutputT]):
         *,
         session_id: str | None = None,
         timeout_seconds: float | None = None,
+        thread_id: str | None = None,
     ) -> dict[str, Any]:
+        inbound_metadata = {CALLER_HANDLES_DELIVERY_METADATA_KEY: "true"}
+        requested_thread_id = (thread_id or "").strip()
+        if requested_thread_id:
+            # The runtime's explicit-thread routing resumes this thread.
+            inbound_metadata["thread_id"] = requested_thread_id
         payload: dict[str, Any] = {
             "message": message,
             "session_id": (session_id or "").strip() or self.session_id,
             "deliver": False,
-            "inbound_metadata": {CALLER_HANDLES_DELIVERY_METADATA_KEY: "true"},
+            "inbound_metadata": inbound_metadata,
         }
         if self.agent_id:
             payload["agent_id"] = self.agent_id
@@ -281,12 +292,14 @@ class Agent(Generic[InputT, OutputT]):
         timeout_seconds: float | None = None,
         approval_callback: _ApprovalCallback | None = None,
         cancel_event: Event | None = None,
+        thread_id: str | None = None,
     ) -> AgentRunResult[OutputT]:
         runtime = self._ensure_runtime()
         payload = self._build_payload(
             self._serialize_input(message),
             session_id=session_id,
             timeout_seconds=timeout_seconds,
+            thread_id=thread_id,
         )
         run_context = None
         delegated_grant_id = None
@@ -364,6 +377,7 @@ class Agent(Generic[InputT, OutputT]):
             run_state=str(raw_payload.get("run_state") or "").strip() or None,
             metadata=dict(metadata_value),
             stats=dict(stats_value),
+            thread_id=str(metadata_value.get("thread_id") or "").strip() or None,
         )
 
     def run(
@@ -371,6 +385,7 @@ class Agent(Generic[InputT, OutputT]):
         message: InputT,
         *,
         session_id: str | None = None,
+        thread_id: str | None = None,
         timeout_seconds: float | None = None,
         approval_callback: _ApprovalCallback | None = None,
         cancel_event: Event | None = None,
@@ -378,6 +393,7 @@ class Agent(Generic[InputT, OutputT]):
         return self._run_once(
             message,
             session_id=session_id,
+            thread_id=thread_id,
             timeout_seconds=timeout_seconds,
             approval_callback=approval_callback,
             cancel_event=cancel_event,
@@ -388,6 +404,7 @@ class Agent(Generic[InputT, OutputT]):
         message: InputT,
         *,
         session_id: str | None = None,
+        thread_id: str | None = None,
         on_delta: Callable[[object], None] | None = None,
         timeout_seconds: float | None = None,
         approval_callback: _ApprovalCallback | None = None,
@@ -397,6 +414,7 @@ class Agent(Generic[InputT, OutputT]):
         return self._run_once(
             message,
             session_id=session_id,
+            thread_id=thread_id,
             on_delta=on_delta,
             timeout_seconds=timeout_seconds,
             approval_callback=approval_callback,

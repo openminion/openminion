@@ -39,6 +39,7 @@ from .messages import (
 )
 from .project import RuntimeProjectMixin
 from .room_tasks import RuntimeRoomTaskMixin
+from .session_names import SessionNameRuntimeMixin
 from .token_usage import RuntimeTokenUsageMixin
 
 ApprovalCallback = Callable[..., Awaitable[bool]]
@@ -63,6 +64,7 @@ class OpenMinionRuntime(
     RuntimeMessageMixin,
     RuntimeProjectMixin,
     RuntimeTokenUsageMixin,
+    SessionNameRuntimeMixin,
 ):
     """ChatRuntimeAPI adapter over APIRuntime."""
 

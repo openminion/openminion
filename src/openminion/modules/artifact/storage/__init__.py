@@ -21,7 +21,7 @@ def build_artifact_index(
     if record_backend != "record.postgres":
         raise ValueError(f"Unsupported artifact record backend: {record_backend!r}")
 
-    engine = StorageEngine.from_config(config=config)
+    engine = StorageEngine.from_config(config=config, module_id="artifact")
     return PostgresArtifactIndex(record_store=engine.record_store)
 
 

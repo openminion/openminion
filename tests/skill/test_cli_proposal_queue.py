@@ -246,3 +246,28 @@ def test_cli_proposal_apply_refuses_pending(tmp_path: Path) -> None:
     assert rc == 1
     payload = json.loads(out)
     assert payload["ok"] is False
+
+
+def test_inspect_unreadable_measurement_returns_typed_error(tmp_path, monkeypatch):
+    from openminion.modules.artifact.control import ArtifactCtl
+
+    _seed_proposal(tmp_path)
+    cfg = _config_path(tmp_path)
+    data = tmp_path / "data"
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data))
+    with ArtifactCtl({}) as artifacts:
+        ref = artifacts.ingest_bytes(b"{}", mime="application/json").ref
+    ctl = Skill(str(cfg))
+    try:
+        ctl.store.record_proposal_replay_proof(
+            proposal_id="sprq-cli-1",
+            replay_proof_json=json.dumps({"measurement_ref": ref}),
+            recorded_at="2026-11-04T00:00:00Z",
+        )
+    finally:
+        ctl.close()
+    rc, out = _run_cli_expect_failure(
+        ["--config", str(cfg), "proposal-inspect", "sprq-cli-1"]
+    )
+    assert rc == 1
+    assert json.loads(out)["error"]["code"] == "INVALID_ARGUMENT"

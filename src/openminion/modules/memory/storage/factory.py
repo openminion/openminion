@@ -10,6 +10,9 @@ from openminion.modules.memory.storage.capabilities import BackendCapabilities
 from openminion.modules.memory.storage.memory import InMemoryMemoryStore
 from openminion.modules.memory.storage.postgres.store import PostgresMemoryStore
 from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
+from openminion.modules.storage.migrations.postgres_schema import (
+    select_postgres_module_schema,
+)
 from ..errors import InvalidArgumentError, MigrationRequiredError
 
 
@@ -187,16 +190,25 @@ def resolve_memory_backend(
             raise MigrationRequiredError(
                 "sqlalchemy is required for memory.postgres; install openminion[postgres]",
             ) from exc
-        engine = sa.create_engine(postgres_url, future=True, pool_pre_ping=True)
+        # The memory module's own schema under the configured base schema (#446).
+        selection = select_postgres_module_schema(postgres_url, "memory")
+        engine = sa.create_engine(
+            selection.url(postgres_url), future=True, pool_pre_ping=True
+        )
         postgres_kwargs: dict[str, Any] = {}
         if artifactctl is not None:
             postgres_kwargs["artifactctl"] = artifactctl
-        store = PostgresMemoryStore(
-            engine,
-            database_path=db_path,
-            owns_engine=True,
-            **postgres_kwargs,
-        )
+        try:
+            store = PostgresMemoryStore(
+                engine,
+                database_path=db_path,
+                owns_engine=True,
+                postgres_schema=selection,
+                **postgres_kwargs,
+            )
+        except BaseException:
+            engine.dispose()
+            raise
         return _resolved_backend("postgres", store)
 
     sqlite_kwargs: dict[str, Any] = {}

@@ -8,7 +8,6 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Iterator, Literal
 
-
 ChatPhase = Literal[
     "runtime_bootstrap",
     "daemon_probe_start",
@@ -263,7 +262,7 @@ class ChatPhaseTimer:
     ) -> None:
         normalized_purpose = str(purpose or "unknown").strip() or "unknown"
         message_payload = [_jsonable(item) for item in messages]
-        tool_payload = [_jsonable(item) for item in tools]
+        tool_payload = provider_tool_schema_payload(tools)
         with self._lock:
             self._provider_call_purposes.append(normalized_purpose)
             self._provider_call_latency_ms.append(
@@ -537,6 +536,24 @@ def _jsonable(value: object) -> object:
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
     return value
+
+
+def provider_tool_schema_payload(tools: list[object]) -> list[dict[str, object]]:
+    """Return stable schema fields for a provider-facing tool list."""
+
+    return [
+        {
+            "name": str(getattr(tool, "name", "")),
+            "description": str(getattr(tool, "description", "")),
+            "parameters": getattr(
+                tool,
+                "parameters",
+                getattr(tool, "input_schema", {}),
+            ),
+            "strict": bool(getattr(tool, "strict", False)),
+        }
+        for tool in tools
+    ]
 
 
 def _json_bytes(value: object) -> int:

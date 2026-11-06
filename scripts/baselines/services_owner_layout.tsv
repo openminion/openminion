@@ -75,7 +75,23 @@ scope	max_python_files	max_loc
 # SECX-08 (2026-10-28) adds finite security scan admission/completion in the cron
 # owner and carries trusted scope through existing manager/ingress contracts.
 # Failed cron results retain their canonical evidence; no second scheduler.
-services	209	42298
+# Issue 448 (2026-10-28) asks the existing memory.write capture authorization
+# once per turn in the brain bridge's turn preparation, with the policy, tools
+# and agent id the capture recovery call site passes (+22 LOC in
+# services/brain/post_execution/mixin.py; measured on the tree reconciled with
+# dev 37fa75ff: 209 files, 42314 LOC).
+# Issue 496 (2026-10-29) keeps that memory.write answer on the runner for the
+# turn's decision records and tool outcome candidates, asked on every turn,
+# and derives the capture authorization from it (+2 LOC in
+# services/brain/post_execution/mixin.py; measured on dev 2df62d9b (after #448)
+# with this change: 209 files, 42316 LOC).
+# Issue 487 (2026-10-31) closes the call-owned storage probe on every health
+# service exit so the probe's storage handle is released on every exit path
+# (+9 LOC over dev 6119be2a at 42325; file count unchanged at 209).
+# Issue 481 (2026-11-01) resolves reasoning-effort support by the selected
+# execution route in the existing agent-service and llmctl-bridge owners
+# (measured on dev c7833b4d with this change: 209 files, 42345 LOC).
+services	209	42345
 services/security	6	187
 services/stats	1	25
 services/tool	3	50

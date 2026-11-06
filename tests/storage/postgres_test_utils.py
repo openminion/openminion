@@ -43,7 +43,8 @@ def open_postgres_record_store(
     postgres_url = _postgres_url()
     sqlalchemy = pytest.importorskip("sqlalchemy")
 
-    schema_name = f"{prefix}_{uuid.uuid4().hex}"
+    # Short enough for the modules' own schemas, <schema>__<module id> (#446).
+    schema_name = f"{prefix}_{uuid.uuid4().hex[:12]}"
     admin_engine = sqlalchemy.create_engine(postgres_url, future=True)
     with admin_engine.begin() as conn:
         conn.execute(sqlalchemy.text(f'CREATE SCHEMA IF NOT EXISTS "{schema_name}"'))
@@ -63,11 +64,24 @@ def open_postgres_record_store(
             engine.dispose()
         except Exception:  # noqa: BLE001
             pass
-        with admin_engine.begin() as conn:
-            conn.execute(
-                sqlalchemy.text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE')
-            )
+        drop_schemas(admin_engine, schema_name)
         admin_engine.dispose()
+
+
+def drop_schemas(admin_engine, schema_name: str) -> None:
+    """Drop a test schema and the module schemas created under it (#446)."""
+    from sqlalchemy import text
+
+    with admin_engine.begin() as conn:
+        names = conn.execute(
+            text(
+                "SELECT nspname FROM pg_namespace WHERE nspname = :s "
+                "OR starts_with(nspname, :prefix)"
+            ),
+            {"s": schema_name, "prefix": f"{schema_name}__"},
+        ).scalars()
+        for name in list(names):
+            conn.execute(text(f'DROP SCHEMA IF EXISTS "{name}" CASCADE'))
 
 
 def _postgres_url() -> str:

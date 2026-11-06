@@ -99,6 +99,16 @@ class RuntimeSessionStoreParticipants:
         if session is None:
             return None
         self.ensure_legacy_participant_record(session)
+        return self._find_active_participant(
+            session_id, participant_type, participant_id
+        )
+
+    def _find_active_participant(
+        self,
+        session_id: str,
+        participant_type: str,
+        participant_id: str,
+    ) -> RoomParticipant | None:
         row = self._backend.query_one(
             f"""
             SELECT {PARTICIPANT_COLUMNS}
@@ -196,32 +206,44 @@ class RuntimeSessionStoreParticipants:
         return None
 
     def set_active_agent(self, *, session_id: str, agent_id: str) -> SessionRecord:
+        """Select the session's active agent.
+
+        The agent's membership is read and the active agent written in one
+        transaction, under the session-row lock that joins and leaves take,
+        so a leave on another connection cannot commit between them. A
+        legacy session's owner record is ensured before that transaction.
+        """
         session = self._get_session(session_id)
         if session is None:
             raise ValueError(f"Session not found: {session_id}")
         normalized_agent = normalize_identity(agent_id)
         if not normalized_agent:
             raise ValueError("agent_id is required")
-        participant = self.get_participant(
-            session_id,
-            "agent",
-            normalized_agent,
-        )
-        if participant is None:
-            legacy_agent = agent_id_from_session_key(session.session_key)
-            if legacy_agent and legacy_agent != normalized_agent:
-                raise ValueError(
-                    f"Legacy session {session_id!r} is bound to agent {legacy_agent!r}"
-                )
-            if not legacy_agent:
-                raise ValueError(
-                    f"Agent {normalized_agent!r} is not an active participant"
-                )
-        now = utc_now_iso()
-        self._backend.execute_count(
-            "UPDATE sessions SET active_agent_id = ?, updated_at = ? WHERE id = ?",
-            (normalized_agent, now, session_id),
-        )
+        self.ensure_legacy_participant_record(session)
+        with self._backend.transaction():
+            # Membership is read after the lock, so a leave that committed
+            # while this selection waited for it is seen.
+            self._lock_session_row(session_id)
+            participant = self._find_active_participant(
+                session_id,
+                "agent",
+                normalized_agent,
+            )
+            if participant is None:
+                legacy_agent = agent_id_from_session_key(session.session_key)
+                if legacy_agent and legacy_agent != normalized_agent:
+                    raise ValueError(
+                        f"Legacy session {session_id!r} is bound to agent {legacy_agent!r}"
+                    )
+                if not legacy_agent:
+                    raise ValueError(
+                        f"Agent {normalized_agent!r} is not an active participant"
+                    )
+            now = utc_now_iso()
+            self._backend.execute_count(
+                "UPDATE sessions SET active_agent_id = ?, updated_at = ? WHERE id = ?",
+                (normalized_agent, now, session_id),
+            )
         updated = self._get_session(session_id)
         if updated is None:
             raise RuntimeError(f"Failed to update active agent for {session_id}")
@@ -256,10 +278,11 @@ class RuntimeSessionStoreParticipants:
     def _lock_session_row(self, session_id: str) -> None:
         """Lock the session row until the open transaction ends.
 
-        Participant writes take this lock first: the write changes no value,
-        and the lock it takes (the session row on Postgres, the database write
-        lock on SQLite) is held until commit. A join and a leave in one session
-        then wait for each other, in the same order.
+        Participant writes and selections take this lock first: the write
+        changes no value, and the lock it takes (the session row on Postgres,
+        the database write lock on SQLite) is held until commit. A join, a
+        selection and a leave in one session then wait for each other, in the
+        same order.
         """
         self._backend.execute_count(
             "UPDATE sessions SET updated_at = updated_at WHERE id = ?",

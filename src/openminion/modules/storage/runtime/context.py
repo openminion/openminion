@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from sqlite3 import Connection
@@ -132,6 +133,14 @@ def build_runtime_storage(
             check_connection=True,
             check_migrations=True,
         )
+        if backend_id == "record.postgres":
+            from openminion.modules.storage.migrations.postgres_schema import (
+                check_runtime_postgres_url,
+            )
+
+            # Read only: refuse a base schema runtime storage cannot prove is its
+            # own before the engine or a migration writes anything (#446).
+            check_runtime_postgres_url(_pg_url)
     engine = StorageEngine.from_config(
         config=StorageEngineConfig(
             root_dir=resolved_path.parent,
@@ -142,33 +151,42 @@ def build_runtime_storage(
         ),
         telemetry_hook=telemetry_hook,
     )
-    if backend_id == "record.sqlite":
-        migration_result = migrate_database(resolved_path)
-    else:
-        migration_result = migrate_record_store(
-            engine.record_store,
-            backend_type="postgres",
-        )
-    sessions = SessionStore(engine.record_store)
-    idempotency = IdempotencyStore(engine.record_store)
+    try:
+        if backend_id == "record.sqlite":
+            migration_result = migrate_database(resolved_path)
+        else:
+            migration_result = migrate_record_store(
+                engine.record_store,
+                backend_type="postgres",
+            )
+        sessions = SessionStore(engine.record_store)
+        idempotency = IdempotencyStore(engine.record_store)
 
-    schema_drift_report: SchemaDriftReport | None = None
-    if check_schema_drift_on_startup and backend_id == "record.sqlite":
-        sqlite_connection = getattr(engine.record_store, "connection", None)
-        if sqlite_connection is not None:
-            schema_drift_report = _maybe_check_schema_drift_sqlite(sqlite_connection)
-            if schema_drift_report is not None:
-                _emit_schema_drift_warning(
-                    schema_drift_report,
-                    sqlite_path=resolved_path,
+        schema_drift_report: SchemaDriftReport | None = None
+        if check_schema_drift_on_startup and backend_id == "record.sqlite":
+            sqlite_connection = getattr(engine.record_store, "connection", None)
+            if sqlite_connection is not None:
+                schema_drift_report = _maybe_check_schema_drift_sqlite(
+                    sqlite_connection
                 )
+                if schema_drift_report is not None:
+                    _emit_schema_drift_warning(
+                        schema_drift_report,
+                        sqlite_path=resolved_path,
+                    )
 
-    return RuntimeStorageContext(
-        sqlite_path=resolved_path,
-        migration_result=migration_result,
-        record_store=engine.record_store,
-        sessions=sessions,
-        idempotency=idempotency,
-        engine=engine,
-        schema_drift_report=schema_drift_report,
-    )
+        return RuntimeStorageContext(
+            sqlite_path=resolved_path,
+            migration_result=migration_result,
+            record_store=engine.record_store,
+            sessions=sessions,
+            idempotency=idempotency,
+            engine=engine,
+            schema_drift_report=schema_drift_report,
+        )
+    except BaseException:
+        # The engine is still this function's: close it (and its pool-health
+        # emitter) and keep the error.
+        with suppress(Exception):
+            engine.close()
+        raise

@@ -21,6 +21,7 @@ from openminion.cli.parser.flags import (
     add_runtime_source_flag,
 )
 from openminion.api.turns import run_turn
+from openminion.services.gateway.constants import CALLER_HANDLES_DELIVERY_METADATA_KEY
 
 load_config = load_cli_config_from_args
 
@@ -31,6 +32,7 @@ def run_openminion(args: Any) -> int:
         raise RuntimeError("Prompt is required (positional message or --file).")
 
     config = _load_run_config(args)
+    workspace_root = _resolve_workspace_root(args, config)
     if getattr(args, "config", None):
         bootstrap_config_path(Path(args.config).expanduser())
     mode = str(config.runtime.process_mode or "daemon").strip().lower()
@@ -50,6 +52,10 @@ def run_openminion(args: Any) -> int:
             "source": "openminion.run",
             "resume": str(bool(getattr(args, "resume", False))).lower(),
             "reset_session": str(bool(getattr(args, "reset_session", False))).lower(),
+            "inbound_metadata": {
+                CALLER_HANDLES_DELIVERY_METADATA_KEY: "true",
+                **({"workspace_root": workspace_root} if workspace_root else {}),
+            },
         },
     }
 
@@ -120,6 +126,25 @@ def run_openminion(args: Any) -> int:
     return 0
 
 
+def _resolve_workspace_root(args: Any, config: Any) -> str:
+    """Workspace root for this turn's file tools, or ``""`` to keep the configured one.
+
+    ``--dir`` wins; the caller's cwd applies only when ``runtime.tool_workspace_root``
+    is unset, because the ingress already applies a configured root and the command
+    sends nothing for it.
+    """
+    raw = str(getattr(args, "dir", "") or "").strip()
+    if raw:
+        candidate = Path(raw).expanduser()
+        if not candidate.is_dir():
+            raise RuntimeError(f"--dir is not a directory: {candidate}")
+        return str(candidate.resolve())
+    configured = str(getattr(config.runtime, "tool_workspace_root", "") or "").strip()
+    if configured:
+        return ""
+    return str(Path.cwd())
+
+
 def _run_inproc(
     args: Any,
     request_payload: dict[str, Any],
@@ -132,10 +157,14 @@ def _run_inproc(
         "target": request_payload["target"],
         "deliver": bool(request_payload.get("deliver", False)),
         "inbound_metadata": {
+            "workspace_root": request_payload.get("meta", {})
+            .get("inbound_metadata", {})
+            .get("workspace_root", ""),
             "resume": request_payload.get("meta", {}).get("resume", "false"),
             "reset_session": request_payload.get("meta", {}).get(
                 "reset_session", "false"
             ),
+            CALLER_HANDLES_DELIVERY_METADATA_KEY: "true",
         },
     }
     runtime = None
@@ -214,7 +243,11 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         default=argparse.SUPPRESS,
         help_text="Configured profile id",
     )
-    run.add_argument("--session", default=None, help="Session id")
+    run.add_argument(
+        "--session",
+        default=argparse.SUPPRESS,
+        help="Session id",
+    )
     run.add_argument(
         "--resume",
         action="store_true",

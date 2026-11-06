@@ -1,3 +1,5 @@
+"""Prepare reviewed skill packages and add them to the pending catalog."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
@@ -6,13 +8,18 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 from openminion.base.time import utc_now_iso
-from .base import SkillProposalDraft
+from .base import SkillProposal, SkillProposalDraft
 from openminion.modules.skill.constants import (
     SKILL_SOURCE_EMERGED_FROM_OBSERVATION,
     SKILL_SOURCE_OPERATOR_DECLARED,
     SKILL_STATUS_DRAFT,
 )
-from openminion.modules.skill.models import SkillPackage, normalize_text_list
+from openminion.modules.skill.models import (
+    SkillPackage,
+    normalize_text_list,
+    stable_hash,
+)
+from openminion.modules.skill.runtime.parser import parse_markdown
 from .review import SkillProposalReview
 
 _RUNTIME_REVIEWER_IDS = frozenset({"runtime", "system", "auto", "automatic", "self"})
@@ -105,7 +112,8 @@ def _assert_additive_only(
         if existing.skill_id == skill_id:
             raise SkillEmergenceReviewGateError("emergent skill already exists")
         if (
-            existing.source == SKILL_SOURCE_OPERATOR_DECLARED
+            draft.procedure is None
+            and existing.source == SKILL_SOURCE_OPERATOR_DECLARED
             and str(existing.name or "").strip() == draft_name
         ):
             raise SkillEmergenceReviewGateError(
@@ -113,22 +121,47 @@ def _assert_additive_only(
             )
 
 
-def apply_emergent_skill(
+def prepare_emergent_skill(
     review: SkillProposalReview | Mapping[str, Any],
     *,
-    catalog: Iterable[SkillPackage | Mapping[str, Any]],
     skill_definition: SkillProposalDraft | Mapping[str, Any],
-) -> tuple[EmergentSkillCatalogAddition, list[SkillPackage]]:
-    """Apply one accepted review to produce an additive emerged-skill entry."""
+    proposal: SkillProposal | None = None,
+) -> tuple[EmergentSkillCatalogAddition, SkillPackage]:
 
     draft = _normalize_draft(skill_definition)
     review_ref, reviewer_id = _validate_review_gate(review)
-    existing_catalog = _existing_catalog(catalog)
     added_skill_id = _emergent_skill_id(draft)
-    _assert_additive_only(existing_catalog, draft=draft, skill_id=added_skill_id)
-
     now = utc_now_iso()
     description = draft.short_description.strip()
+    sections = {"summary": description}
+    verification_rules = list(draft.verification_rules)
+    agent_id = None
+    if draft.procedure is not None:
+        if (
+            proposal is None
+            or not proposal.agent_id
+            or not proposal.proposed_at
+            or proposal.proposal_id != _review_field(review, "proposal_ref")
+            or proposal.proposed_skill_definition != draft
+        ):
+            raise SkillEmergenceReviewGateError(
+                "authored package requires its persisted proposal and matching review"
+            )
+        if reviewer_id == proposal.agent_id:
+            raise SkillEmergenceReviewGateError(
+                "authored proposal requires an independent reviewer"
+            )
+        from openminion.modules.skill.learning.draft import render_proposal_markdown
+
+        _, sections, _, _ = parse_markdown(render_proposal_markdown(draft))
+        sections["summary"] = description
+        verification_rules.extend(draft.procedure.validation)
+        agent_id = proposal.agent_id
+        added_skill_id = "emergent." + stable_hash(
+            {"agent_id": agent_id, "proposal_id": proposal.proposal_id}
+        )
+        now = proposal.proposed_at
+        review_ref = proposal.proposal_id
     package = SkillPackage(
         skill_id=added_skill_id,
         name=draft.name.strip(),
@@ -151,12 +184,12 @@ def apply_emergent_skill(
         inputs_schema=list(draft.inputs_schema),
         snippets={},
         recipe=None,
-        verification_rules=normalize_text_list(draft.verification_rules),
+        verification_rules=normalize_text_list(verification_rules),
         rollback_hints=[],
         summary=description,
-        sections={"summary": description},
-        scope="global",
-        agent_id=None,
+        sections=sections,
+        scope="agent" if agent_id is not None else "global",
+        agent_id=agent_id,
         source_version=None,
         created_at=now,
         updated_at=now,
@@ -173,6 +206,22 @@ def apply_emergent_skill(
         version_hash=package.version_hash,
         admission_state="pending",
     )
+    return addition, package
+
+
+def apply_emergent_skill(
+    review: SkillProposalReview | Mapping[str, Any],
+    *,
+    catalog: Iterable[SkillPackage | Mapping[str, Any]],
+    skill_definition: SkillProposalDraft | Mapping[str, Any],
+    proposal: SkillProposal | None = None,
+) -> tuple[EmergentSkillCatalogAddition, list[SkillPackage]]:
+    draft = _normalize_draft(skill_definition)
+    addition, package = prepare_emergent_skill(
+        review, skill_definition=draft, proposal=proposal
+    )
+    existing_catalog = _existing_catalog(catalog)
+    _assert_additive_only(existing_catalog, draft=draft, skill_id=package.skill_id)
     return addition, [*existing_catalog, package]
 
 
@@ -180,4 +229,5 @@ __all__ = (
     "EmergentSkillCatalogAddition",
     "SkillEmergenceReviewGateError",
     "apply_emergent_skill",
+    "prepare_emergent_skill",
 )

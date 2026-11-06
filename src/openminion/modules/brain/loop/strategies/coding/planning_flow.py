@@ -19,6 +19,8 @@ from openminion.modules.brain.loop.tools.structured_llm import (
 )
 from openminion.modules.llm.schemas import LLMResponse, Message
 
+from openminion.modules.brain.execution.task_context import execution_task_text
+
 from .llm import DefaultCodingLLMRuntime
 from .prompts import build_coding_plan_system_prompt
 from .plan import CodingPlan
@@ -34,12 +36,8 @@ class CodingPlanningMixin:
         model: str,
     ) -> CodingPlan | ExecutionResult:
         goal = (
-            str(
-                ctx.user_input
-                or ctx.state.goal
-                or getattr(ctx.decision, "objective", "")
-                or ""
-            ).strip()
+            execution_task_text(ctx)
+            or str(getattr(ctx.decision, "objective", "") or "").strip()
             or "Complete the coding task."
         )
         plan = structured_mode_response(

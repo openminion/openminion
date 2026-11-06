@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import suppress
 from os import PathLike
 from pathlib import Path
 from typing import Any, cast
@@ -30,6 +31,7 @@ from .infrastructure import (
     resolve_runtime_bootstrap_paths,
     scoped_tools_for_agent,
 )
+from .lifecycle import close_runtime_infrastructure
 
 
 def _resolve_root(value: str | PathLike[str] | None) -> Path | None:
@@ -69,28 +71,33 @@ def build_default_runtime_stack(
         sandbox_runner=infrastructure["sandbox_runner"],
         security_lab_runner=infrastructure["security_lab_runner"],
     )
-    bind_mcp_sampling_executor(infrastructure["tools"], agent)
-    gateway = build_gateway_service(
-        agent_service=agent,
-        profile_name=default_agent.name,
-        config=infrastructure["default_config"],
-        channels=infrastructure["channels"],
-        sessions=runtime_storage.sessions,
-        idempotency=runtime_storage.idempotency,
-        security_policy=infrastructure["agent_security_policy"],
-        channel_authenticity_policy=infrastructure["channel_authenticity_policy"],
-        config_path=paths.config,
-        storage_path=paths.storage,
-        memory_root=paths.memory,
-        home_root=paths.home,
-        data_root=paths.data,
-        logger=logger,
-        config_manager=manager,
-        session_context=infrastructure["session_context"],
-        agent_memory=infrastructure["agent_memory"],
-        knowledge_graphs=infrastructure["knowledge_graphs"],
-        retrieve_ctl=infrastructure["retrieve_ctl"],
-    )
+    try:
+        bind_mcp_sampling_executor(infrastructure["tools"], agent)
+        gateway = build_gateway_service(
+            agent_service=agent,
+            profile_name=default_agent.name,
+            config=infrastructure["default_config"],
+            channels=infrastructure["channels"],
+            sessions=runtime_storage.sessions,
+            idempotency=runtime_storage.idempotency,
+            security_policy=infrastructure["agent_security_policy"],
+            channel_authenticity_policy=infrastructure["channel_authenticity_policy"],
+            config_path=paths.config,
+            storage_path=paths.storage,
+            memory_root=paths.memory,
+            home_root=paths.home,
+            data_root=paths.data,
+            logger=logger,
+            config_manager=manager,
+            session_context=infrastructure["session_context"],
+            agent_memory=infrastructure["agent_memory"],
+            knowledge_graphs=infrastructure["knowledge_graphs"],
+            retrieve_ctl=infrastructure["retrieve_ctl"],
+        )
+    except BaseException:
+        # The agent is still this function's: close it and keep the error.
+        close_runtime_infrastructure({}, agent=agent)
+        raise
     return agent, gateway, runtime_mode, fallback_reason
 
 
@@ -108,69 +115,80 @@ def finalize_runtime_instance(
     effective_run_profile_overrides: RunProfileOverrides,
 ) -> Any:
     runtime_storage = cast(Any, infrastructure["runtime_storage"])
-    runtime = cls(
-        config=base_config,
-        config_path=paths.config,
-        home_root=paths.home,
-        data_root=paths.data,
-        storage_path=paths.storage,
-        memory_root=paths.memory,
-        tool_workspace_root=(
-            Path(base_config.runtime.tool_workspace_root).expanduser()
-            if base_config.runtime.tool_workspace_root
-            else None
-        ),
-        telemetry_service=infrastructure["telemetry_service"],
-        telemetryctl=infrastructure.get("telemetryctl"),
-        runtime_storage=runtime_storage,
-        storage_connection=(
-            runtime_storage.connection
-            if base_config.storage.record_backend() == "record.sqlite"
-            else None
-        ),
-        sessions=runtime_storage.sessions,
-        idempotency=runtime_storage.idempotency,
-        channels=infrastructure["channels"],
-        channel_supervisor=infrastructure.get("channel_supervisor"),
-        plugins=infrastructure["plugins"],
-        logger=infrastructure["logger"],
-        provider=infrastructure["provider"],
-        llm_runtime=infrastructure["llm_runtime"],
-        tools=infrastructure["tools"],
-        security_policy=infrastructure["agent_security_policy"],
-        self_improvement=infrastructure["self_improvement"],
-        agent=agent,
-        gateway=gateway,
-        memory_queries=infrastructure["agent_memory"],
-        runtime_memory_assembly=infrastructure["runtime_memory_assembly"],
-        action_policy=infrastructure["action_policy"],
-        retrieve_ctl=infrastructure["retrieve_ctl"],
-        knowledge_graphs=infrastructure["knowledge_graphs"],
-        sandbox_runner=infrastructure["sandbox_runner"],
-        security_lab_runner=infrastructure["security_lab_runner"],
-        authored_tools=infrastructure["authored_tools"],
-        ops_service=infrastructure.get("ops_service"),
-        runtime_manager=None,
-        config_manager=manager,
-        _agent_services={},
-        _gateways={},
-        _memory_assemblies={},
-        run_profile_overrides=effective_run_profile_overrides,
-    )
-    runtime._runtime_mode = runtime_mode
-    runtime._brain_bridge_active = runtime_mode == "brain"
-    runtime._last_bridge_fallback_reason = fallback_reason
-    runtime.runtime_manager = build_runtime_manager(runtime)
-    runtime._bind_runtime_handle(agent, runtime)
+    try:
+        runtime = cls(
+            config=base_config,
+            config_path=paths.config,
+            home_root=paths.home,
+            data_root=paths.data,
+            storage_path=paths.storage,
+            memory_root=paths.memory,
+            tool_workspace_root=(
+                Path(base_config.runtime.tool_workspace_root).expanduser()
+                if base_config.runtime.tool_workspace_root
+                else None
+            ),
+            telemetry_service=infrastructure["telemetry_service"],
+            telemetryctl=infrastructure.get("telemetryctl"),
+            runtime_storage=runtime_storage,
+            storage_connection=(
+                runtime_storage.connection
+                if base_config.storage.record_backend() == "record.sqlite"
+                else None
+            ),
+            sessions=runtime_storage.sessions,
+            idempotency=runtime_storage.idempotency,
+            channels=infrastructure["channels"],
+            channel_supervisor=infrastructure.get("channel_supervisor"),
+            plugins=infrastructure["plugins"],
+            logger=infrastructure["logger"],
+            provider=infrastructure["provider"],
+            llm_runtime=infrastructure["llm_runtime"],
+            tools=infrastructure["tools"],
+            security_policy=infrastructure["agent_security_policy"],
+            self_improvement=infrastructure["self_improvement"],
+            agent=agent,
+            gateway=gateway,
+            memory_queries=infrastructure["agent_memory"],
+            runtime_memory_assembly=infrastructure["runtime_memory_assembly"],
+            action_policy=infrastructure["action_policy"],
+            retrieve_ctl=infrastructure["retrieve_ctl"],
+            knowledge_graphs=infrastructure["knowledge_graphs"],
+            sandbox_runner=infrastructure["sandbox_runner"],
+            security_lab_runner=infrastructure["security_lab_runner"],
+            authored_tools=infrastructure["authored_tools"],
+            ops_service=infrastructure.get("ops_service"),
+            runtime_manager=None,
+            config_manager=manager,
+            _agent_services={},
+            _gateways={},
+            _memory_assemblies={},
+            run_profile_overrides=effective_run_profile_overrides,
+        )
+    except BaseException:
+        # No runtime object owns them: close what the start built, no runtime close.
+        close_runtime_infrastructure(infrastructure, agent=agent, gateway=gateway)
+        raise
     cache_key = runtime._runtime_cache_key(
         agent_name=cast(AgentProfileConfig, infrastructure["default_agent"]).name,
         overrides=effective_run_profile_overrides,
     )
+    # From here the runtime owns them, so its close() closes them on a failure.
     runtime._agent_services[cache_key] = agent
     runtime._gateways[cache_key] = gateway
     runtime._memory_assemblies[cache_key] = infrastructure["runtime_memory_assembly"]
-    runtime._agent_runtime_modes[cache_key] = runtime_mode
-    runtime._agent_runtime_fallback_reasons[cache_key] = fallback_reason
+    try:
+        runtime._runtime_mode = runtime_mode
+        runtime._brain_bridge_active = runtime_mode == "brain"
+        runtime._last_bridge_fallback_reason = fallback_reason
+        runtime.runtime_manager = build_runtime_manager(runtime)
+        runtime._bind_runtime_handle(agent, runtime)
+        runtime._agent_runtime_modes[cache_key] = runtime_mode
+        runtime._agent_runtime_fallback_reasons[cache_key] = fallback_reason
+    except BaseException:
+        with suppress(Exception):
+            runtime.close()
+        raise
     return runtime
 
 
@@ -231,11 +249,15 @@ class RuntimeBootstrapMixin:
             disable_security_policy=security_policy_disabled,
             logging_mode=logging_mode,
         )
-        agent, gateway, mode, fallback = build_default_runtime_stack(
-            manager=manager,
-            paths=paths,
-            infrastructure=infrastructure,
-        )
+        try:
+            agent, gateway, mode, fallback = build_default_runtime_stack(
+                manager=manager,
+                paths=paths,
+                infrastructure=infrastructure,
+            )
+        except BaseException:
+            close_runtime_infrastructure(infrastructure)
+            raise
         return finalize_runtime_instance(
             cls=cls,
             base_config=base_config,

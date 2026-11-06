@@ -78,6 +78,7 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
     SlashCommandMetadata(
         "/resume", "Resume a prior session with messages", ("/resume",)
     ),
+    SlashCommandMetadata("/rename", "Rename the current session", ("/rename <name>",)),
     SlashCommandMetadata(
         "/agents",
         "List configured agents or filter by exact ID or label",

@@ -42,6 +42,49 @@ the parent submits it to the canonical candidate review and promotion flow.
 Cancellation and revocation block subsequent operations but cannot retract
 context already delivered to a running model.
 
+## Turn capture authorization
+
+A runtime turn's own memory capture, the auto fact extraction of the user
+message and the capture bundle written when the turn ends, needs the agent's
+`memory.write` authorization. The brain bridge asks once per turn, before the
+brain runs, with `memory_capture_allowed` in
+`openminion.modules.policy.adapters.memory`. It is the check that
+pending-capture recovery makes with `memory_capture_recovery_allowed`: the
+same internal actor, without the configured `internal_actor_scopes`, and the
+same `memory.write` tool profile, with the turn's channel, the target
+`memory-capture`, and the turn's runtime session and root turn, where recovery
+uses the `cron` channel and the target `memory-capture-recovery`. Without a
+security policy the capture is allowed; with a policy and no tool registry it
+is not.
+
+When the decision is not `allow`, including `require_approval` from an
+identity hard constraint such as `NEVER write memory records`, the turn makes
+no extraction request, writes no candidate, receipt or `memory.capture.result`,
+and asks no approval for its capture. Its reply is unchanged, and its capture
+intent stays pending with `"error_code": "CAPTURE_RECOVERY_UNAUTHORIZED"` in
+`memory_capture_bundle_result`. Pending-capture recovery asks its own check
+before it extracts, so it commits the intent once the write is allowed. A turn
+whose capture is excluded or disabled makes no extraction request.
+
+The bridge asks on every turn, including excluded (scheduled consolidation)
+and disabled (diagnostic) turns, and keeps the answer on the runner. Two
+optional writes the brain makes for itself during the turn need it too: the
+`decision` record of the turn's routing decision (`write_decision_memory`) and
+the `tool_outcome` candidate staged for a tool call's outcome
+(`_stage_tool_outcome_candidate`). When the answer is not `allow`, the decision
+record is skipped with `brain.decision_memory.skipped`
+(`memory_write_not_authorized`), no candidate is staged, and nothing is kept
+pending. The working state keeps the decision metadata. The turn's own capture
+is authorized only when the answer is `allow` and its capture is neither
+excluded nor disabled. A `BrainRunner` used without the service keeps both
+writes. Whatever the answer, no `tool_outcome` candidate is staged for an
+outcome classified as `policy_denied`. That category holds every ask-user
+command returned for a tool call, such as the user's denial, a pending
+confirmation or a policy denial, and every tool result with status
+`needs_user` or `blocked`, which includes a tool that ran and returned
+`requires_user_takeover`. Failure, timeout and allowlisted success outcomes
+are staged as before.
+
 ## Backend options
 
 Under the top-level `runtime.memory_provider=memory_v2` seam, OpenMinion
