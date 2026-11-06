@@ -7,6 +7,11 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `daemon start` now reports a child that exited before answering separately from a
+  live timeout: the observed exit code, the requested endpoint and the log path (or
+  that no log file was written), instead of always blaming a health timeout
+  (Refs #617).
+
 - Scope synchronous A2A retries by the declared sender, destination, method,
   and session. Reusing a key with different arguments returns
   `IDEMPOTENCY_CONFLICT` (HTTP 409). Matching legacy call records also return
