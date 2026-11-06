@@ -372,6 +372,8 @@ def test_answer_only_retry_does_not_dispatch_requested_tool_or_reconsume_steerin
     CodingReserveMixin._restore_answer_only_state_if_needed(reserve, enabled=True)
     _assert_applied_once(ctx, result.state.messages, corrections)
     assert len(ctx.commands) == 1
-    expected_text = "file.read: Read sales.txt" if retry_attempts_read else PARTIAL
-    assert expected_text in result.final_text
+    if retry_attempts_read:
+        assert "file.read: Read sales.txt" in result.final_text
+    else:
+        assert result.final_text == PARTIAL
     assert result.termination_reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
