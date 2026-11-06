@@ -389,16 +389,12 @@ class TurnInputQueue:
         target_trace_id: str,
     ) -> list[TurnInputQueueEntry]:
         """Return steering in application order, independent of queue moves."""
-        normalized_session_id = _require_non_empty(session_id, "session_id")
-        normalized_agent_id = _require_non_empty(agent_id, "agent_id")
-        normalized_trace_id = _require_non_empty(target_trace_id, "target_trace_id")
+        scope = (session_id.strip(), agent_id.strip(), target_trace_id.strip())
         with self._lock:
             return [
                 entry
                 for entry in self._completed_steering.values()
-                if entry.session_id == normalized_session_id
-                and entry.agent_id == normalized_agent_id
-                and entry.target_trace_id == normalized_trace_id
+                if (entry.session_id, entry.agent_id, entry.target_trace_id) == scope
             ]
 
     def complete_steering(
