@@ -11,6 +11,7 @@ from typing import Any, Iterable, Iterator, cast
 import warnings
 
 from openminion.modules.storage.interfaces import STORAGE_INTERFACE_VERSION
+from openminion.modules.storage.io import ensure_private_directory
 from openminion.modules.storage.telemetry import (
     NoopStorageTelemetryHook,
     StorageTelemetryHook,
@@ -300,7 +301,7 @@ class RecordStoreSQLite(RecordStore):
         self.sqlite_path = resolved_path or Path(":memory:")
         self._is_memory = resolved_path is None
         if resolved_path is not None and not read_only:
-            resolved_path.parent.mkdir(parents=True, exist_ok=True)
+            ensure_private_directory(resolved_path.parent)
         self._lock = threading.RLock()
         self._in_tx = False
         self._last_error: str | None = None

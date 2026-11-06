@@ -4,7 +4,6 @@ import threading
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from openminion.modules.storage.record_store import RecordStore, RecordStoreSQLite
 from openminion.modules.storage.migrations.metadata import (
     ensure_module_metadata_via_store,
     ensure_module_metadata_for_package,
@@ -13,6 +12,7 @@ from openminion.modules.storage.migrations.module_ids import (
     module_id_from_package,
     schema_head_from_migrations,
 )
+from openminion.modules.storage.record_store import RecordStore, RecordStoreSQLite
 
 
 class BaseModuleStore(ABC):
@@ -69,8 +69,6 @@ class BaseModuleSQLiteStore(BaseModuleStore):
             else:
                 resolved = Path(sqlite_path).expanduser().resolve(strict=False)
                 self.sqlite_path = resolved
-                if not read_only:
-                    resolved.parent.mkdir(parents=True, exist_ok=True)
                 self._record_store = RecordStoreSQLite(
                     resolved,
                     wal=wal,
