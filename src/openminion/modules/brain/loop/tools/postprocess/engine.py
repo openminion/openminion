@@ -232,6 +232,14 @@ class AdaptiveLoopRunnerPostprocessMixin(
         self.loop_state.scratchpad[
             "tool_choice_none_compact_answer_only_retry_used"
         ] = True
+        emit_adaptive_status(
+            self.loop_ctx,
+            profile=self.profile,
+            loop_state=self.loop_state,
+            detail_text=f"{self.public_mode_tag} compact answer-only closeout",
+            mode_state="answer_only_compact_closeout",
+        )
+        self.loop_ctx.apply_turn_steering(self.loop_state.messages)
         finalization_messages = _answer_only_finalization_messages(
             loop_ctx=self.loop_ctx,
             loop_state=self.loop_state,
@@ -241,13 +249,6 @@ class AdaptiveLoopRunnerPostprocessMixin(
                 "Do not call more tools. Use only the successful tool evidence "
                 "already gathered and return the final user-facing answer now."
             ),
-        )
-        emit_adaptive_status(
-            self.loop_ctx,
-            profile=self.profile,
-            loop_state=self.loop_state,
-            detail_text=f"{self.public_mode_tag} compact answer-only closeout",
-            mode_state="answer_only_compact_closeout",
         )
         try:
             response = self.runtime.complete(

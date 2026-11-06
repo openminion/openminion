@@ -659,7 +659,6 @@ def _force_budget_answer_only_finalization(
         loop_ctx=loop_ctx,
         loop_state=loop_state,
         tool_results=_substantive_tool_results(loop_state),
-        preserve_turn_steering=True,
         reason=(
             "The tool budget or a per-tool limit has been reached. Do not call "
             "more tools. This must be the final answer for the current turn."
@@ -789,23 +788,20 @@ def _answer_only_finalization_messages(
     loop_state: AdaptiveToolLoopState,
     tool_results: list[dict[str, Any]],
     reason: str,
-    preserve_turn_steering: bool = False,
 ) -> list[Message]:
-    request_messages = loop_state.messages
+    request_messages: list[Message] = []
     steering_messages: list[Message] = []
-    if preserve_turn_steering:
-        trace_id = str(loop_ctx.state.trace_id or "").strip()
-        request_messages = []
-        for message in loop_state.messages:
-            if not message.meta.get("turn_input_queue_id"):
-                request_messages.append(message)
-            elif (
-                trace_id
-                and message.role == "user"
-                and message.meta.get("turn_input_intent") == "steer_current"
-                and message.meta.get("target_trace_id") == trace_id
-            ):
-                steering_messages.append(message)
+    trace_id = str(loop_ctx.state.trace_id or "").strip()
+    for message in loop_state.messages:
+        if not message.meta.get("turn_input_queue_id"):
+            request_messages.append(message)
+        elif (
+            trace_id
+            and message.role == "user"
+            and message.meta.get("turn_input_intent") == "steer_current"
+            and message.meta.get("target_trace_id") == trace_id
+        ):
+            steering_messages.append(message)
 
     original_request = _budget_finalization_original_request(loop_ctx)
     if not original_request:
@@ -891,11 +887,6 @@ def _force_circular_pattern_answer_only_finalization(
     if not tool_results:
         return None
     loop_state.scratchpad["circular_pattern_answer_only_finalization_forced"] = True
-    finalization_messages = _circular_answer_only_messages(
-        loop_ctx=loop_ctx,
-        loop_state=loop_state,
-        tool_results=tool_results,
-    )
     emit_adaptive_status(
         loop_ctx,
         profile=profile,
@@ -904,6 +895,16 @@ def _force_circular_pattern_answer_only_finalization(
         mode_state="circular_pattern_answer_only_finalization",
     )
     for attempt in range(2):
+        loop_ctx.apply_turn_steering(loop_state.messages)
+        finalization_messages = _circular_answer_only_messages(
+            loop_ctx=loop_ctx,
+            loop_state=loop_state,
+            tool_results=tool_results,
+        )
+        if attempt:
+            finalization_messages.append(
+                Message(role="system", content=EMPTY_FINALIZATION_RETRY_PROMPT)
+            )
         try:
             response = runtime.complete(
                 messages=finalization_messages,
@@ -934,9 +935,6 @@ def _force_circular_pattern_answer_only_finalization(
                 "Circular finalization recovery exceeded budget",
                 code="EMPTY_PROVIDER_RESPONSE",
             )
-        finalization_messages.append(
-            Message(role="system", content=EMPTY_FINALIZATION_RETRY_PROMPT)
-        )
     for assistant_message in list(getattr(response, "assistant_messages", []) or []):
         loop_state.messages.append(assistant_message)
     if list(getattr(response, "tool_calls", []) or []):

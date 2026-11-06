@@ -1,7 +1,7 @@
 # OpenMinion Pre-Authoring Code Simplicity and Readability
 
 Status: active
-Last updated: 2026-09-06
+Last updated: 2026-11-06
 
 Purpose: give contributors a package-local summary of how to write simpler,
 more readable OpenMinion code from the start so less cleanup is needed later.
@@ -30,6 +30,13 @@ Use this minimum useful code ladder before adding custom structure:
 
 This is "lazy, not careless": fewer lines are good only when the result is
 easier to read and just as correct.
+
+Apply the [minimum usable code rule](../CODE_QUALITY.md#minimum-usable-code)
+to actual callers and supported failures. Do not add speculative modes,
+duplicate internal validation, silent fallbacks or retries without a recovery
+contract. The same rule governs review of existing code; the
+[cleanup and review requirements](../CODE_QUALITY.md#8-for-broad-cleanup-work-start-from-the-live-file-list)
+define the evidence needed before calling a sweep complete.
 
 ## Prefer
 

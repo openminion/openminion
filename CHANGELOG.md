@@ -1,7 +1,7 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-11-05
+Last updated: 2026-11-06
 
 This file tracks package-facing release notes for `openminion`.
 
@@ -12,6 +12,11 @@ This file tracks package-facing release notes for `openminion`.
   `IDEMPOTENCY_CONFLICT` (HTTP 409). Matching legacy call records also return
   a conflict because they lack the sender and argument binding. The handler
   is not dispatched in either case (Refs #670).
+
+## Current package line - 2026-11-06
+
+- Carry user corrections into the final answer and retries when the agent
+  detects repeated tool calls (Refs #660).
 
 - Document the handoff approval pause in `examples/sdk/delegation.py` and the
   SDK examples README. A handoff without an `approval_callback` returns the
