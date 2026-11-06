@@ -11,6 +11,11 @@ This file tracks package-facing release notes for `openminion`.
   budget runs out. Apply corrections in order and preserve unchanged request
   requirements (Refs #659).
 
+- Keep synchronous A2A call reservations exclusive even after they age past
+  the recovery threshold. A repeated key returns `OUTCOME_UNKNOWN` when an old
+  reservation has no receipt or the result could not be published. Reconcile
+  the downstream effect before reissuing the call with a new key.
+
 - Recover one identical transient safe read and one guarded file overwrite after
   a contradictory complete readback. Preserve duplicate suppression after a
   successful write with LF, CRLF or CR content, recheck permissions and budgets,
