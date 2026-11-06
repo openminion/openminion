@@ -1,11 +1,13 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-11-05
+Last updated: 2026-11-06
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
+
+## Current package line - 2026-11-06
 
 - Document the handoff approval pause in `examples/sdk/delegation.py` and the
   SDK examples README. A handoff without an `approval_callback` returns the
