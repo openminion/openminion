@@ -1,11 +1,13 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-11-05
+Last updated: 2026-11-06
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
+
+## Current package line - 2026-11-06
 
 - Carry user corrections into the final answer and retries when the agent
   detects repeated tool calls (Refs #660).
