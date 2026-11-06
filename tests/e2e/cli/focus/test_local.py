@@ -223,6 +223,10 @@ def test_focus_full_slash_menu_preserves_visible_transcript(
 def test_focus_submitted_input_remains_top_down_after_slash_menu(
     focus_probe: FocusProbe,
 ) -> None:
+    # Empty-startup layout controls exclude repository-specific context notices.
+    focus_probe = focus_probe.for_workdir(
+        focus_probe.openminion_root, include_project_context=False
+    )
     with focus_probe.session(rows=53, cols=153) as session:
         focus_probe.wait_ready(session)
         session.send("/")
@@ -636,7 +640,6 @@ def test_focus_pty_survives_resize_after_launch(
 def test_focus_pty_keeps_top_down_transcript_with_inline_input_across_resize(
     focus_probe: FocusProbe,
 ) -> None:
-    # This empty-startup layout control excludes project-context notices.
     focus_probe = focus_probe.for_workdir(
         focus_probe.openminion_root, include_project_context=False
     )
@@ -879,6 +882,9 @@ def test_focus_pty_long_paste_keeps_transcript_top_down_and_composer_inline(
     focus_probe: FocusProbe,
     part_count: int,
 ) -> None:
+    focus_probe = focus_probe.for_workdir(
+        focus_probe.openminion_root, include_project_context=False
+    )
     prompt = " ".join(
         ["A long request with several paragraphs follows."]
         + [
