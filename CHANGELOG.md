@@ -7,6 +7,10 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- The legacy `POST /turns` route now answers a session that already has a live turn
+  with the same retryable `409 SESSION_TURN_BUSY` contract as `POST /v1/turn`,
+  including the lease's `retry_after_s`, `active_owner` and `expires_at` (Refs #676).
+
 ## Current package line - 2026-11-06
 
 - Carry user corrections into the final answer and retries when the agent

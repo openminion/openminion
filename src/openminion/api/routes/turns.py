@@ -23,6 +23,7 @@ from .contracts import (
     error_route_result,
     json_body_required_route_result,
     runtime_unavailable_route_result,
+    session_turn_busy_route_result,
 )
 
 
@@ -124,6 +125,8 @@ def _handle_legacy_turn_request(
             retry_after_ms=1000,
         )
     except Exception as exc:  # noqa: BLE001
+        if getattr(exc, "code", "") == "SESSION_TURN_BUSY":
+            return session_turn_busy_route_result(path=path, exc=exc)
         return exception_route_result(
             HTTPStatus.INTERNAL_SERVER_ERROR,
             code="turn_failed",
@@ -250,15 +253,7 @@ def _handle_v1_turn(
         )
     except RuntimeError as exc:
         if getattr(exc, "code", "") == "SESSION_TURN_BUSY":
-            retry_after_ms = max(1000, int(getattr(exc, "retry_after_s", 1)) * 1000)
-            return error_route_result(
-                HTTPStatus.CONFLICT,
-                code="SESSION_TURN_BUSY",
-                message=str(exc),
-                details={"path": path, "retry_after_s": retry_after_ms // 1000},
-                retryable=True,
-                retry_after_ms=retry_after_ms,
-            )
+            return session_turn_busy_route_result(path=path, exc=exc)
         return error_route_result(
             HTTPStatus.SERVICE_UNAVAILABLE,
             code="runtime_unavailable",

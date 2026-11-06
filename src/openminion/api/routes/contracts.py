@@ -105,3 +105,25 @@ def json_body_required_route_result(
         session_id=session_id,
         run_id=run_id,
     )
+
+
+def session_turn_busy_route_result(*, path: str, exc: BaseException) -> RouteResult:
+    """409 for a session that already has a live turn, with its retry window.
+
+    Both ``POST /v1/turn`` and the legacy ``POST /turns`` answer the same way, and the
+    lease's ``active_owner``/``expires_at`` are surfaced instead of discarded.
+    """
+    retry_after_s = max(1, int(getattr(exc, "retry_after_s", 1) or 1))
+    return error_route_result(
+        HTTPStatus.CONFLICT,
+        code="SESSION_TURN_BUSY",
+        message=str(exc),
+        details={
+            "path": path,
+            "retry_after_s": retry_after_s,
+            "active_owner": str(getattr(exc, "active_owner", "") or ""),
+            "expires_at": str(getattr(exc, "expires_at", "") or ""),
+        },
+        retryable=True,
+        retry_after_ms=retry_after_s * 1000,
+    )
