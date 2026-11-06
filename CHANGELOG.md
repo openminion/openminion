@@ -7,6 +7,10 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Carry user corrections into the answer and any answer-only retry when the tool
+  budget runs out. Apply corrections in order and preserve unchanged request
+  requirements (Refs #659).
+
 - Keep synchronous A2A call reservations exclusive even after they age past
   the recovery threshold. A repeated key returns `OUTCOME_UNKNOWN` when an old
   reservation has no receipt or the result could not be published. Reconcile
