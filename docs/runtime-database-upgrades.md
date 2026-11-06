@@ -318,8 +318,10 @@ COMMIT;
 ```
 
 Compare the row counts of each pair of tables, and keep `a2a_hold` until
-the copy is verified. These statements are for the A2A tables at
-`0005_job_idempotency_scope`; for an earlier revision the parked tables can
+the copy is verified. These statements copy the historical A2A tables at
+`0005_job_idempotency_scope` into the current A2A schema. The historical
+layout leaves the runtime-owned `public.idempotency_keys` in place. For an
+earlier A2A revision the parked tables can
 lack columns that the copy lists, and the copy stops. Then restore the dump
 instead. With several modules behind one ledger, park them together and copy
 each one.
