@@ -244,7 +244,6 @@ class AdaptiveLoopRunnerPostprocessMixin(
             loop_ctx=self.loop_ctx,
             loop_state=self.loop_state,
             tool_results=tool_results,
-            preserve_turn_steering=True,
             reason=(
                 "The previous answer-only closeout still returned tool calls. "
                 "Do not call more tools. Use only the successful tool evidence "

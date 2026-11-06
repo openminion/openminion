@@ -277,7 +277,6 @@ def _duplicate_batch_answer_only_messages(
         loop_ctx=loop_ctx,
         loop_state=loop_state,
         tool_results=tool_results,
-        preserve_turn_steering=True,
         reason=(
             "You have repeated an identical successful tool batch. Do not call "
             "more tools. This must be the final answer for the current turn."
