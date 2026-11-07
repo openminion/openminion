@@ -926,9 +926,9 @@ def decide(
             logger=logger,
             llm_call_id=llm_call_id,
         )
-        if recovered_decision is not None:
-            return recovered_decision
-        return decision
+        if recovered_decision is None:
+            decision._entry_response = response
+        return recovered_decision or decision
     if state.tier == "T0_direct":
         return _tier_0_restriction_decision(
             logger=logger,

@@ -28,6 +28,8 @@ class ExecutionResult:
     action_result: ActionResult | None = None
     judgment: ClosureJudgment | None = None
     kind: RespondKindLiteral = RESPOND_KIND_ASSISTANT
+    # In-process only, never serialized: the accepted answer's termination.
+    accepted_finish_reason: str = ""
 
     @classmethod
     def from_step_output(
@@ -51,10 +53,11 @@ class ExecutionResult:
             action_result=output.action_result,
             judgment=judgment,
             kind=kind,
+            accepted_finish_reason=getattr(output, "_accepted_finish_reason", ""),
         )
 
     def to_step_output(self) -> StepOutput:
-        return StepOutput(
+        output = StepOutput(
             session_id=self.working_state.session_id,
             status="error" if self.status == "failed" else self.status,
             message=self.message,
@@ -62,6 +65,8 @@ class ExecutionResult:
             action_result=self.action_result,
             kind=self.kind,
         )
+        output._accepted_finish_reason = self.accepted_finish_reason
+        return output
 
 
 @dataclass(slots=True)
@@ -127,15 +132,19 @@ class ExecutionContext:
         status: str,
         action_result: ActionResult | None = None,
         kind: RespondKindLiteral = RESPOND_KIND_ASSISTANT,
+        accepted_finish_reason: str = "",
     ) -> StepOutput:
-        return self._services.respond_with_meta(
-            state=state or self.state,
-            logger=self.logger,
-            message=message,
-            status=status,
-            action_result=action_result,
-            kind=kind,
-        )
+        options: dict[str, Any] = {
+            "state": state or self.state,
+            "logger": self.logger,
+            "message": message,
+            "status": status,
+            "action_result": action_result,
+            "kind": kind,
+        }
+        if accepted_finish_reason:
+            options["accepted_finish_reason"] = accepted_finish_reason
+        return self._services.respond_with_meta(**options)
 
     def direct_response(
         self,

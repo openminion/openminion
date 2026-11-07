@@ -356,9 +356,13 @@ def respond_with_meta(
     status: str,
     action_result: ActionResult | None = None,
     kind: RespondKindLiteral = RESPOND_KIND_ASSISTANT,
+    accepted_finish_reason: str = "",
 ) -> StepOutput:
     final_message = message
     final_status = status
+    # Any substitution, even byte-identical text, means the turn no longer answers
+    # with the accepted response, so its termination must not be reported.
+    replaced_answer = False
 
     meta_before_respond = evaluate_meta(
         runner,
@@ -378,6 +382,7 @@ def respond_with_meta(
             meta_state=meta_before_respond.meta_state.value,
         )
         if directive.override_next_state == "STOPPED":
+            replaced_answer = True
             final_status = BRAIN_STATE_STOPPED
             final_message = (
                 directive.note_to_user
@@ -386,6 +391,7 @@ def respond_with_meta(
         elif (
             status != BRAIN_STATE_STOPPED and directive.override_next_state == "WAITING"
         ):
+            replaced_answer = True
             final_status = BRAIN_STATE_WAITING_USER
             final_message = (
                 directive.escalation_question or directive.note_to_user or final_message
@@ -395,14 +401,16 @@ def respond_with_meta(
             and directive.override_next_state == "RESPOND"
             and directive.note_to_user
         ):
+            replaced_answer = True
             final_message = directive.note_to_user
         elif directive.note_to_user and directive.note_to_user not in final_message:
+            replaced_answer = True
             final_message = f"{directive.note_to_user}\n{final_message}"
 
     if status == BRAIN_STATE_STOPPED:
         final_status = BRAIN_STATE_STOPPED
 
-    return runner._respond(
+    step_output = runner._respond(
         state=state,
         logger=logger,
         message=final_message,
@@ -410,6 +418,9 @@ def respond_with_meta(
         action_result=action_result,
         kind=kind,
     )
+    if not replaced_answer:
+        step_output._accepted_finish_reason = str(accepted_finish_reason or "").strip()
+    return step_output
 
 
 def meta_tool_restriction_reason(
