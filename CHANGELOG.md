@@ -7,6 +7,14 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- A malformed MCP `tools/call` arguments value is no longer treated as an omitted
+  one: only an absent field defaults to an empty object, so a supplied `null`, `false`,
+  `0`, `""` or `[]` now returns `-32602` without invoking the tool instead of running it
+  as if nothing had been passed. Omitted and empty-object calls, and the separation
+  between invalid requests and tool-level failures, are unchanged (Refs #658).
+
+
+
 - A truncated tool result now tells the model that its output is partial: the tool
   message carries `truncated`, `returned_length` and `total_length` when the result was
   actually truncated, and carries nothing extra otherwise (Refs #675).
