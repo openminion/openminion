@@ -7,6 +7,13 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Memory retrieval honours `expires_at`: search, listing and entity lookups skip
+  expired records instead of serving them until someone runs `memory gc`, on both
+  SQLite and PostgreSQL. Expiry is compared as an instant, so a stored
+  `+14:00`/`-12:00` offset does not by itself change readability. Stored values are
+  written exactly as the caller supplied them; the read side is what interprets them
+  (Refs #677).
+
 - A truncated tool result now tells the model that its output is partial: the tool
   message carries `truncated`, `returned_length` and `total_length` when the result was
   actually truncated, and carries nothing extra otherwise (Refs #675).
