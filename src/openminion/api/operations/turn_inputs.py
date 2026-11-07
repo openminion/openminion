@@ -1,5 +1,6 @@
 """Turn-input queue API operations."""
 
+import logging
 from http import HTTPStatus
 from typing import Any, cast
 from urllib.parse import parse_qs
@@ -88,6 +89,7 @@ def _append_turn_input_event(
     event_payload = dict(payload or {})
     if entry is not None:
         event_payload.update(entry.event_payload())
+    queue_id = str(event_payload.get("queue_id") or "")
     try:
         append_session_event(
             config_path=ctx.config_path,
@@ -96,8 +98,17 @@ def _append_turn_input_event(
             payload=event_payload,
             runtime=runtime,
         )
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001
+        # The queue mutation already succeeded, so this cannot be raised as a route
+        # failure. Only bounded facts are logged: the exception text and traceback are
+        # not, because a writer error can carry the payload it failed to write.
+        logging.getLogger("openminion.api").warning(
+            "turn input audit event %s was not recorded for queue %s in session %s (%s)",
+            event_type,
+            queue_id,
+            session_id,
+            type(exc).__name__,
+        )
 
 
 def _resolve_runtime_for_queue(
