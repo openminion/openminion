@@ -7,6 +7,15 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- A provider factory no longer substitutes `echo` when the config names no usable
+  default agent: a missing or unknown `default_agent` in a multi-agent catalog now
+  raises the canonical `UnknownProfileError` from `build_provider` and
+  `build_runtime_llm_handle` instead of silently building echo. A single-agent
+  catalog, an explicitly selected default and an echo agent keep working, and an
+  empty catalog still resolves to echo (Refs #650).
+
+
+
 - A truncated tool result now tells the model that its output is partial: the tool
   message carries `truncated`, `returned_length` and `total_length` when the result was
   actually truncated, and carries nothing extra otherwise (Refs #675).

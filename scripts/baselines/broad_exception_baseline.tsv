@@ -196,7 +196,7 @@ src/openminion/modules/llm/config.py	1	0	current broad-handler baseline; ratchet
 src/openminion/modules/llm/orchestration/service.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/llm/providers/bridge.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/llm/providers/cortensor/adapter.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/llm/providers/factory.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/modules/llm/providers/factory.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/llm/providers/normalization.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/llm/providers/openrouter/adapter.py	1	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/llm/providers/plugins.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
