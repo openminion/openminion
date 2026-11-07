@@ -406,6 +406,18 @@ def handle_plan_tool_call(
     )
 
 
+def _declared_criterion_ids(arguments: dict[str, Any]) -> Any:
+    """Pass a supplied value through so TaskPlan reports it as malformed.
+
+    The tool schema defaults an omitted field to ``[]``, so only an absent or
+    ``None`` value means "no criteria". A truthiness default here would turn an
+    explicitly supplied ``false`` or ``{}`` into an empty list, which the model
+    would accept as a valid declaration instead of rejecting.
+    """
+    value = arguments.get("criterion_ids")
+    return [] if value is None else value
+
+
 def _handle_declare(*, loop_ctx: Any, arguments: dict[str, Any]) -> ActionResult:
     plan = TaskPlan.model_validate(
         {
@@ -414,7 +426,7 @@ def _handle_declare(*, loop_ctx: Any, arguments: dict[str, Any]) -> ActionResult
             "workflow_id": arguments.get("workflow_id"),
             "workflow_version_hash": arguments.get("workflow_version_hash"),
             "root_goal_id": arguments.get("root_goal_id"),
-            "criterion_ids": arguments.get("criterion_ids") or [],
+            "criterion_ids": _declared_criterion_ids(arguments),
             "status": "active",
             "steps": arguments.get("steps") or [],
             "continue_plan_autonomously": bool(

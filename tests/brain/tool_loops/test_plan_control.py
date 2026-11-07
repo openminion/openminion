@@ -885,3 +885,53 @@ def test_plan_control_invalid_step_does_not_auto_revise_plan() -> None:
     assert "task_plan.revised" not in {
         event["event_type"] for event in session_api.events
     }
+
+
+@pytest.mark.parametrize("malformed", [False, {}])
+def test_a_malformed_criterion_list_is_rejected_not_defaulted(
+    malformed: object,
+) -> None:
+    """An explicit `false` or `{}` must reach validation, not become an empty list."""
+    session_api = _FakeSessionAPI()
+
+    result = handle_plan_tool_call(
+        loop_ctx=_Ctx(session_api=session_api),
+        arguments={
+            "action": "declare",
+            "plan_id": "plan-1",
+            "objective": "Research and summarize",
+            "criterion_ids": malformed,
+            "steps": _active_plan()["steps"],
+        },
+    )
+
+    assert result.status == "failed"
+    assert result.error is not None
+    assert result.error.code == "PLAN_VALIDATION_FAILED"
+    assert [event["event_type"] for event in session_api.events] == [
+        "task_plan.invalid_trailer"
+    ]
+
+
+@pytest.mark.parametrize("supplied", [None, []])
+def test_an_omitted_or_empty_criterion_list_still_declares(supplied: object) -> None:
+    """Omission and an explicit empty list keep declaring with no criteria."""
+    session_api = _FakeSessionAPI()
+    arguments = {
+        "action": "declare",
+        "plan_id": "plan-1",
+        "objective": "Research and summarize",
+        "steps": _active_plan()["steps"],
+    }
+    if supplied is not None:
+        arguments["criterion_ids"] = supplied
+
+    result = handle_plan_tool_call(
+        loop_ctx=_Ctx(session_api=session_api), arguments=arguments
+    )
+
+    assert result.status == "success"
+    assert result.outputs["task_plan"]["criterion_ids"] == []
+    assert [event["event_type"] for event in session_api.events] == [
+        "task_plan.declared"
+    ]
