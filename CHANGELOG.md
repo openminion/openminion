@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Give the first-run missing-config error a next step: `run`, `doctor` and `tools`
+  now point at `openminion config init --provider <name>` or `--config <path>`
+  instead of printing a bare path. The message, the exit status and the stream are
+  unchanged; only an absent config gains the extra line, and a malformed or
+  unreadable config keeps its own error (Refs #573).
+
 - A truncated tool result now tells the model that its output is partial: the tool
   message carries `truncated`, `returned_length` and `total_length` when the result was
   actually truncated, and carries nothing extra otherwise (Refs #675).
