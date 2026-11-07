@@ -7,6 +7,14 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- A dropped turn-input audit write is no longer silent: the queue mutation and its
+  accepted response are unchanged, and the failure is reported on the `openminion.api`
+  logger with the event kind, queue identifier, session and exception type only — the
+  exception text, traceback and entry payload are not logged, since a writer error can
+  carry the payload it failed to write (Refs #653).
+
+
+
 - A truncated tool result now tells the model that its output is partial: the tool
   message carries `truncated`, `returned_length` and `total_length` when the result was
   actually truncated, and carries nothing extra otherwise (Refs #675).
