@@ -144,6 +144,7 @@ def _respond_execute(ctx: ExecutionContext) -> ExecutionResult:
         )
 
     text = ctx.direct_response()
+    replaced = False
     status = BRAIN_STATE_DONE
     if respond_kind == BRAIN_RESPOND_KIND_CLARIFY:
         status = BRAIN_STATE_WAITING_USER
@@ -178,15 +179,19 @@ def _respond_execute(ctx: ExecutionContext) -> ExecutionResult:
         )
         if checked != text:
             text = checked
+            replaced = True
             if action_result is not None:
                 action_result = action_result.model_copy(update={"summary": text})
-    return ExecutionResult.from_step_output(
-        ctx.respond(
-            message=text,
-            status=status,
-            action_result=action_result,
-        )
+    accepted = getattr(ctx.decision, "_entry_response", None)
+    accepted_reason = str(getattr(accepted, "finish_reason", "") or "").strip()
+    step_output = ctx.respond(
+        message=text,
+        status=status,
+        action_result=action_result,
+        # A freshness rewrite means this answer is no longer the accepted one.
+        accepted_finish_reason="" if replaced else accepted_reason,
     )
+    return ExecutionResult.from_step_output(step_output)
 
 
 def _respond_owner(

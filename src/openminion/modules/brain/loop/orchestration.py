@@ -366,6 +366,12 @@ def _emit_decide_pre_call_status(
         _pre_call_emit(state=state, source_phase="DECIDE", payload=_pre_call_payload)
 
 
+def _accept_entry_response(decision: Any, response: Any) -> Any:
+    """Attach the entry response this decision answers with (transient, private)."""
+    decision._entry_response = response
+    return decision
+
+
 def decide(
     runner: Any,
     *,
@@ -928,7 +934,7 @@ def decide(
         )
         if recovered_decision is not None:
             return recovered_decision
-        return decision
+        return _accept_entry_response(decision, response)
     if state.tier == "T0_direct":
         return _tier_0_restriction_decision(
             logger=logger,
