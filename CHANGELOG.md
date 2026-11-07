@@ -7,6 +7,9 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- A dropped turn-input audit write is no longer silent: the queue mutation reports the
+  failure as a bounded warning while the enqueued input still succeeds (Refs #653).
+
 - `build_delegate_tool` now dumps Pydantic `BaseModel` outputs from `Handoff` target
   agents with `model_dump(mode="json")` so delegated structured results serialize cleanly
   in `ToolExecutionBatch.to_metadata_payload()` while leaving non-model outputs and run
