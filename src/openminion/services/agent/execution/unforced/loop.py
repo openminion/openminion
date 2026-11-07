@@ -250,7 +250,15 @@ async def handle_unforced_tool_calls(
     while state.step < max_steps:
         state.step += 1
         if not state.response.tool_calls:
-            break
+            return model_final_response(
+                runner,
+                deps=deps,
+                initial_response=state.initial_response,
+                response=state.response,
+                batch=state.last_batch,
+                intent_category=intent_category,
+                signature=state.signature,
+            )
         handled, terminal, signature = await _resolve_duplicate(
             runner,
             state=state,
