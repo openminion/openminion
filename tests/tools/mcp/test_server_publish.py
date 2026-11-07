@@ -727,7 +727,7 @@ def test_published_server_rejects_missing_or_unsupported_protocol_metadata(
     }
 
 
-def _counting_call(arguments: Any = ..., *, omit: bool = False) -> tuple[dict, int]:
+def _call_once(**extra: Any) -> tuple[dict, int]:
     calls = {"n": 0}
 
     def _handler(_: dict[str, Any]) -> dict[str, Any]:
@@ -740,9 +740,7 @@ def _counting_call(arguments: Any = ..., *, omit: bool = False) -> tuple[dict, i
         input_schema={"type": "object"},
         handler=_handler,
     )
-    params: dict[str, Any] = {**_modern_meta(), "name": "counted"}
-    if not omit:
-        params["arguments"] = arguments
+    params = {**_modern_meta(), "name": "counted", **extra}
     response = handle_published_mcp_request(
         [tool],
         {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params},
@@ -751,14 +749,14 @@ def _counting_call(arguments: Any = ..., *, omit: bool = False) -> tuple[dict, i
 
 
 def test_an_omitted_argument_object_still_invokes_the_tool() -> None:
-    response, invocations = _counting_call(omit=True)
+    response, invocations = _call_once()
 
     assert invocations == 1
     assert "result" in response
 
 
 def test_an_empty_argument_object_still_invokes_the_tool() -> None:
-    response, invocations = _counting_call({})
+    response, invocations = _call_once(arguments={})
 
     assert invocations == 1
     assert "result" in response
@@ -768,7 +766,7 @@ def test_an_empty_argument_object_still_invokes_the_tool() -> None:
 def test_a_supplied_malformed_argument_value_never_invokes_the_tool(
     malformed: Any,
 ) -> None:
-    response, invocations = _counting_call(malformed)
+    response, invocations = _call_once(arguments=malformed)
 
     assert invocations == 0
     assert response["error"]["code"] == -32602
