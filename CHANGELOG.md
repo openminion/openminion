@@ -7,6 +7,20 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Report failures that reach the terminal renderer as one scriptable line instead of a
+  traceback: exit 1 with an `INTERNAL_ERROR` envelope (`--json`) or a single stderr
+  line, and the verbose verbosity source — the flag, `OPENMINION_VERBOSITY` or the saved
+  preference — re-raises so the traceback stays available. `ConfigError`, `RuntimeError`
+  and `KeyError` keep their existing exit-2 handling at every verbosity, startup before
+  dispatch is unchanged, and programming errors such as `TypeError` keep their
+  traceback. SIGINT/SIGTERM cancel the
+  one-shot `run` command immediately (exit 130/143) instead of waiting for an in-flight
+  provider thread. The handlers belong to the process entry points — the `openminion`
+  console script and `python -m openminion` — so an imported `main()` never takes a
+  host's signals or its cleanup, even for `run` (Refs #629).
+
+
+
 - `daemon stop` now verifies the recorded PID before signalling it: the process must
   carry the exact `-m openminion.daemon serve` launch form with matching `--config`,
   `--pid-file`, `--host` and `--port`, and the PID file must still name it on a final
