@@ -266,8 +266,8 @@ class StorageConfig:
     path: str = str(DEFAULT_STORAGE_PATH)
     backend: str = "sqlite"
     postgres_url: str = ""
-    postgres_pool_min: int = 1
-    postgres_pool_max: int = 5
+    postgres_pool_min: int = 5
+    postgres_pool_max: int = 15
 
     def __post_init__(self) -> None:
         allowed = {"sqlite", "postgres"}
@@ -284,13 +284,13 @@ class StorageConfig:
         return "record.postgres" if self.backend == "postgres" else "record.sqlite"
 
     def record_backend_options(self) -> dict[str, object]:
-        if self.backend == "postgres":
-            return {
-                "url": self.postgres_url,
-                "pool_min": self.postgres_pool_min,
-                "pool_max": self.postgres_pool_max,
-            }
-        return {}
+        if self.backend != "postgres":
+            return {}
+        url = self.postgres_url
+        kept, total = self.postgres_pool_min, self.postgres_pool_max
+        if not 1 <= kept <= total:
+            raise ConfigValidationError("postgres_pool_min/max out of range")
+        return {"url": url, "pool_size": kept, "pool_max_overflow": total - kept}
 
 
 @dataclass
