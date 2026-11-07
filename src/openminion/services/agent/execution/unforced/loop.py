@@ -274,6 +274,9 @@ async def handle_unforced_tool_calls(
         if failure_signature:
             failure_count = state.failure_counts.get(failure_signature, 0) + 1
             state.failure_counts[failure_signature] = failure_count
+        elif batch.has_success:
+            # Count consecutive failures only: a productive batch resets the history.
+            state.failure_counts.clear()
         if state.denied or not batch.has_success:
             handled, terminal = await _request_failure_recovery(
                 runner,

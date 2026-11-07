@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- The agent loop's stall rule now counts consecutive failures: a productive tool
+  batch clears the no-progress counter, so two intermittent failures separated by
+  successful work no longer end a turn as `loop_no_progress` (Refs #679).
+
+
+
 - A truncated tool result now tells the model that its output is partial: the tool
   message carries `truncated`, `returned_length` and `total_length` when the result was
   actually truncated, and carries nothing extra otherwise (Refs #675).
