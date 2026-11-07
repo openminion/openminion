@@ -65,10 +65,16 @@ def _record_backend_options(
         "pool_max_overflow": config.pg_pool_max_overflow,
         "pool_timeout_seconds": config.pg_pool_timeout_seconds,
     }
+    # Capacity precedence only: the configured pair already arrives as canonical
+    # pool_size/pool_max_overflow, so explicit engine settings win per key. Every
+    # other record key keeps the precedence it had before this pair was emitted.
+    capacity = {"pool_size", "pool_max_overflow"}
+    record = config.record_backend_options
+    options.update({key: value for key, value in record.items() if key in capacity})
     for key, value in optional_keys.items():
         if value is not None:
             options[key] = value
-    options.update(config.record_backend_options)
+    options.update({key: value for key, value in record.items() if key not in capacity})
     return options
 
 
