@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Respect directory boundaries in `find`/`search` file globs: a single `*`
+  no longer crosses directories, `**` recurses to any depth, and a leading
+  `**/` matches files under any number of parent directories (Refs #492).
+
+
+
 - A truncated tool result now tells the model that its output is partial: the tool
   message carries `truncated`, `returned_length` and `total_length` when the result was
   actually truncated, and carries nothing extra otherwise (Refs #675).
