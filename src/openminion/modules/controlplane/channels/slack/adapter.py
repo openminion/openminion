@@ -71,7 +71,9 @@ class SlackSdkSocketClient:
             from slack_sdk.socket_mode import SocketModeClient
             from slack_sdk.socket_mode.response import SocketModeResponse
             from slack_sdk.web import WebClient
-        except Exception as exc:  # pragma: no cover - optional dependency
+        except ImportError as exc:
+            # Only a genuinely absent optional dependency means "install the extra";
+            # a fault inside the SDK at import time keeps its own error.
             raise MissingSlackSocketDependency(
                 "Slack Socket Mode requires openminion[slack]."
             ) from exc
