@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 import threading
 import time
+from types import SimpleNamespace
 import uuid
 
 import pytest
@@ -33,12 +34,16 @@ from openminion.modules.memory.storage.base import (
     CandidateListOptions,
     ListQueryOptions,
     RecordOrder,
+    SearchQueryOptions,
 )
 from openminion.modules.memory.storage.postgres.store import PostgresMemoryStore
 from openminion.modules.memory.storage.postgres import (
     candidate_supersession as postgres_candidate_supersession,
 )
+from openminion.modules.memory.storage.postgres import queries as postgres_queries
 from openminion.modules.memory.storage.postgres import write as postgres_write
+from openminion.modules.memory.storage.sqlite import search as sqlite_search
+from openminion.modules.memory.storage.sqlite import store as sqlite_store
 from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
 from openminion.modules.memory.service import MemoryService
 from openminion.modules.memory.errors import InvalidArgumentError, PromotionDeniedError
@@ -732,3 +737,215 @@ def test_feedback_is_once_per_command_across_postgres_store_instances(
         with admin_engine.begin() as conn:
             conn.execute(sa.text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
         admin_engine.dispose()
+
+
+def _force_expiry(store, record_id: str, value: str) -> None:
+    """Store a raw value, as a row a caller-supplied expiry can hold."""
+    if isinstance(store, SQLiteMemoryStore):
+        with store._connect() as conn:
+            conn.execute(
+                "UPDATE memory_records SET expires_at = ? WHERE id = ?",
+                (value, record_id),
+            )
+        return
+    with store._engine.begin() as conn:
+        conn.execute(
+            sa.text("UPDATE memory_records SET expires_at = :value WHERE id = :id"),
+            {"value": value, "id": record_id},
+        )
+
+
+def test_active_reads_compare_stored_expiry_as_an_instant(store) -> None:
+    scope = "session:expiry-instant"
+    future = store.upsert(
+        scope,
+        "fact",
+        "expiry:future",
+        {
+            "content": {"text": "The staging cluster runs in Frankfurt."},
+            "entities": ["frankfurt"],
+        },
+    )
+    past = store.upsert(
+        scope,
+        "fact",
+        "expiry:past",
+        {"content": {"text": "The staging cluster ran in Bonn."}, "entities": ["bonn"]},
+    )
+    garbage = store.upsert(
+        scope,
+        "fact",
+        "expiry:garbage",
+        {
+            "content": {"text": "The staging cluster runs in Mainz."},
+            "entities": ["mainz"],
+        },
+    )
+    impossible = store.upsert(
+        scope,
+        "fact",
+        "expiry:impossible",
+        {
+            "content": {"text": "The staging cluster runs in Trier."},
+            "entities": ["trier"],
+        },
+    )
+    calendar = store.upsert(
+        scope,
+        "fact",
+        "expiry:calendar",
+        {
+            "content": {"text": "The staging cluster runs in Kassel."},
+            "entities": ["kassel"],
+        },
+    )
+    year_zero = store.upsert(
+        scope,
+        "fact",
+        "expiry:year-zero",
+        {
+            "content": {"text": "The staging cluster runs in Fulda."},
+            "entities": ["fulda"],
+        },
+    )
+    _force_expiry(store, future.id, "2030-01-01T00:00:00.500000+14:00")
+    _force_expiry(store, past.id, "2020-01-01T00:00:00.500000-12:00")
+    # None of these is an instant: the guard rejects them before the cast, so the read
+    # must not raise (PostgreSQL raises on an impossible date) and must not hide a row.
+    _force_expiry(store, garbage.id, "!")
+    _force_expiry(store, impossible.id, "2026-99-01T00:00:00+00:00")
+    _force_expiry(store, calendar.id, "2020-02-30T00:00:00+00:00")
+    _force_expiry(store, year_zero.id, "0000-01-01T00:00:00+00:00")
+
+    listed = {item.id for item in store.list(ListQueryOptions(scopes=[scope]))}
+    assert listed == {
+        future.id,
+        garbage.id,
+        impossible.id,
+        calendar.id,
+        year_zero.id,
+    }
+
+    for query, expected in (
+        ("Frankfurt", {future.id}),
+        ("Bonn", set()),
+        ("Mainz", {garbage.id}),
+        ("Trier", {impossible.id}),
+        ("Kassel", {calendar.id}),
+        ("Fulda", {year_zero.id}),
+    ):
+        hits = store.search(SearchQueryOptions(query=query, scopes=[scope]))
+        assert {hit.id for hit in hits} == expected
+
+    assert [item.id for item in store.retrieve_by_entities(["frankfurt"], [scope])] == [
+        future.id
+    ]
+    assert store.retrieve_by_entities(["bonn"], [scope]) == []
+
+    history = store.search(
+        SearchQueryOptions(query="Bonn", scopes=[scope], include_invalidated=True)
+    )
+    assert {hit.id for hit in history} == {past.id}
+    assert store.get(past.id) is not None
+
+
+QUERY_INSTANT = datetime.datetime(
+    2026, 11, 6, 16, 0, 0, 100000, tzinfo=datetime.timezone.utc
+)
+
+
+def _freeze_read_clock(monkeypatch: pytest.MonkeyPatch, store, moment) -> None:
+    """Pin the instant the read predicates compare stored expiry against."""
+
+    class _FixedClock(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return moment if tz is not None else moment.replace(tzinfo=None)
+
+    clock = SimpleNamespace(
+        datetime=_FixedClock, timezone=datetime.timezone, timedelta=datetime.timedelta
+    )
+    if isinstance(store, SQLiteMemoryStore):
+        monkeypatch.setattr(sqlite_search, "datetime", clock)
+        monkeypatch.setattr(sqlite_store, "datetime", clock)
+        return
+    monkeypatch.setattr(postgres_queries, "datetime", clock)
+
+
+def test_stored_expiry_boundaries_compare_as_instants(store, monkeypatch) -> None:
+    """Equivalent spellings agree, one microsecond survives, and 0001 is the floor."""
+    scope = "session:expiry-boundary"
+    values = {
+        "six": "2026-11-06T16:00:00.100000+00:00",
+        "one": "2026-11-06T16:00:00.1+00:00",
+        "plus-two": "2026-11-06T18:00:00.1+02:00",
+        "later": "2026-11-06T16:00:00.100001+00:00",
+        "crossing": "2026-11-07T01:00:00.100000+14:00",
+        "crossing-utc": "2026-11-06T11:00:00.100000+00:00",
+        "whole": "2026-11-06T16:00:00+00:00",
+    }
+    ids = {}
+    for key, value in values.items():
+        record = store.upsert(
+            scope,
+            "fact",
+            f"expiry:{key}",
+            {"content": {"text": f"Boundary row {key}."}, "entities": ["frankfurt"]},
+        )
+        _force_expiry(store, record.id, value)
+        ids[key] = record.id
+
+    def visible() -> set[str]:
+        listed = {item.id for item in store.list(ListQueryOptions(scopes=[scope]))}
+        by_entity = {
+            item.id for item in store.retrieve_by_entities(["frankfurt"], [scope])
+        }
+        assert listed == by_entity
+        return listed
+
+    _freeze_read_clock(monkeypatch, store, QUERY_INSTANT)
+    assert visible() == {ids["later"]}
+
+    _freeze_read_clock(
+        monkeypatch, store, QUERY_INSTANT - datetime.timedelta(microseconds=1)
+    )
+    assert visible() == {ids["six"], ids["one"], ids["plus-two"], ids["later"]}
+
+    _freeze_read_clock(
+        monkeypatch, store, QUERY_INSTANT + datetime.timedelta(seconds=1)
+    )
+    assert visible() == set()
+
+    _freeze_read_clock(monkeypatch, store, QUERY_INSTANT.replace(hour=11))
+    assert ids["crossing"] not in visible()
+    assert ids["crossing-utc"] not in visible()
+    _freeze_read_clock(
+        monkeypatch,
+        store,
+        QUERY_INSTANT.replace(hour=11) - datetime.timedelta(microseconds=1),
+    )
+    assert {ids["crossing"], ids["crossing-utc"]} <= visible()
+
+    # A value with no fraction is midnight-sharp, not the end of its second.
+    whole_second = QUERY_INSTANT.replace(microsecond=0)
+    _freeze_read_clock(monkeypatch, store, whole_second)
+    assert ids["whole"] not in visible()
+    _freeze_read_clock(
+        monkeypatch, store, whole_second - datetime.timedelta(microseconds=1)
+    )
+    assert ids["whole"] in visible()
+
+
+def test_an_expiry_written_by_the_store_keeps_the_caller_value(store) -> None:
+    """Writes are not normalised: the read side has to understand what was stored."""
+    written = "2030-01-01T00:00:00.500000+02:00"
+    created = store.upsert(
+        "session:expiry-canonical",
+        "fact",
+        "expiry:canonical",
+        {"content": {"text": "Deadlines are stored as given."}, "expires_at": written},
+    )
+
+    stored = store.get(created.id)
+    assert stored is not None
+    assert stored.expires_at == written

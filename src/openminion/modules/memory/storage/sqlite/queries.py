@@ -1,5 +1,58 @@
+import datetime
+import math
 import re
 import sqlite3
+
+
+def expiry_bind_params(moment: datetime.datetime) -> tuple[int, int, int]:
+    """Positional values for the three ``expiry_clause`` placeholders.
+
+    Returns ``(second, second, microsecond)``: the clause tests "later second" and
+    "same second, later fraction" against one instant, so the second is bound twice.
+    All three values must come from one ``moment``; splitting the instant would compare
+    against a clock that never existed.
+    """
+    second = math.floor(moment.timestamp())
+    return second, second, moment.microsecond
+
+
+def expiry_clause(prefix: str = "r.") -> str:
+    """SQL predicate that keeps a record while its expiry instant is in the future.
+
+    ``expires_at`` holds caller-supplied text, so this predicate is the authority on
+    what counts as an expiry. It parses the stored value as an instant - an
+    offset-adjusted epoch second plus the microsecond read from the stored fraction -
+    and binds the query instant from :func:`expiry_bind_params`. Equivalent spellings
+    of one moment therefore compare equal: ``+14:00`` moves the calendar date without
+    moving the instant, and ``.1`` equals ``.100000``. Precision is not floored:
+    ``.100001`` is later than ``.100000``, so a row expiring one microsecond after the
+    query stays readable and disappears on the next tick. ``strftime('%s', ...)``
+    supplies the offset-adjusted second (cast to INTEGER so SQLite compares numbers
+    rather than a TEXT value, which always sorts above every integer), and the
+    fraction is scaled to microseconds because the built-in date functions keep no
+    sub-second part that can be compared - ``julianday`` stops at milliseconds.
+
+    A value that is not a calendar-valid instant from year 0001 on, or is NULL, is not
+    an expiry and never hides the record.
+    """
+    column = f"{prefix}expires_at"
+    seconds = f"CAST(strftime('%s', {column}) AS INTEGER)"
+    micros = (
+        f"CASE WHEN instr({column}, '.') = 0 THEN 0 "
+        f"ELSE CAST(round(CAST(substr({column}, instr({column}, '.')) AS REAL)"
+        f" * 1000000) AS INTEGER) END"
+    )
+    readable = (
+        f"date(substr({column}, 1, 10)) = substr({column}, 1, 10) "
+        f"AND substr({column}, 1, 4) >= '0001' "
+        f"AND strftime('%s', {column}) IS NOT NULL"
+    )
+    return (
+        f"({column} IS NULL OR CASE WHEN ({readable}) "
+        f"THEN ({seconds} > ? OR ({seconds} = ? AND {micros} > ?)) "
+        f"ELSE 1 END)"
+    )
+
 
 MIGRATION_V1 = """
 CREATE TABLE IF NOT EXISTS memory_records (
