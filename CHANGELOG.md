@@ -7,6 +7,15 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- A malformed plan `criterion_ids` value is now rejected instead of defaulted: an
+  explicitly supplied `false`, `{}` or `null` reaches `TaskPlan` validation and emits
+  `task_plan.invalid_trailer`, where the truthiness default silently turned it into an
+  empty criteria list and the plan was accepted. The field stays an optional array — no
+  null is accepted — and an absent key or `[]` still declares with no criteria
+  (Refs #649).
+
+
+
 - A truncated tool result now tells the model that its output is partial: the tool
   message carries `truncated`, `returned_length` and `total_length` when the result was
   actually truncated, and carries nothing extra otherwise (Refs #675).
