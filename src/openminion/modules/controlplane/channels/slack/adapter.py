@@ -68,15 +68,17 @@ class SlackSdkSocketClient:
 
     def __init__(self, *, app_token: str, bot_token: str) -> None:
         try:
-            from slack_sdk.socket_mode import SocketModeClient
-            from slack_sdk.socket_mode.response import SocketModeResponse
-            from slack_sdk.web import WebClient
+            # Only the top-level package proves the optional extra is absent. Anything
+            # that fails after it is an installed SDK faulting, not a missing extra.
+            import slack_sdk  # noqa: F401
         except ImportError as exc:
-            # Only a genuinely absent optional dependency means "install the extra";
-            # a fault inside the SDK at import time keeps its own error.
             raise MissingSlackSocketDependency(
                 "Slack Socket Mode requires openminion[slack]."
             ) from exc
+        from slack_sdk.socket_mode import SocketModeClient
+        from slack_sdk.socket_mode.response import SocketModeResponse
+        from slack_sdk.web import WebClient
+
         self._SocketModeResponse = SocketModeResponse
         self._queue: queue.Queue[dict[str, Any]] = queue.Queue()
         self._client = SocketModeClient(
