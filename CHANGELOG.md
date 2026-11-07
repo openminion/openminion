@@ -7,6 +7,13 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Approval for a destructive invocation is bound to the exact once-grant payload and
+  consumed exactly once: a second `check_command` for the same command requires a new
+  confirmation, and the exhaustion assertion is back in the integration test so the
+  binding cannot regress silently (Refs #642).
+
+
+
 - A truncated tool result now tells the model that its output is partial: the tool
   message carries `truncated`, `returned_length` and `total_length` when the result was
   actually truncated, and carries nothing extra otherwise (Refs #675).
