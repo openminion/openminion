@@ -7,6 +7,9 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- New storage directories are created private (0700) before any database, sidecar or
+  log is written, so the 0644 files SQLite creates are not readable by other users; an
+  existing directory keeps its own mode (Refs #618).
 - Report failures that reach the terminal renderer as one scriptable line instead of a
   traceback: exit 1 with an `INTERNAL_ERROR` envelope (`--json`) or a single stderr
   line, and the verbose verbosity source — the flag, `OPENMINION_VERBOSITY` or the saved
