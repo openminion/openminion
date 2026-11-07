@@ -166,7 +166,7 @@ def model_final_response(
     deps: ExecutorDeps,
     initial_response: ProviderResponse,
     response: ProviderResponse,
-    batch: ToolExecutionBatch,
+    batch: ToolExecutionBatch | None,
     intent_category: str,
     signature: str,
 ) -> AgentResponse:
@@ -180,9 +180,13 @@ def model_final_response(
         "intent_category": intent_category or "none",
         "tool_loop_termination_reason": termination_reason,
         "tool_calls": signature,
-        **deps.tool_batch_metadata(
-            batch=batch,
-            tool_calls_count=len(initial_response.tool_calls or []),
+        **(
+            deps.tool_batch_metadata(
+                batch=batch,
+                tool_calls_count=len(initial_response.tool_calls or []),
+            )
+            if batch is not None
+            else {}
         ),
         **finalization_status_metadata(response),
         **deps.identity_metadata(),

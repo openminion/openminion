@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `handle_unforced_tool_calls` now returns the model's answer (termination
+  `model_final`) when a response carries no tool calls, instead of falling through
+  to the `tool_loop_max_steps` cap terminal. The turn caller already returns a
+  no-tool-call response directly, so this is a helper-contract fix rather than a
+  user-visible change (Refs #631).
+
 - A truncated tool result now tells the model that its output is partial: the tool
   message carries `truncated`, `returned_length` and `total_length` when the result was
   actually truncated, and carries nothing extra otherwise (Refs #675).

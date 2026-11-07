@@ -91,7 +91,9 @@ scope	max_python_files	max_loc
 # Issue 481 (2026-11-01) resolves reasoning-effort support by the selected
 # execution route in the existing agent-service and llmctl-bridge owners
 # (measured on dev c7833b4d with this change: 209 files, 42345 LOC).
-services	209	42345
+# ULSEO (2026-11-07) keeps handle_unforced_tool_calls' tool-call-free early
+# return instead of the step-cap fallthrough (#631); measured on dev 1d7ee129.
+services	209	42348
 services/security	6	187
 services/stats	1	25
 services/tool	3	50
