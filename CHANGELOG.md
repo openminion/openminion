@@ -7,6 +7,13 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Slack Socket Mode now keeps an import-time fault out of its install guidance: only
+  a genuinely missing SDK raises `MissingSlackSocketDependency` with the extra name,
+  while an unrelated error raised while importing the SDK propagates as itself. The
+  constructor, HTTP mode and injected-client paths are unchanged (Refs #651).
+
+
+
 - A truncated tool result now tells the model that its output is partial: the tool
   message carries `truncated`, `returned_length` and `total_length` when the result was
   actually truncated, and carries nothing extra otherwise (Refs #675).
