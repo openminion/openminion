@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- A turn whose accepted answer was truncated or filtered now reports the provider's
+  termination (`finish_reason: length`, `content_filter`, …) in its response metadata
+  instead of an unconditional `stop`. The value travels only with the accepted answer:
+  a freshness rewrite, or a meta directive that substitutes the message (even with
+  identical text), keeps `stop`; the step output schema is unchanged (Refs #602).
+
 - A truncated tool result now tells the model that its output is partial: the tool
   message carries `truncated`, `returned_length` and `total_length` when the result was
   actually truncated, and carries nothing extra otherwise (Refs #675).

@@ -190,7 +190,13 @@ def _attach_finish_reason(
     elif status_lower in {"error", "failed"}:
         metadata["finish_reason"] = "error"
     else:
-        metadata["finish_reason"] = "stop"
+        # A truncated or filtered answer reports the accepted response's own
+        # termination; the claim only travels while the step output still
+        # carries the accepted answer.
+        reason = str(getattr(step_out, "_accepted_finish_reason", "") or "").strip()
+        metadata["finish_reason"] = (
+            reason if reason and reason not in {"stop", "tool_calls"} else "stop"
+        )
 
 
 def _attach_telemetry_flag(self, *, metadata: dict[str, str]) -> None:
