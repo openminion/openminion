@@ -1,6 +1,8 @@
 from typing import Any
 
 from openminion.modules.brain.runner import BrainRunner
+
+
 from openminion.modules.telemetry.usage.coverage import (
     INPUT_TOKEN_KEYS,
     OUTPUT_TOKEN_KEYS,
@@ -12,17 +14,16 @@ from openminion.modules.telemetry.usage.coverage import (
 
 def collect_llm_call_events(
     *, runner: BrainRunner, session_id: str, trace_id: str | None, run_id: str = ""
-) -> list[dict[str, Any]]:
-    try:
-        events = [
-            event
-            for event_type in ("llm.call.completed", "llm.call.failed")
-            for event in runner.session_api.list_events(
-                session_id, event_type=event_type, limit=None
+) -> tuple[list[dict[str, Any]], bool]:
+    events: list[dict[str, Any]] = []
+    read_failed = False  # each kind is read alone: one failure keeps the other's facts
+    for kind in ("llm.call.completed", "llm.call.failed"):
+        try:
+            events += runner.session_api.list_events(
+                session_id, event_type=kind, limit=None
             )
-        ]
-    except Exception:  # noqa: BLE001
-        return []
+        except Exception:  # noqa: BLE001
+            read_failed = True
     normalized_trace = str(trace_id or "").strip()
     seen: set[tuple[str, str]] = set()
     calls = []
@@ -45,7 +46,7 @@ def collect_llm_call_events(
         if call_id:
             seen.add(key)
         calls.append(event)
-    return calls
+    return calls, read_failed
 
 
 def summarize_llm_usage(events: list[dict[str, Any]]) -> dict[str, int]:

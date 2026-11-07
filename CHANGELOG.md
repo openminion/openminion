@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- A failed usage-event read is no longer indistinguishable from an empty turn
+  history: each event kind is read separately, so a failing query no longer discards the
+  events the other returned, and the projection records
+  `llm_usage_events_incomplete` when any read failed while keeping the totals it did
+  read. An empty store, a successful read and trace/run filtering are unchanged
+  (Refs #648).
 - A truncated tool result now tells the model that its output is partial: the tool
   message carries `truncated`, `returned_length` and `total_length` when the result was
   actually truncated, and carries nothing extra otherwise (Refs #675).

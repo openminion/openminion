@@ -48,7 +48,7 @@ def _build_turn_response_metadata(
     action_outputs = getattr(getattr(step_out, "action_result", None), "outputs", None)
     if not isinstance(action_outputs, dict):
         action_outputs = {}
-    events = collect_llm_call_events(
+    events, events_read_failed = collect_llm_call_events(
         runner=runner,
         session_id=session_id,
         trace_id=request_id,
@@ -80,6 +80,7 @@ def _build_turn_response_metadata(
         "llm_calls_count": str(sum(llm_call_counts.values())),
         "tool_calls_count": str(tool_calls_count),
         **{key: str(value) for key, value in usage.items()},
+        **({"llm_usage_events_incomplete": "true"} if events_read_failed else {}),
     }
     metadata["llm_usage_coverage"] = json.dumps(
         coverage_from_session_events(
