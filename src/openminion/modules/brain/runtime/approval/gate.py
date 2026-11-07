@@ -1,4 +1,7 @@
-"""Destructive-action approval gate helpers."""
+"""Destructive-action approval gate helpers.
+
+See the package docstring for how this helper relates to the approval owner.
+"""
 
 from dataclasses import dataclass
 from typing import Any
