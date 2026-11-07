@@ -7,6 +7,20 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `openminion run` now reports the turn's outcome in-band instead of only transport
+  success: `turn_outcome` is `needs_user` when the returned turn is still waiting on the
+  user, `denied` when the confirmation owner recorded a denial for that response, and
+  `failed` when the returned turn carries provider/runtime errors. The field is additive
+  in `--json`/JSONL, a human run adds one line on stderr when the outcome is not
+  `completed`, and the JSONL `done` frame is now emitted after the turn returns, so its
+  outcome comes from the returned envelope rather than from the stream summary, which
+  need not carry the turn metadata. `ok` and the printed question are unchanged.
+  Process exit codes are untouched: a returned envelope still exits 0 on every outcome,
+  and a transport/API error still exits 2, as in the previous release. A distinct
+  outcome-to-exit-code mapping is deliberately not part of this change; it is deferred
+  pending the maintainer's decision on the public exit-code contract. The denial fact is
+  also persisted with the assistant turn, so a durable reader can tell a denied turn from
+  one still waiting on the user (Refs #622).
 - A truncated tool result now tells the model that its output is partial: the tool
   message carries `truncated`, `returned_length` and `total_length` when the result was
   actually truncated, and carries nothing extra otherwise (Refs #675).
