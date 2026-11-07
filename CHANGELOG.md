@@ -7,6 +7,15 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Fix the PostgreSQL pool option plumbing: `storage.postgres_pool_min`/`postgres_pool_max`
+  are now emitted as the factory's own `pool_size`/`pool_max_overflow` keys, so the
+  configured pair reaches the pool instead of being dropped by a name mismatch
+  (`pool_size` is the capacity retained after release, not a pre-created minimum). The
+  effective default stays 5 retained + 10 overflow (15 total); an explicit
+  `pg_pool_size`/`pg_pool_max_overflow` still wins per key, and a pair outside
+  `1 <= min <= max` is now refused by the config owner when
+  `storage.backend` is `postgres`, instead of reaching SQLAlchemy; SQLite still ignores the
+  pair (Refs #667).
 - A truncated tool result now tells the model that its output is partial: the tool
   message carries `truncated`, `returned_length` and `total_length` when the result was
   actually truncated, and carries nothing extra otherwise (Refs #675).

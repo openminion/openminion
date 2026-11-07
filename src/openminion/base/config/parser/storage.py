@@ -31,10 +31,10 @@ def _parse_storage_config(
         or str(storage_payload.get("postgres_url", "")),
         postgres_pool_min=int(storage_postgres_pool_min_env)
         if storage_postgres_pool_min_env
-        else int(storage_payload.get("postgres_pool_min", 1)),
+        else int(storage_payload.get("postgres_pool_min", 5)),
         postgres_pool_max=int(storage_postgres_pool_max_env)
         if storage_postgres_pool_max_env
-        else int(storage_payload.get("postgres_pool_max", 5)),
+        else int(storage_payload.get("postgres_pool_max", 15)),
     )
 
 
