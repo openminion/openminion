@@ -139,6 +139,7 @@ class TurnInputQueue:
         self._on_event = on_event
         self._lock = RLock()
         self._entries: list[TurnInputQueueEntry] = []
+        self._completed_steering: dict[str, TurnInputQueueEntry] = {}
         self._idempotency: dict[tuple[str, str, str], str] = {}
 
     def enqueue(
@@ -380,6 +381,22 @@ class TurnInputQueue:
                 self._emit(QUEUE_EVENT_DEQUEUED, updated.event_payload())
         return reserved
 
+    def list_applied_steering(
+        self,
+        *,
+        session_id: str,
+        agent_id: str,
+        target_trace_id: str,
+    ) -> list[TurnInputQueueEntry]:
+        """Return steering in application order, independent of queue moves."""
+        scope = (session_id.strip(), agent_id.strip(), target_trace_id.strip())
+        with self._lock:
+            return [
+                entry
+                for entry in self._completed_steering.values()
+                if (entry.session_id, entry.agent_id, entry.target_trace_id) == scope
+            ]
+
     def complete_steering(
         self,
         *,
@@ -597,18 +614,18 @@ class TurnInputQueue:
         normalized_trace_id = _require_non_empty(target_trace_id, "target_trace_id")
         requested = set(requested_ids)
         with self._lock:
-            matches = [
-                (index, entry)
+            matches = {
+                entry.queue_id: (index, entry)
                 for index, entry in enumerate(self._entries)
                 if entry.queue_id in requested
-            ]
+            }
             if len(matches) != len(requested):
                 raise TurnInputQueueError(
                     "QUEUE_ENTRY_NOT_FOUND",
                     "A steering queue entry was not found.",
                     {"queue_ids": requested_ids},
                 )
-            for _index, entry in matches:
+            for _index, entry in matches.values():
                 if (
                     entry.intent != TurnInputIntent.STEER_CURRENT
                     or entry.target_trace_id != normalized_trace_id
@@ -621,7 +638,8 @@ class TurnInputQueue:
                     )
             now = _utc_now_iso()
             updated_by_id: dict[str, TurnInputQueueEntry] = {}
-            for index, entry in matches:
+            for queue_id in dict.fromkeys(requested_ids):
+                index, entry = matches[queue_id]
                 updated = replace(
                     entry,
                     status=target_status,
@@ -631,7 +649,11 @@ class TurnInputQueue:
                     status_version=entry.status_version + 1,
                 )
                 self._entries[index] = updated
-                updated_by_id[updated.queue_id] = updated
+                updated_by_id[queue_id] = updated
+                if target_status == TurnInputQueueStatus.COMPLETED:
+                    self._completed_steering[queue_id] = updated
+                else:
+                    self._completed_steering.pop(queue_id, None)
                 event_type = (
                     QUEUE_EVENT_COMPLETED
                     if target_status == TurnInputQueueStatus.COMPLETED

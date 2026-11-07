@@ -99,6 +99,7 @@ _PHASE_HINT_KEYS: dict[str, set[str]] = {
         "style_overrides",
     },
     "judge": {
+        "applied_turn_steering",
         "closure_candidate_reason",
         "closure_action_summary",
         "closure_action_outputs",

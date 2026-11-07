@@ -260,6 +260,7 @@ def _run_closure_judge(
                 purpose="judge",
                 budget={"max_tokens": min(1200, state.budgets_remaining.tokens)},
                 hints=_build_closure_hints(
+                    runner=runner,
                     state=state,
                     action_result=action_result,
                     completion_reason=completion_reason,
@@ -288,6 +289,7 @@ def _run_closure_judge(
 
 def _build_closure_hints(
     *,
+    runner: "BrainRunner",
     state: WorkingState,
     action_result: ActionResult | None,
     completion_reason: str,
@@ -349,6 +351,19 @@ def _build_closure_hints(
             )
         },
     }
+    queue = getattr(runner, "turn_input_queue", None)
+    trace_id = str(state.trace_id or "").strip()
+    if queue is not None and trace_id:
+        applied_steering = [
+            entry.text
+            for entry in queue.list_applied_steering(
+                session_id=state.session_id,
+                agent_id=state.agent_id,
+                target_trace_id=trace_id,
+            )
+        ]
+        if applied_steering:
+            hints["applied_turn_steering"] = applied_steering
     if state.freshness_contract is not None:
         hints["freshness_contract"] = state.freshness_contract.model_dump(mode="json")
     if state.freshness_obligations is not None:
