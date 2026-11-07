@@ -46,6 +46,8 @@ from .queries import (
     CREATE_MEMORY_RELATIONS_SOURCE_INDEX,
     CREATE_MEMORY_RELATIONS_TABLE,
     CREATE_MEMORY_RELATIONS_TARGET_INDEX,
+    expiry_bind_params,
+    expiry_clause,
 )
 from .row import (
     _create_sqlite_candidate_from_row as _decode_candidate_row,
@@ -441,8 +443,11 @@ class SQLiteMemoryStore(MemoryStore):
         )
         params = []
         if not options.include_invalidated:
+            now = datetime.datetime.now(datetime.timezone.utc)
             query += " AND (valid_to IS NULL OR valid_to > ?)"
-            params.append(datetime.datetime.now(datetime.timezone.utc).isoformat())
+            params.append(now.isoformat())
+            query += f" AND {expiry_clause('')}"
+            params.extend(expiry_bind_params(now))
 
         if options.scopes:
             placeholders = ",".join("?" * len(options.scopes))

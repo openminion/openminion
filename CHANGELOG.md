@@ -7,6 +7,11 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Memory retrieval honours `expires_at`: search, listing and entity lookups skip expired
+  records instead of serving them until someone runs `memory gc`, on both SQLite and
+  PostgreSQL. Expiry is compared as an instant, so a stored offset does not by itself change
+  readability, and stored values are read exactly as the caller supplied them (Refs #677).
+
 - `build_delegate_tool` now dumps Pydantic `BaseModel` outputs from `Handoff` target
   agents with `model_dump(mode="json")` so delegated structured results serialize cleanly
   in `ToolExecutionBatch.to_metadata_payload()` while leaving non-model outputs and run
