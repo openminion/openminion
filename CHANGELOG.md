@@ -14,6 +14,8 @@ This file tracks package-facing release notes for `openminion`.
   null is accepted — and an absent key or `[]` still declares with no criteria
   (Refs #649).
 
+
+
 - A truncated tool result now tells the model that its output is partial: the tool
   message carries `truncated`, `returned_length` and `total_length` when the result was
   actually truncated, and carries nothing extra otherwise (Refs #675).
