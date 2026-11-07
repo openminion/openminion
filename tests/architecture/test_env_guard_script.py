@@ -27,8 +27,8 @@ def _load_script_module():
 def test_load_rules_parses_canonical_rules_file(tmp_path: pathlib.Path) -> None:
     mod = _load_script_module()
     rules = mod._load_rules(_RULES_PATH)
-    assert len(rules) >= 30, (
-        f"Canonical rules file should have >=30 rules; got {len(rules)}"
+    assert len(rules) >= 25, (
+        f"Canonical rules file should have >=25 rules; got {len(rules)}"
     )
     sample = rules[0]
     assert isinstance(sample.path, pathlib.Path)
@@ -160,3 +160,120 @@ def test_script_warn_lines_include_category_labels() -> None:
     assert "rule_category=canonical-boundary-owner" in proc.stdout, (
         f"expected rule_category tag in warn output; got:\n{proc.stdout}"
     )
+
+
+def test_script_fails_on_a_rule_for_a_missing_path(tmp_path: pathlib.Path) -> None:
+    """A rule that names a deleted file would pre-authorise a future file at that path."""
+    forced = tmp_path / "stale-rule-rules.json"
+    forced.write_text(
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "path": "src/openminion/does_not_exist.py",
+                        "max_calls": 5,
+                        "category": "subprocess-passthrough",
+                        "reason": "synthetic stale rule",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    # `sys.executable` rather than the checked-in `.venv` path: this control needs a
+    # stdlib-only script, and it must run in an isolated worktree too.
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(_SCRIPT_PATH),
+            "--rules",
+            str(forced),
+            "--fail-on-violation",
+        ],
+        cwd=str(_REPO_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert proc.returncode == 1, (
+        f"expected non-zero exit for a stale rule; got {proc.returncode}\n"
+        f"stdout={proc.stdout}\nstderr={proc.stderr}"
+    )
+    assert "[stale_rule]" in proc.stdout
+    assert "does not exist" in proc.stdout
+
+
+def test_script_keeps_a_rule_for_a_directory_without_python(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A directory with no Python files is a live rule."""
+    assert not list((_REPO_ROOT / "docs").rglob("*.py")), "fixture precondition"
+    forced = tmp_path / "empty-directory-rules.json"
+    forced.write_text(
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "path": "docs",
+                        "max_calls": 999,
+                        "category": "canonical-boundary-owner",
+                        "reason": "synthetic directory rule without Python files",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(_SCRIPT_PATH),
+            "--rules",
+            str(forced),
+            "--fail-on-violation",
+        ],
+        cwd=str(_REPO_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert proc.returncode == 0, proc.stdout
+    assert "[stale_rule]" not in proc.stdout
+
+
+def test_script_keeps_a_valid_directory_rule(tmp_path: pathlib.Path) -> None:
+    """A rule may target a directory; only a missing target is stale."""
+    forced = tmp_path / "directory-rule-rules.json"
+    forced.write_text(
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "path": "src/openminion/tools/file",
+                        "max_calls": 999,
+                        "category": "canonical-boundary-owner",
+                        "reason": "synthetic directory rule",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(_SCRIPT_PATH),
+            "--rules",
+            str(forced),
+            "--fail-on-violation",
+        ],
+        cwd=str(_REPO_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert proc.returncode == 0, (
+        f"a directory rule must not be treated as stale; got {proc.returncode}\n"
+        f"stdout={proc.stdout}"
+    )
+    assert "[stale_rule]" not in proc.stdout

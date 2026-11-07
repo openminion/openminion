@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- The env-guard validator now fails on a rule whose path no longer exists, and the
+  fourteen stale rules behind that check are removed so a re-created path cannot
+  inherit an old allowance (Refs #668).
+
+
+
 - New storage directories are created private (0700) before any database, sidecar or
   log is written, so the 0644 files SQLite creates are not readable by other users; an
   existing directory keeps its own mode (Refs #618).

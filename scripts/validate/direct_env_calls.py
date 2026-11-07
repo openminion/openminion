@@ -180,6 +180,13 @@ def main() -> int:
 
     print(heading("validate/direct_env_calls.py"))
     for rule in rules:
+        if not (REPO_ROOT / rule.path).exists():
+            # A rule for a missing path pre-authorises any future file at that path.
+            violations.append(
+                f"[env-guard][violation][stale_rule] {rule.path}: rule names a path that "
+                "does not exist -> remove it"
+            )
+            continue
         target_files = _iter_target_files(REPO_ROOT, rule)
         for file_path in target_files:
             count, line_numbers = _count_file(file_path)
