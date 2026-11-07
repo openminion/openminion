@@ -32,6 +32,23 @@ def _tool_command(
     }
 
 
+def _grant_once(adapter) -> None:
+    """Approve one allow_once grant for the destructive command under test."""
+    adapter.grant_once_from_confirmation(
+        command=SimpleNamespace(
+            kind="tool",
+            tool_name="fs.rm",
+            args={"path": "/tmp/demo.txt"},
+            idempotency_key="cmd-test-1",
+            risk_level="high",
+        ),
+        working_state=SimpleNamespace(
+            session_id="sess-1", agent_id="agent-1", trace_id="trace-1"
+        ),
+        session_context={"subject_id": "local"},
+    )
+
+
 def test_brain_adapter_require_confirm_for_destructive_tool(tmp_path):
     adapter = PolicyCtlBrainAdapter.with_sqlite(tmp_path / "p.db")
     try:
@@ -253,33 +270,36 @@ def test_brain_adapter_confirmation_roundtrip(tmp_path):
         result = adapter.check_command(_tool_command(), _brain_ctx())
         assert result.requires_confirmation()
 
-        command_obj = type(
-            "_Command",
-            (),
-            {
-                "kind": "tool",
-                "tool_name": "fs.rm",
-                "args": {"path": "/tmp/demo.txt"},
-                "idempotency_key": "cmd-test-1",
-                "risk_level": "high",
-            },
-        )()
-        adapter.grant_once_from_confirmation(
-            command=command_obj,
-            working_state=type(
-                "_State",
-                (),
-                {
-                    "session_id": "sess-1",
-                    "agent_id": "agent-1",
-                    "trace_id": "trace-1",
-                },
-            )(),
-            session_context={"subject_id": "local"},
-        )
+        _grant_once(adapter)
 
         result2 = adapter.check_command(_tool_command(), _brain_ctx())
         assert result2.is_allowed()
+    finally:
+        adapter.close()
+
+
+def test_once_grant_does_not_authorise_a_different_payload(tmp_path):
+    """An allow_once approval is bound to tool, method and arguments."""
+    adapter = PolicyCtlBrainAdapter.with_sqlite(tmp_path / "p.db")
+    try:
+        assert adapter.check_command(
+            _tool_command(), _brain_ctx()
+        ).requires_confirmation()
+
+        _grant_once(adapter)
+
+        replay = adapter.check_command(
+            _tool_command(args={"path": "/tmp/other.txt"}), _brain_ctx()
+        )
+
+        assert not replay.is_allowed()
+        assert replay.requires_confirmation()
+        # The refused replay must not consume the approval it did not match.
+        assert adapter.check_command(_tool_command(), _brain_ctx()).is_allowed()
+        # The grant is exactly once: the payload it authorised now needs approval.
+        assert adapter.check_command(
+            _tool_command(), _brain_ctx()
+        ).requires_confirmation()
     finally:
         adapter.close()
 
