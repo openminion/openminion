@@ -7,6 +7,13 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Non-entry LLM calls (`act`, `judge`, `reflect`, freshness fallback) now record the
+  request they were billed for, next to the provider-billed `usage`: `context_bytes`,
+  `context_tokens` (named as an estimate), segment count, tool-schema count and bytes,
+  and request/response bytes. A call whose request this recorder was not given is
+  marked `attribution: usage_only` instead of reporting zero context columns, so an
+  absent measurement cannot be read as an empty request (Refs #640).
+
 - A truncated tool result now tells the model that its output is partial: the tool
   message carries `truncated`, `returned_length` and `total_length` when the result was
   actually truncated, and carries nothing extra otherwise (Refs #675).

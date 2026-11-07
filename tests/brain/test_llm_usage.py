@@ -96,3 +96,103 @@ def test_failed_response_retains_known_usage_and_unknown_purpose(tmp_path):
     assert count_llm_calls(events, 9)["custom_phase"] == 1
     assert summarize_llm_usage(events)["total_tokens_used"] == 6
     assert count_llm_calls([], 9)["unknown"] == 9
+
+
+def _act_messages():
+    from openminion.modules.llm.schemas import Message
+
+    return [
+        Message(role="system", content="You are an operator."),
+        Message(role="user", content="read the report and summarize it"),
+    ]
+
+
+def _act_tools():
+    from openminion.modules.llm.schemas import ToolSpec
+
+    return [
+        ToolSpec(
+            name="file.read",
+            description="Read a file's bytes.",
+            input_schema={"type": "object", "properties": {"path": {"type": "string"}}},
+        ),
+        ToolSpec(
+            name="file.write",
+            description="Write a file.",
+            input_schema={"type": "object", "properties": {"path": {"type": "string"}}},
+        ),
+    ]
+
+
+def test_non_entry_call_records_serialized_request_attribution(tmp_path):
+    from openminion.modules.brain.diagnostics.usage import (
+        request_attribution,
+    )
+
+    session = LocalSessionStore(tmp_path)
+    response = LLMResponse(
+        ok=True,
+        provider="test",
+        model="model",
+        output_text="done",
+        usage=UsageInfo(input_tokens=11, output_tokens=4),
+    )
+    messages, tools = _act_messages(), _act_tools()
+
+    with llm_usage_scope(session, "s", "trace", "run"):
+        record_llm_response(
+            purpose="act", response=response, messages=messages, tools=tools
+        )
+
+    payload = session.list_events("s")[0]["payload"]
+    expected = request_attribution(messages=messages, tools=tools, response=response)
+    assert payload["attribution"] == "serialized_request"
+    assert payload["context_bytes"] == expected["context_bytes"] > 0
+    assert payload["tool_schema_count"] == 2
+    assert payload["tool_schema_bytes"] == expected["tool_schema_bytes"] > 0
+    assert (
+        payload["request_bytes"] == expected["request_bytes"] > payload["context_bytes"]
+    )
+    assert payload["context_tokens"] > 0
+    assert payload["context_tokens_source"] == "estimate:count_tokens"
+    # Provider-billed totals stay separate from the assembled estimate.
+    assert payload["usage"]["prompt_tokens"] == 11
+    assert payload["usage"]["completion_tokens"] == 4
+
+
+def test_usage_only_call_omits_unmeasured_context_columns(tmp_path):
+    session = LocalSessionStore(tmp_path)
+    response = LLMResponse(ok=True, provider="test", model="model")
+
+    with llm_usage_scope(session, "s", "trace", "run"):
+        record_llm_response(purpose="reflect", response=response)
+
+    payload = session.list_events("s")[0]["payload"]
+    assert payload["attribution"] == "usage_only"
+    for column in (
+        "context_bytes",
+        "context_tokens",
+        "tool_schema_bytes",
+        "tool_schema_count",
+        "request_bytes",
+        "response_bytes",
+    ):
+        assert column not in payload
+
+
+def test_missing_tools_leaves_the_tool_columns_unmeasured(tmp_path):
+    session = LocalSessionStore(tmp_path)
+    response = LLMResponse(ok=True, provider="test", model="model")
+
+    with llm_usage_scope(session, "s", "trace", "run"):
+        record_llm_response(
+            purpose="judge", response=response, messages=_act_messages()
+        )
+
+    payload = session.list_events("s")[0]["payload"]
+    assert payload["attribution"] == "serialized_request"
+    assert payload["context_bytes"] > 0
+    # The request wraps the same messages under its own key, so it is slightly larger.
+    assert payload["request_bytes"] > payload["context_bytes"]
+    for column in ("tool_schema_bytes", "tool_schema_count"):
+        assert column not in payload

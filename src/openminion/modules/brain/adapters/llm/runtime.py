@@ -354,7 +354,12 @@ class LlmctlAdapter(LLMAPI):
             temperature=temperature,
         )
         response = self.client.call(request)
-        record_llm_response(purpose=purpose, response=response)
+        record_llm_response(
+            purpose=purpose,
+            response=response,
+            messages=list(request.messages),
+            tools=list(request.tools or []),
+        )
         record_active_chat_provider_call(
             purpose=purpose,
             messages=list(request.messages),
