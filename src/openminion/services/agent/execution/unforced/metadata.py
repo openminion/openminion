@@ -166,7 +166,7 @@ def model_final_response(
     deps: ExecutorDeps,
     initial_response: ProviderResponse,
     response: ProviderResponse,
-    batch: ToolExecutionBatch,
+    batch: ToolExecutionBatch | None,
     intent_category: str,
     signature: str,
 ) -> AgentResponse:
@@ -174,6 +174,7 @@ def model_final_response(
         response,
         default="model_final",
     )
+    batch = batch or ToolExecutionBatch(results=[])
     metadata = {
         "model": response.model,
         "finish_reason": response.finish_reason or "stop",

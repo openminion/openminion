@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `handle_unforced_tool_calls` now returns the model's answer (termination
+  `model_final`) when a response carries no tool calls, instead of falling through
+  to the `tool_loop_max_steps` cap terminal. The turn caller already returns a
+  no-tool-call response directly, so this is a helper-contract guard rather than a
+  user-visible change (Refs #631).
+
 - `subagent()` now populates `SubagentRunContext.tool_allowlist` from the child
   `Agent`'s resolved tool names (`tuple(child.tools)`) instead of raw `tools`
   items, so `@tool`-decorated callables work in `subagent(parent, tools=[...])`
@@ -17,7 +23,6 @@ This file tracks package-facing release notes for `openminion`.
   `0`, `""` or `[]` now returns `-32602` without invoking the tool instead of running it
   as if nothing had been passed. Omitted and empty-object calls, and the separation
   between invalid requests and tool-level failures, are unchanged (Refs #658).
-
 
 
 - A truncated tool result now tells the model that its output is partial: the tool
