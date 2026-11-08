@@ -7,6 +7,13 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- A malformed plan `criterion_ids` value is now rejected instead of defaulted: an
+  explicitly supplied `false`, `{}` or `null` reaches `TaskPlan` validation and emits
+  `task_plan.invalid_trailer`, where the truthiness default silently turned it into an
+  empty criteria list and the plan was accepted. The field stays an optional array — no
+  null is accepted — and an absent key or `[]` still declares with no criteria
+  (Refs #649).
+
 - `subagent()` now populates `SubagentRunContext.tool_allowlist` from the child
   `Agent`'s resolved tool names (`tuple(child.tools)`) instead of raw `tools`
   items, so `@tool`-decorated callables work in `subagent(parent, tools=[...])`
