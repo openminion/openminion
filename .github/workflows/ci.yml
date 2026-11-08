@@ -600,6 +600,7 @@ jobs:
           python -m pytest -q -m postgres tests/memory/test_memory_search_quality.py::test_postgres_lexical_score_contributes_to_semantic_order
           python -m pytest -q -m postgres tests/memory/test_gc_evidence_postgres.py
           python -m pytest -q -m postgres tests/skill/test_skill_postgres_conformance.py
+          python -m pytest -q -m postgres tests/session/test_postgres_session_store.py
           python -m pytest -q -m postgres tests/integration/test_runtime_storage_postgres.py
           python -m pytest -q -m postgres tests/integration/test_runtime_memory_postgres.py
           python -m pytest -q -m postgres tests/integration/test_storage_migrate_report_postgres.py
