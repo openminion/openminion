@@ -17,7 +17,7 @@ from openminion.tools.decorator import _build_args_model
 from sophiagraph.models import MemoryNamespace
 
 if TYPE_CHECKING:  # pragma: no cover
-    from openminion.api.agent import Agent
+    from openminion.api.agent import Agent, ToolInput
 
 
 @dataclass(frozen=True)
@@ -246,7 +246,7 @@ def subagent(
     *,
     instructions: str | None = None,
     model: str | None = None,
-    tools: list[str] | None = None,
+    tools: list["ToolInput"] | None = None,
     output_type: type | None = None,
     name: str | None = None,
     timeout_seconds: int | None = None,
@@ -285,33 +285,34 @@ def subagent(
         raise ValueError("delegated memory grants cannot be re-shared in v1")
     if memory_posture != "none" or memory_grant_id:
         raise ValueError("developer subagent memory grants are not bound in v1")
+    timeout_seconds = _bounded_timeout_seconds(timeout_seconds, deadline_iso)
     runtime = parent._ensure_runtime()  # noqa: SLF001 — same-package helper
     parent_id = str(getattr(parent, "name", "") or "parent").strip() or "parent"
     child_id = str(name or "subagent").strip() or "subagent"
     context_id = f"subagent-{uuid4().hex[:12]}"
-    context = SubagentRunContext(
-        context_id=context_id,
-        parent_agent_id=parent_id,
-        child_agent_id=child_id,
-        parent_run_id=f"agent:{parent_id}",
-        child_run_id=f"{context_id}:{child_id}",
-        trace_parent_id=f"agent:{parent_id}",
-        tool_allowlist=tuple(tools or ()),
-        timeout_seconds=_bounded_timeout_seconds(timeout_seconds, deadline_iso),
-        memory_posture=str(memory_posture or "none"),
-        memory_grant_id=memory_grant_id,
-        delegated_memory_ancestor=has_delegated_ancestor,
-    )
-    return Agent(
+    child: Agent[Any, Any] = Agent(
         instructions=instructions,
         output_type=output_type,
         runtime=runtime,
         model=model,
         tools=tools,
         name=name,
-        subagent_context=context,
         delegated_memory_request=memory,
     )
+    child.subagent_context = SubagentRunContext(
+        context_id=context_id,
+        parent_agent_id=parent_id,
+        child_agent_id=child_id,
+        parent_run_id=f"agent:{parent_id}",
+        child_run_id=f"{context_id}:{child_id}",
+        trace_parent_id=f"agent:{parent_id}",
+        tool_allowlist=tuple(child.tools),
+        timeout_seconds=timeout_seconds,
+        memory_posture=str(memory_posture or "none"),
+        memory_grant_id=memory_grant_id,
+        delegated_memory_ancestor=has_delegated_ancestor,
+    )
+    return child
 
 
 def materialize_subagent_run_context(
