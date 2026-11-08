@@ -157,7 +157,6 @@ src/openminion/modules/context/retrieval/materials.py	2	0	current broad-handler 
 src/openminion/modules/context/service.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/context/state/projection.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/context/telemetry.py	6	4	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/controlplane/channels/slack/adapter.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/controlplane/channels/slack/cli.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/controlplane/channels/slack/runtime/helpers.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/controlplane/channels/telegram/bot_api.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

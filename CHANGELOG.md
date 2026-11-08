@@ -7,6 +7,11 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Slack Socket Mode keeps an import-time fault out of its install guidance: only a
+  `ModuleNotFoundError` that names `slack_sdk` itself and leaves no resolvable spec
+  raises `MissingSlackSocketDependency` with the extra name, while a fault raised
+  inside an installed SDK - its own `__init__` or a dependency it imports - propagates
+  as itself. HTTP mode and injected-client paths are untouched (Refs #651).
 - A malformed plan `criterion_ids` value is now rejected instead of defaulted: an
   explicitly supplied `false`, `{}` or `null` reaches `TaskPlan` validation and emits
   `task_plan.invalid_trailer`, where the truthiness default silently turned it into an
