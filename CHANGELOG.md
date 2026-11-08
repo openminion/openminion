@@ -7,6 +7,15 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- The turn's tool-result projection now records a security event only for a real policy decision:
+  it keeps the producer's `blocked_kind`/`denial_source`, recognises the concrete legacy decision
+  codes (`require_approval`, `confirm_required`, `approval_denied`, `policy_denied`,
+  `tool_exposure_denied`; `approval_denied` keeps the `policy_denied` event it already had) and
+  records nothing for an ordinary tool failure — including a
+  `tool_budget`-prefixed code, which keeps its budget metadata but no longer implies a denial
+  (Refs #478).
+
+
 - Cached reads inside one adaptive loop are now dropped when a tool call could have changed the tree: a known
   file writer invalidates by path containment (a cached read of `.` or `src` covers the files below it, and a
   failed or timed-out write still counts, because a write can fail after touching the file), any other tool has
