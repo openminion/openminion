@@ -392,6 +392,49 @@ def test_subagent_run_threads_context_as_runtime_metadata() -> None:
     assert context.memory_posture == "none"
 
 
+def test_subagent_accepts_decorated_tools_in_allowlist() -> None:
+    registry = ToolRegistry()
+    runtime = _FakeRuntime(tools=registry)
+    parent = Agent(runtime=runtime, name="parent")
+
+    @tool
+    def check_syntax(message: str) -> str:
+        return f"checked:{message}"
+
+    @tool(name="custom.verify")
+    def verify(message: str) -> str:
+        return f"verified:{message}"
+
+    child = subagent(
+        parent,
+        name="child",
+        tools=[check_syntax, "safe.read", verify],
+    )
+
+    assert child.tools == ["check_syntax", "safe.read", "custom.verify"]
+    assert child.subagent_context is not None
+    assert child.subagent_context.tool_allowlist == (
+        "check_syntax",
+        "safe.read",
+        "custom.verify",
+    )
+
+    child.run("bounded tool work")
+
+    context = runtime.last_trusted_subagent_context
+    assert context is not None
+    assert context.tool_allowlist == ("check_syntax", "safe.read", "custom.verify")
+    assert context.as_inbound_metadata()["subagent_tool_allowlist"] == (
+        "check_syntax,safe.read,custom.verify"
+    )
+    assert runtime.tool_result_during_run == "checked:child marker"
+    assert "check_syntax" not in registry.list()
+    assert "custom.verify" not in registry.list()
+
+    with pytest.raises(TypeError, match="openminion.tool"):
+        subagent(parent, name="invalid", tools=[lambda: "bad"])
+
+
 def test_subagent_rejects_unbound_memory_posture_before_run() -> None:
     parent = Agent(runtime=_FakeRuntime(), name="parent")
 

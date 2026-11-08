@@ -7,6 +7,11 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `subagent()` now populates `SubagentRunContext.tool_allowlist` from the child
+  `Agent`'s resolved tool names (`tuple(child.tools)`) instead of raw `tools`
+  items, so `@tool`-decorated callables work in `subagent(parent, tools=[...])`
+  without raising `TypeError` when inbound metadata is projected (Refs #703).
+
 - A malformed MCP `tools/call` arguments value is no longer treated as an omitted
   one: only an absent field defaults to an empty object, so a supplied `null`, `false`,
   `0`, `""` or `[]` now returns `-32602` without invoking the tool instead of running it
