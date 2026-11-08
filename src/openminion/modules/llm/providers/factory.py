@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from openminion.base.config import OpenMinionConfig
-from openminion.base.config.core import resolve_default_agent_id
+from openminion.base.config.core import ConfigValidationError, resolve_default_agent_id
 from openminion.base.config.env import resolve_environment_config
 from openminion.modules.llm.config import resolve_provider_identity_translation
 from openminion.modules.llm.constants import (
@@ -243,9 +243,12 @@ def _build_llmctl_bridge_provider(
 def _resolve_default_provider_name(config: OpenMinionConfig) -> str:
     try:
         agent_id = resolve_default_agent_id(config)
-        return (config.agents[agent_id].provider or "echo").strip().lower() or "echo"
-    except Exception:  # noqa: BLE001
+    except ConfigValidationError:
+        # An empty agent catalog is the supported first-run shape; keep echo for it.
         return "echo"
+    # A missing or unknown default_agent is a selection error, not a reason to build a
+    # different provider than the config asked for.
+    return (config.agents[agent_id].provider or "echo").strip().lower() or "echo"
 
 
 def _provider_settings_for_llmctl_bridge(
