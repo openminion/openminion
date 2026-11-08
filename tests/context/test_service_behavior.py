@@ -1,3 +1,4 @@
+import hashlib
 import unittest
 from collections import Counter
 
@@ -1590,6 +1591,89 @@ class CacheBehaviorTests(unittest.TestCase):
                         self.assertIn("Identity for agent-test", rendered)
                     else:
                         self.assertNotIn("Identity for agent-test", rendered)
+
+    def test_gateway_context_change_rebuilds_same_session_pack(self) -> None:
+        for first_context, second_context in (
+            ("/probe/a", "/probe/b"),
+            ("/probe/b", "/probe/a"),
+            ("", "/probe/b"),
+        ):
+            with self.subTest(
+                first_context=first_context, second_context=second_context
+            ):
+                service = _make_service()
+                first_request = _make_request().model_copy(
+                    update={"gateway_system_context": first_context}
+                )
+                second_request = _make_request().model_copy(
+                    update={"gateway_system_context": second_context}
+                )
+                first = service.build_pack(first_request)
+                second = service.build_pack(second_request)
+
+                rendered = "\n".join(segment.content for segment in second.segments)
+                if second_context:
+                    self.assertIn(second_context, rendered)
+                if first_context and first_context != second_context:
+                    self.assertNotIn(first_context, rendered)
+                self.assertEqual(len(service._cache), 2)
+                self.assertNotEqual(first.pack_version, second.pack_version)
+                self.assertNotEqual(first.pack_hash, second.pack_hash)
+
+    def test_gateway_context_identical_request_still_hits_cache(self) -> None:
+        service = _make_service()
+        request = _make_request().model_copy(
+            update={"gateway_system_context": "[GATEWAY CONTEXT]\nowner: probe"}
+        )
+        first = service.build_pack(request)
+        same = service.build_pack(request.model_copy())
+        # The prefix renders the stripped value, so padding is not new identity.
+        padded = service.build_pack(
+            _make_request().model_copy(
+                update={
+                    "gateway_system_context": "  [GATEWAY CONTEXT]\nowner: probe \n"
+                }
+            )
+        )
+
+        self.assertIs(first, same)
+        self.assertIs(first, padded)
+        self.assertEqual(len(service._cache), 1)
+
+    def test_gateway_context_identity_keeps_unrelated_cache_misses(self) -> None:
+        service = _make_service()
+        request = _make_request().model_copy(
+            update={"gateway_system_context": "/probe/a"}
+        )
+        first = service.build_pack(request)
+        second = service.build_pack(request.model_copy(update={"query": "different"}))
+
+        self.assertEqual(len(service._cache), 2)
+        self.assertNotEqual(first.pack_version, second.pack_version)
+
+    def test_gateway_context_identity_does_not_move_bytes_or_budget(self) -> None:
+        # Byte and token values were captured before the rendered-input identity
+        # was added: the fix may change cache identity, never rendered content.
+        request = _make_request().model_copy(
+            update={"gateway_system_context": "[GATEWAY CONTEXT]\nowner: probe"}
+        )
+        pack = _make_service().build_pack(request)
+        rendered = "\n".join(segment.content for segment in pack.segments)
+        report = pack.token_budget_report
+        self.assertIsNotNone(report)
+        assert report is not None
+
+        self.assertEqual(
+            [segment.id for segment in pack.segments],
+            ["static_prefix", "mission_snapshot", "summary", "turn_input"],
+        )
+        self.assertEqual(len(rendered), 1064)
+        self.assertEqual(
+            hashlib.sha256(rendered.encode("utf-8")).hexdigest(),
+            "8dea171c14cca50f7684b85ac6bdde176dc391a0450b1c54410150f86ed9d0b1",
+        )
+        self.assertEqual(report.total_used_tokens, 263)
+        self.assertEqual(report.total_cap_tokens, 1800)
 
     def test_cache_miss_on_provider_pref_change(self) -> None:
         service = _make_service()
