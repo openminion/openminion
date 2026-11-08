@@ -156,7 +156,7 @@ def _stage_tool_outcome_candidate(
 ) -> str | None:
     memory_api = getattr(runner, "memory_api", None)
     normalized_tool_name = str(tool_name or "").strip()
-    memory_write_allowed = getattr(runner, "_memory_write_allowed_for_turn", True)
+    memory_write_allowed = runner._memory_write_allowed_for_turn
     if memory_api is None or not normalized_tool_name or not memory_write_allowed:
         return None
     outcome = _staged_tool_outcome(

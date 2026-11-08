@@ -3347,7 +3347,8 @@ def test_coding_replay_persists_distinct_next_confirmation(
         SimpleNamespace(
             _approve=lambda **kwargs: AskUserCommand(
                 title="approval", question=question
-            )
+            ),
+            _memory_write_allowed_for_turn=True,
         )
     )
 

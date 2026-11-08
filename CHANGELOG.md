@@ -19,6 +19,12 @@ This file tracks package-facing release notes for `openminion`.
   items, so `@tool`-decorated callables work in `subagent(parent, tools=[...])`
   without raising `TypeError` when inbound metadata is projected (Refs #703).
 
+- `write_decision_memory` and `_stage_tool_outcome_candidate` now read
+  `runner._memory_write_allowed_for_turn` directly instead of defaulting a
+  missing attribute to `True` via `getattr`, while preserving `BrainRunner`'s
+  standalone constructor default and per-turn service policy evaluation
+  (Refs #647).
+
 - A malformed MCP `tools/call` arguments value is no longer treated as an omitted
   one: only an absent field defaults to an empty object, so a supplied `null`, `false`,
   `0`, `""` or `[]` now returns `-32602` without invoking the tool instead of running it
