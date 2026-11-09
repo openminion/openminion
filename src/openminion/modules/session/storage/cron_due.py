@@ -31,39 +31,50 @@ def canonical_due(value: str) -> str:
 
 
 # SQLite's date functions stop at milliseconds, so `...00.100001` would poll as due at
-# `...00.100000` and a one-shot job would be cleared a microsecond early. The instant
-# is therefore compared as an (epoch second, microsecond) pair: the second comes from
-# `strftime('%s', ...)` (cast to INTEGER, because that function returns TEXT, which
-# sorts above every integer) and the microsecond from the stored fraction, absent
-# meaning zero. Equivalent spellings compare equal: `+14:00` moves the calendar date
-# without moving the instant, and `.1` equals `.100000`. The guards drop a value that
-# is not a calendar-valid instant from year 0001 on, and bound the clock fields to
-# what `parse_iso_datetime` accepts: SQLite rolls `24:00:00` into the next day, so
-# without the bound a persisted `24:00` would be selected and then raise in the poll.
-_SQLITE_DUE_SECOND = "CAST(strftime('%s', next_due_at) AS INTEGER)"
+# `...00.100000` and a one-shot job would be cleared a microsecond early. The instant is
+# therefore compared as an (epoch second, microsecond) pair: the second comes from
+# `strftime('%s', ...)` (cast to INTEGER, because that function returns TEXT, which sorts
+# above every integer) and the microsecond from the stored fraction, absent meaning zero.
+# Equivalent spellings compare equal: `+14:00` moves the calendar date without moving the
+# instant, and `.1` equals `.100000`.
+#
+# `parse_iso_datetime` also accepts hour precision (`2030-11-07T02`, `...T02Z`,
+# `...T02+02:00`), which SQLite's parser does not cover, so the stored text is widened to
+# `HH:00:00` before any arithmetic. Widening happens once, in a subquery, so every guard
+# and the comparison read the same normalised text.
+_SQLITE_DUE_TEXT = (
+    "CASE WHEN substr(next_due_at, 11, 1) IN ('T', ' ')"
+    " AND substr(next_due_at, 14, 1) <> ':'"
+    " THEN substr(next_due_at, 1, 13) || ':00:00' || substr(next_due_at, 14)"
+    " ELSE next_due_at END"
+)
+_SQLITE_DUE_SECOND = "CAST(strftime('%s', due_text) AS INTEGER)"
 _SQLITE_DUE_MICROSECOND = (
-    "CASE WHEN instr(next_due_at, '.') = 0 THEN 0 "
-    "ELSE CAST(round(CAST(substr(next_due_at, instr(next_due_at, '.')) AS REAL)"
+    "CASE WHEN instr(due_text, '.') = 0 THEN 0 "
+    "ELSE CAST(round(CAST(substr(due_text, instr(due_text, '.')) AS REAL)"
     " * 1000000) AS INTEGER) END"
 )
 _SQLITE_DUE_ROWS_SQL = f"""
-        SELECT * FROM cron_jobs
-        WHERE enabled = 1 AND next_due_at IS NOT NULL
-          AND date(substr(next_due_at, 1, 10)) = substr(next_due_at, 1, 10)
-          AND substr(next_due_at, 1, 4) >= '0001'
-          AND strftime('%s', next_due_at) IS NOT NULL
+        SELECT * FROM (
+          SELECT cron_jobs.*, {_SQLITE_DUE_TEXT} AS due_text
+          FROM cron_jobs
+          WHERE enabled = 1 AND next_due_at IS NOT NULL
+        )
+        WHERE date(substr(due_text, 1, 10)) = substr(due_text, 1, 10)
+          AND substr(due_text, 1, 4) >= '0001'
+          AND strftime('%s', due_text) IS NOT NULL
           AND (
-            substr(next_due_at, 11, 1) = ''
+            substr(due_text, 11, 1) = ''
             OR (
-              substr(next_due_at, 11, 1) IN ('T', ' ')
-              AND substr(next_due_at, 12, 2) BETWEEN '00' AND '23'
-              AND substr(next_due_at, 14, 1) = ':'
-              AND substr(next_due_at, 15, 2) BETWEEN '00' AND '59'
+              substr(due_text, 11, 1) IN ('T', ' ')
+              AND substr(due_text, 12, 2) BETWEEN '00' AND '23'
+              AND substr(due_text, 14, 1) = ':'
+              AND substr(due_text, 15, 2) BETWEEN '00' AND '59'
               AND (
-                substr(next_due_at, 17, 1) IN ('', 'Z', '+', '-')
+                substr(due_text, 17, 1) IN ('', 'Z', '+', '-')
                 OR (
-                  substr(next_due_at, 17, 1) = ':'
-                  AND substr(next_due_at, 18, 2) BETWEEN '00' AND '59'
+                  substr(due_text, 17, 1) = ':'
+                  AND substr(due_text, 18, 2) BETWEEN '00' AND '59'
                 )
               )
             )
@@ -79,40 +90,51 @@ _SQLITE_DUE_ROWS_SQL = f"""
         LIMIT ?
 """
 
-# PostgreSQL has neither `julianday` nor SQLite's lenient parsing, so the comparison is
-# a native `timestamptz` one, which keeps microseconds. Unreadable text would make the
-# cast raise and abort the poll, so the cast is reached only behind a shape, year and
-# month-day guard; SQLite's predicate treats the same values as not due.
+# PostgreSQL has neither `julianday` nor SQLite's lenient parsing, so the comparison is a
+# native `timestamptz` one, which keeps microseconds. Unreadable text would make the cast
+# raise and abort the poll, so the cast is reached only behind a shape, year and month-day
+# guard. Hour precision is widened the same way SQLite widens it.
+_POSTGRES_DUE_TEXT = """CASE
+            WHEN next_due_at ~ '^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])[T ]([01][0-9]|2[0-3])([Z]|[+-][0-9]{2}(:{0,1}[0-9]{2}){0,1}){0,1}$'
+            THEN substr(next_due_at, 1, 13) || ':00:00' || substr(next_due_at, 14)
+            ELSE next_due_at
+          END"""
 _POSTGRES_DUE_INSTANT = """CASE
-            WHEN next_due_at ~ '^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])([T ]([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9]){0,1}(\\.[0-9]{1,6}){0,1}){0,1}([Z]|[+-](0[0-9]|1[0-4]):{0,1}[0-5][0-9]){0,1}$'
-              AND next_due_at >= '0001'
+            WHEN due_text ~ '^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])([T ]([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9]){0,1}(\\.[0-9]{1,6}){0,1}){0,1}([Z]|[+-](0[0-9]|1[0-4]):{0,1}[0-5][0-9]){0,1}$'
+              AND due_text >= '0001'
             THEN CASE
               WHEN CASE
-                WHEN substr(next_due_at, 6, 2) IN
+                WHEN substr(due_text, 6, 2) IN
                      ('01', '03', '05', '07', '08', '10', '12')
-                  THEN substr(next_due_at, 9, 2)::int <= 31
-                WHEN substr(next_due_at, 6, 2) IN ('04', '06', '09', '11')
-                  THEN substr(next_due_at, 9, 2)::int <= 30
-                ELSE substr(next_due_at, 9, 2)::int <= 28 + (CASE
-                  WHEN (substr(next_due_at, 1, 4)::int % 4 = 0
-                        AND substr(next_due_at, 1, 4)::int % 100 <> 0)
-                    OR substr(next_due_at, 1, 4)::int % 400 = 0
+                  THEN substr(due_text, 9, 2)::int <= 31
+                WHEN substr(due_text, 6, 2) IN ('04', '06', '09', '11')
+                  THEN substr(due_text, 9, 2)::int <= 30
+                ELSE substr(due_text, 9, 2)::int <= 28 + (CASE
+                  WHEN (substr(due_text, 1, 4)::int % 4 = 0
+                        AND substr(due_text, 1, 4)::int % 100 <> 0)
+                    OR substr(due_text, 1, 4)::int % 400 = 0
                   THEN 1 ELSE 0 END)
               END
               THEN CAST(
+                -- A date-only value has no offset of its own, and its trailing `-DD`
+                -- would otherwise read as one, so UTC is pinned explicitly rather than
+                -- left to the server's timezone.
                 CASE
-                  WHEN next_due_at ~ '[T ][0-9]{2}:[0-9]{2}'
-                    AND next_due_at ~ '(Z|[+-][0-9]{2}(:{0,1}[0-9]{2}){0,1})$'
-                    THEN next_due_at
-                  ELSE next_due_at || '+00:00'
+                  WHEN due_text ~ '[T ][0-9]{2}:[0-9]{2}'
+                    AND due_text ~ '(Z|[+-][0-9]{2}(:{0,1}[0-9]{2}){0,1})$'
+                    THEN due_text
+                  ELSE due_text || '+00:00'
                 END AS timestamptz
               )
             END
           END"""
 _POSTGRES_DUE_ROWS_SQL = f"""
-        SELECT * FROM cron_jobs
-        WHERE enabled = 1 AND next_due_at IS NOT NULL
-          AND {_POSTGRES_DUE_INSTANT} <= CAST(? AS timestamptz)
+        SELECT * FROM (
+          SELECT cron_jobs.*, {_POSTGRES_DUE_TEXT} AS due_text
+          FROM cron_jobs
+          WHERE enabled = 1 AND next_due_at IS NOT NULL
+        ) AS due
+        WHERE {_POSTGRES_DUE_INSTANT} <= CAST(? AS timestamptz)
         ORDER BY {_POSTGRES_DUE_INSTANT} ASC
         LIMIT ?
 """
@@ -136,4 +158,6 @@ def due_job_rows(
         second = math.floor(now_dt.timestamp())
         sql = _SQLITE_DUE_ROWS_SQL
         params = (second, second, now_dt.microsecond, limit)
-    return cast(list[dict[str, Any]], record_store.query_dicts(sql, params))
+    rows = cast(list[dict[str, Any]], record_store.query_dicts(sql, params))
+    # `due_text` is the normalised comparison text, not a column of the job row.
+    return [{k: v for k, v in row.items() if k != "due_text"} for row in rows]
