@@ -7,6 +7,17 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Cron due times are now compared as instants rather than as text: SQLite compares the
+  stored value's epoch second and microsecond as a pair, and PostgreSQL compares a
+  `timestamptz`, so a one-shot job whose stored `next_due_at` carries a non-UTC offset
+  or a microsecond later than the poll keeps its due time instead of being selected and
+  cleared, two due jobs are picked earliest-first under a limit, and an unreadable
+  stored value is never due instead of aborting the poll. Every spelling
+  `parse_iso_datetime` accepts stays due, including date-only, minute-precision and
+  zone-suffixed minute forms. A compensation write through
+  `set_cron_job_enabled(..., next_due_at_override=...)` is stored in canonical UTC, and
+  an idle poll no longer scans every future job (Refs #655).
+
 - The agent loop's stall rule now counts consecutive failures: a productive batch clears
   the no-progress counter, so two intermittent failures spread across a turn no longer end it
   while work is still getting done (Refs #679).
