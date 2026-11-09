@@ -354,14 +354,8 @@ def _build_closure_hints(
     queue = getattr(runner, "turn_input_queue", None)
     trace_id = str(state.trace_id or "").strip()
     if queue is not None and trace_id:
-        applied_steering = [
-            entry.text
-            for entry in queue.list_applied_steering(
-                session_id=state.session_id,
-                agent_id=state.agent_id,
-                target_trace_id=trace_id,
-            )
-        ]
+        scope = (state.session_id.strip(), state.agent_id.strip(), trace_id)
+        applied_steering = [entry.text for entry in queue.list_applied_steering(scope)]
         if applied_steering:
             hints["applied_turn_steering"] = applied_steering
     if state.freshness_contract is not None:
