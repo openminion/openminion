@@ -72,7 +72,7 @@ def write_decision_memory(
     memory_api = _memory_api_for_state(runner, state)
     _emit = partial(_emit_memory_event, logger, state)
 
-    if not getattr(runner, "_memory_write_allowed_for_turn", True):
+    if not runner._memory_write_allowed_for_turn:
         _emit(
             "brain.decision_memory.skipped",
             {"reason": "memory_write_not_authorized"},

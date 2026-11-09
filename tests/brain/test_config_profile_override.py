@@ -116,6 +116,7 @@ class _FakeRunner:
         self._decision = decision
         self.profile = _profile(default_act_profile)
         self.options = SimpleNamespace(plan_checkpoint_interval=0)
+        self._memory_write_allowed_for_turn = True
 
     def _decide(
         self,
