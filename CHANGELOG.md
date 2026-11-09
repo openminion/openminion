@@ -7,6 +7,11 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `/model setup` now shows the provider list inside its own prompt instead of printing
+  it to the console first: the overlay takes the screen before the prompt appears, so the
+  numbered menu was never visible and the connection had to be chosen from memory. The
+  menu is repeated when an entry is rejected (Refs #707).
+
 - A provider factory no longer substitutes `echo` when the config names no usable
   default agent: a missing or unknown `default_agent` in a multi-agent catalog now
   raises the canonical `UnknownProfileError` from `build_provider` and
