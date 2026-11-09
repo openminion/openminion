@@ -266,6 +266,8 @@ def test_supported_spellings_of_an_instant_still_queue_after_a_restart(
     supported = {
         "date_only": "2030-11-07",
         "minute_only": "2030-11-07T00:00",
+        "minute_zulu": "2030-11-07T00:00Z",
+        "minute_offset": "2030-11-07T02:00+02:00",
         "space_separator": "2030-11-07 00:00:00",
         "zulu": "2030-11-07T00:00:00Z",
         "offset": "2030-11-07T02:00:00+02:00",
