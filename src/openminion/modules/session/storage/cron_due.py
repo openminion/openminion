@@ -60,7 +60,7 @@ _SQLITE_DUE_ROWS_SQL = f"""
               AND substr(next_due_at, 14, 1) = ':'
               AND substr(next_due_at, 15, 2) BETWEEN '00' AND '59'
               AND (
-                substr(next_due_at, 17, 1) = ''
+                substr(next_due_at, 17, 1) IN ('', 'Z', '+', '-')
                 OR (
                   substr(next_due_at, 17, 1) = ':'
                   AND substr(next_due_at, 18, 2) BETWEEN '00' AND '59'
