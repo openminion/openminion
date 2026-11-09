@@ -7,6 +7,10 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- A same-session context rebuild now treats the rendered `gateway_system_context` as
+  pack identity: the runtime cache lookup key and `pack_version` include the stripped
+  gateway context, so changing that input returns the newly rendered bytes instead of
+  the previous pack's cached bytes (Refs #644).
 - Slack Socket Mode keeps an import-time fault out of its install guidance: only a
   `ModuleNotFoundError` that names `slack_sdk` itself and leaves no resolvable spec
   raises `MissingSlackSocketDependency` with the extra name, while a fault raised
