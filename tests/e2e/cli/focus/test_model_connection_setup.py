@@ -29,14 +29,16 @@ class _Overlay:
         self.prompts = prompts
         self.confirms = confirms
         self.secret_prompts: list[bool] = []
+        self.prompt_texts: list[str] = []
 
     async def present_prompt_async(
         self,
-        _prompt: str,
+        prompt: str,
         *,
         secret: bool = False,
     ) -> str | None:
         self.secret_prompts.append(secret)
+        self.prompt_texts.append(prompt)
         return self.prompts.pop(0)
 
     async def present_confirm_async(
@@ -50,15 +52,18 @@ class _Overlay:
 
 
 class _Runtime:
-    def __init__(self, preset_id: str) -> None:
-        self.preset = get_setup_preset(preset_id)
+    def __init__(self, preset_id: str, extra_ids: tuple[str, ...] = ()) -> None:
+        self.presets = tuple(
+            get_setup_preset(preset) for preset in (preset_id, *extra_ids)
+        )
+        self.preset = self.presets[0]
         self.build_calls: list[dict[str, Any]] = []
         self.applied: list[Any] = []
         self.failures: list[Exception] = []
         self.apply_error: Exception | None = None
 
     def model_setup_presets(self) -> tuple[Any, ...]:
-        return (self.preset,)
+        return self.presets
 
     def build_model_setup(self, **kwargs: Any) -> Any:
         self.build_calls.append(kwargs)
@@ -115,6 +120,23 @@ async def test_model_setup_saves_and_selects_known_preset() -> None:
     ]
     assert len(runtime.applied) == 1
     assert "selected for this session; not tested yet" in output.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_model_setup_prompt_lists_every_available_connection() -> None:
+    runtime = _Runtime("ollama", ("openai", "groq"))
+    overlay = _Overlay(["missing", "1", ""], [True])
+    console, _ = _console()
+
+    await handle_model_setup(runtime=runtime, console=console, overlay=overlay)
+
+    first_prompt = overlay.prompt_texts[0]
+    assert "Add a model connection (3 available):" in first_prompt
+    for index, preset in enumerate(runtime.presets, start=1):
+        expected = f"  {index}. {preset.display_label} ({preset.api_format_label})"
+        assert expected in first_prompt
+    assert first_prompt.endswith("Connection number or id: ")
+    assert overlay.prompt_texts[1] == first_prompt
 
 
 @pytest.mark.asyncio
