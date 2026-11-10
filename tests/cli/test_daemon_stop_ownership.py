@@ -116,6 +116,30 @@ def test_matching_identity_stops_the_daemon(
     assert "Stopped daemon pid=4242" in capsys.readouterr().out
 
 
+def test_virtual_environment_base_interpreter_stops_the_daemon(
+    stop_env,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    venv_python = tmp_path / "venv" / "Scripts" / "python.exe"
+    base_python = tmp_path / "base" / "python.exe"
+    venv_python.parent.mkdir(parents=True)
+    base_python.parent.mkdir(parents=True)
+    venv_python.write_text("", encoding="utf-8")
+    base_python.write_text("", encoding="utf-8")
+    monkeypatch.setattr(daemon_cmd.sys, "executable", str(venv_python))
+    monkeypatch.setattr(
+        daemon_cmd.sys, "_base_executable", str(base_python), raising=False
+    )
+    pid_file, state = stop_env
+    process = _install_process(state, _serve_argv(pid_file), exe=str(base_python))
+
+    assert daemon_cmd.daemon_stop(None) == 0
+    assert process.terminated == 1
+    assert "Stopped daemon pid=4242" in capsys.readouterr().out
+
+
 def test_different_config_is_refused_before_any_signal(
     stop_env, capsys: pytest.CaptureFixture[str]
 ) -> None:
