@@ -188,15 +188,22 @@ def _resolved_executable(path_text: str) -> str:
 
 
 def _is_this_interpreter(exe: str) -> bool:
-    """True when ``exe`` is this interpreter, or the launcher of its own installation.
+    """True when ``exe`` belongs to this interpreter installation.
 
-    Identity is a resolved file path, never a name or a prefix: a bare ``python3``
-    elsewhere, a shared ancestor directory and a nested framework tree are all refused.
+    Identity is a resolved file path, never a name or a prefix. Python's exact base
+    executable covers virtual environments, and macOS framework launchers are accepted
+    only within this interpreter's installation. Unrelated executables remain refused.
     """
     resolved_exe = _resolved_executable(exe)
-    if resolved_exe and resolved_exe == _resolved_executable(sys.executable):
+    resolved_current = _resolved_executable(sys.executable)
+    if resolved_exe and resolved_exe == resolved_current:
         return True
-    install = _FRAMEWORK_INSTALL.match(_resolved_executable(sys.executable))
+    resolved_base = _resolved_executable(
+        str(getattr(sys, "_base_executable", "") or "")
+    )
+    if resolved_exe and resolved_base and resolved_exe == resolved_base:
+        return True
+    install = _FRAMEWORK_INSTALL.match(resolved_current)
     if install is None or not resolved_exe:
         return False
     version_root = f"{install.group('root')}/Versions/{install.group('version')}"
