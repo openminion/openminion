@@ -179,7 +179,9 @@ def handle_published_mcp_request(
                 request_id, code=-32602, message="tools/call params must be an object"
             )
         name = str(params.get("name") or "").strip()
-        arguments = params.get("arguments") or {}
+        # Default only an omitted field: a supplied falsey value is malformed and must
+        # be refused below instead of running the tool as if nothing was passed.
+        arguments = params.get("arguments", {})
         if not isinstance(arguments, dict):
             return _jsonrpc_error(
                 request_id,

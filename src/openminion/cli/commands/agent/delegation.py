@@ -9,7 +9,9 @@ from openminion.services.runtime.a2a_delegate import build_a2a_delegate_api
 from openminion.tools.agent.plugin import _h_task_delegate
 
 _RESULT_MODE_ALIASES = frozenset({"result", "results"})
-_STATUS_MODES = frozenset({"status", "resume", "cancel", *_RESULT_MODE_ALIASES})
+_STATUS_MODES = frozenset(
+    {"status", "inspect", "resume", "cancel", *_RESULT_MODE_ALIASES}
+)
 _DELEGATE_START_USAGE = (
     "Usage: /delegate [sync|async] [--child-permission-mode readonly] "
     "<agent> <instruction...>"
@@ -62,6 +64,7 @@ def agent_delegate_usage() -> str:
         "  openminion agent delegate --mode async --target-agent-id <agent> --instruction <text>\n"
         "  openminion agent delegate-list [--limit 20]\n"
         "  openminion agent delegate-status --task-id <task>\n"
+        "  openminion agent delegate-inspect --task-id <task>\n"
         "  openminion agent delegate-result --task-id <task>\n"
         "  openminion agent delegate-cancel --task-id <task>\n"
         "  /delegate review '<review-request-json>'\n"

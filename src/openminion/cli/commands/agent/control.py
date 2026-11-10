@@ -66,6 +66,7 @@ def run_agent_operator(args) -> int:
     if action in {
         "delegate",
         "delegate-list",
+        "delegate-inspect",
         "delegate-status",
         "delegate-resume",
         "delegate-result",
@@ -632,6 +633,7 @@ def _add_agent_delegation_subcommands(
 
     for name, help_text in (
         ("delegate-status", "Poll a delegated async task"),
+        ("delegate-inspect", "Inspect safe delegated task structure and trace"),
         ("delegate-resume", "Deprecated: reports that delegated jobs cannot resume"),
         ("delegate-result", "Fetch the latest delegated task result"),
         ("delegate-cancel", "Cancel a delegated async task"),

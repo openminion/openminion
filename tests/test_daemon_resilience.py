@@ -292,10 +292,37 @@ def test_daemon_cli_lifecycle_uses_explicit_storage_roots(
     monkeypatch.setenv("OPENMINION_HOME", str(tmp_path / "ambient-home"))
     monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / "ambient-data"))
     alive = True
+    captured_endpoint: DaemonEndpoint | None = None
 
     class FakeProcess:
         def __init__(self, pid):
             assert pid == 4321
+
+        @staticmethod
+        def cmdline():
+            endpoint = captured_endpoint
+            assert endpoint is not None
+            return [
+                sys.executable,
+                "-m",
+                "openminion.daemon",
+                "serve",
+                "--config",
+                str(config_path),
+                "--host",
+                endpoint.host,
+                "--port",
+                str(endpoint.port),
+                "--pid-file",
+                str(pid_file),
+            ]
+
+        @staticmethod
+        def exe():
+            return sys.executable
+
+        def is_running(self):
+            return alive
 
         def terminate(self):
             nonlocal alive
@@ -303,6 +330,14 @@ def test_daemon_cli_lifecycle_uses_explicit_storage_roots(
 
     monkeypatch.setattr(daemon_mod, "process_alive", lambda pid: pid == 4321 and alive)
     monkeypatch.setattr(daemon_cmd.psutil, "Process", FakeProcess)
+    original_resolve = daemon_cmd.resolve_daemon_endpoint
+
+    def _capture_endpoint(*args, **kwargs):
+        nonlocal captured_endpoint
+        captured_endpoint = original_resolve(*args, **kwargs)
+        return captured_endpoint
+
+    monkeypatch.setattr(daemon_cmd, "resolve_daemon_endpoint", _capture_endpoint)
     monkeypatch.setattr(
         daemon_cmd,
         "probe_daemon_endpoint",
@@ -473,6 +508,28 @@ def test_daemon_stop_force_kills_hung_process(
     class FakeProcess:
         def __init__(self, pid: int) -> None:
             assert pid == 123
+
+        def cmdline(self) -> list[str]:
+            return [
+                sys.executable,
+                "-m",
+                "openminion.daemon",
+                "serve",
+                "--config",
+                "dummy.json",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "18789",
+                "--pid-file",
+                str(pid_file),
+            ]
+
+        def exe(self) -> str:
+            return sys.executable
+
+        def is_running(self) -> bool:
+            return not state["killed"]
 
         def terminate(self) -> None:
             calls.append("terminate")

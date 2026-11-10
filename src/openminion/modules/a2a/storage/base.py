@@ -55,8 +55,14 @@ def _structural_observability(
 
 class StateStore(Protocol):
     def reserve_idempotency(
-        self, key: str, scope: str
+        self,
+        key: str,
+        scope: str,
+        *,
+        request_fingerprint: str | None = None,
     ) -> tuple[bool, IdempotencyRecord | None]: ...
+
+    def get_idempotency(self, key: str, scope: str) -> IdempotencyRecord | None: ...
 
     def finish_idempotency(
         self,

@@ -4,6 +4,8 @@ import importlib.util
 import pathlib
 import sys
 
+import pytest
+
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 VALIDATOR_PATH = REPO_ROOT / "scripts" / "validate" / "import_boundaries.py"
@@ -21,6 +23,49 @@ def _load_validator():
 
 
 _validator = _load_validator()
+
+
+@pytest.mark.parametrize(
+    ("layer", "source"),
+    [
+        ("modules", "import openminion.services as services"),
+        ("modules", "from openminion.services import runtime"),
+        ("modules", "from openminion import services as runtime"),
+        ("modules", "from ...services import runtime"),
+        ("modules", "import os, openminion.services.runtime"),
+        ("modules", "import os; from openminion.api import runtime"),
+        (
+            "modules",
+            "from openminion.base.config import (\n    load_config as load,\n)",
+        ),
+        ("services", "import openminion.api as api"),
+        ("services", "from openminion import cli"),
+        ("services", "from ...api import runtime"),
+    ],
+)
+def test_validator_rejects_reverse_import_forms(tmp_path, monkeypatch, layer, source):
+    monkeypatch.setattr(_validator, "REPO_ROOT", tmp_path)
+    path = tmp_path / "src" / "openminion" / layer / "owner" / "probe.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(source + "\n", encoding="utf-8")
+
+    hits = _validator.scan_file(path, layer=layer)
+
+    assert len(hits) == 1
+    assert ":1:" in hits[0]
+
+
+def test_validator_ignores_import_examples_and_similarly_named_packages(tmp_path):
+    path = tmp_path / "example.py"
+    path.write_text(
+        '"""Example:\nfrom openminion.services.runtime import Runtime\n"""\n'
+        "# from openminion.api.runtime import APIRuntime\n"
+        "import openminion.services_extra\n"
+        "from openminion.modules.task import TaskCtl\n",
+        encoding="utf-8",
+    )
+
+    assert _validator.scan_file(path, layer="modules") == []
 
 
 def test_live_tree_has_no_reverse_layer_imports():

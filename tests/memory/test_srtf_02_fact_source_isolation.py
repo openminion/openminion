@@ -91,6 +91,7 @@ class ToolOutcomeStagingRecordTypeIsolationTests(unittest.TestCase):
             memory_api=_FakeMemoryAPI(),
             profile=SimpleNamespace(agent_id="test-agent"),
             session_api=None,
+            _memory_write_allowed_for_turn=True,
         )
         state = SimpleNamespace(
             session_id="s-test",

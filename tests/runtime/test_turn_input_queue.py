@@ -267,6 +267,8 @@ def test_supported_steering_batch_reserves_completes_and_compensates() -> None:
         target_trace_id="trace-1",
     )
     assert {entry.status for entry in completed} == {TurnInputQueueStatus.COMPLETED}
+    scope = ("s1", "a1", "trace-1")
+    assert queue.list_applied_steering(scope) == completed
     assert completed[0].steering_event_fact() == {
         "queue_id": "q1",
         "session_id": "s1",
@@ -282,10 +284,17 @@ def test_supported_steering_batch_reserves_completes_and_compensates() -> None:
         target_trace_id="trace-1",
     )
     assert {entry.status for entry in compensated} == {TurnInputQueueStatus.QUEUED}
+    assert queue.list_applied_steering(scope) == []
     retried = queue.reserve_steering(
         session_id="s1", agent_id="a1", target_trace_id="trace-1"
     )
     assert [entry.queue_id for entry in retried] == ["q1", "q2"]
+    assert queue.list_applied_steering(scope) == []
+    reapplied = queue.complete_steering(
+        queue_ids=[entry.queue_id for entry in retried],
+        target_trace_id="trace-1",
+    )
+    assert queue.list_applied_steering(scope) == reapplied
 
 
 def test_operational_events_are_emitted_without_text_payload() -> None:

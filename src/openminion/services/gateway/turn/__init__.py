@@ -18,9 +18,7 @@ from openminion.services.gateway.turn.route_classification import (
 )
 from openminion.services.gateway.routing import parse_metadata_bool
 from openminion.services.gateway.turn.lifecycle import RuntimeSessionTurnFenceError
-from openminion.modules.task.run import (
-    RUN_STATE_FAILED,
-)
+from openminion.modules.task.run import RUN_STATE_FAILED
 
 
 class GatewayTurnRunner(GatewayTurnRunnerFlowMixin):
@@ -211,11 +209,10 @@ class GatewayTurnRunner(GatewayTurnRunnerFlowMixin):
                     session_turn_fence_token=session_turn_fence_token,
                 )
             return outbound
-
         except RuntimeSessionTurnFenceError:
             raise
         except (Exception, asyncio.CancelledError) as exc:
-            self._finish_run_record(run_id, status="failed")
+            self._finish_run_record(run_id, status=RUN_STATE_FAILED)
             with active_chat_phase("terminal_event"):
                 self._lifecycle_ops.emit_terminal_run_state(
                     session_id=routing.session.id,

@@ -110,6 +110,16 @@ is safe to repeat. This does not guarantee exactly-once execution. Stop
 older A2A servers before sharing the store with the updated runtime, since
 older servers can still reclaim unresolved calls.
 
+A call key is scoped to the declared sender, resolved destination, method,
+and session. Reusing it with the same JSON arguments follows the retry behavior
+above. JSON object key order is ignored. Reusing the key with different arguments
+returns `IDEMPOTENCY_CONFLICT`.
+
+A matching record from an earlier version also returns `IDEMPOTENCY_CONFLICT`
+because it lacks the sender and argument binding. The old record is kept and
+the handler is not dispatched. Resolve the original outcome before choosing
+whether to submit a new operation.
+
 ## Security model
 
 - **Token auth is required.** Every endpoint compares
@@ -117,6 +127,8 @@ older servers can still reclaim unresolved calls.
   or mismatched token returns `401`. `a2actl serve` never starts with an empty
   token: it generates one and prints it to stderr if `--token` is omitted, and
   `A2AHTTPServer`/`serve_a2a` reject an empty or whitespace-only token.
+  Token holders share a trust domain and can choose any `from_agent` label.
+  The label scopes call retries within that domain.
 - **Default bind is loopback only** (`--host 127.0.0.1`). A server bound to
   `127.0.0.1` is not reachable from another machine. Passing
   `--host 0.0.0.0` (or a specific interface address) exposes the port on the
@@ -137,7 +149,7 @@ older servers can still reclaim unresolved calls.
 
 Errors are JSON `{"error": {"code": "...", "message": "...", "details": ...}}`
 with `400` for an invalid envelope, `404` for an unknown agent/job, `403` for a
-policy denial, and `500` for internal failures. The client preserves the server's
+policy denial, `409` for a call idempotency conflict, and `500` for internal failures. The client preserves the server's
 error code, message, and details; only genuinely malformed or non-envelope
 responses are reported as `INTERNAL_ERROR`.
 

@@ -306,7 +306,7 @@ class A2actlAdapter:
             response = _job_record_to_response(job)
             response.setdefault("metrics", _metrics(start))
             return response
-        except Exception as exc:  # noqa: BLE001
+        except (A2AError, PermissionError) as exc:
             return {
                 "status": BRAIN_JOB_STATUS_FAILED,
                 "summary": f"A2A job cancel failed: {exc}",
@@ -341,6 +341,42 @@ class A2actlAdapter:
             "count": len(jobs),
             "limit": requested_limit,
         }
+
+    def inspect_task(
+        self, *, task_id: str, session_id: str, trace_id: str
+    ) -> dict[str, Any]:
+        del trace_id
+        runtime = self._ensure_runtime()
+        try:
+            job = runtime.job_status(str(task_id or "").strip())
+            self._require_job_owner(job, session_id=session_id)
+            trace = runtime.query_trace(job.trace_id, limit=1000)
+            links = _delegation_observability_links(trace)
+            return {
+                "status": BRAIN_ACTION_STATUS_SUCCESS,
+                "task_id": job.task_id,
+                "trace_id": job.trace_id,
+                "summary": "Delegation inspection is available.",
+                "outputs": {
+                    "support": "supported",
+                    "authority": "session_task_owner",
+                    "task": _job_record_to_summary(job),
+                    "links": links,
+                    "timeline": [_delegation_timeline_entry(row) for row in trace],
+                    "child_session": {"status": "not_recorded"},
+                    "raw_content": {"status": "unavailable"},
+                },
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "status": BRAIN_JOB_STATUS_FAILED,
+                "task_id": str(task_id or "").strip(),
+                "summary": f"A2A job inspection failed: {exc}",
+                "error": {
+                    "code": "A2A_JOB_INSPECT_FAILED",
+                    "message": str(exc),
+                },
+            }
 
     def _require_job_owner(self, job: Any, *, session_id: str) -> None:
         owner = str(getattr(job, "owner_agent_id", "") or "").strip()
@@ -841,3 +877,37 @@ def _job_record_to_summary(job: Any) -> dict[str, Any]:
         "updated_at": str(getattr(job, "updated_at", "") or ""),
         "heartbeat_at": str(getattr(job, "heartbeat_at", "") or ""),
     }
+
+
+def _delegation_timeline_entry(row: Any) -> dict[str, Any]:
+    record = row if isinstance(row, dict) else {}
+    return {
+        "timestamp": str(record.get("ts") or ""),
+        "message_id": str(record.get("msg_id") or ""),
+        "a2a_trace_id": str(record.get("trace_id") or ""),
+        "from_agent": str(record.get("from_agent") or ""),
+        "to_agent": str(record.get("to_agent") or ""),
+        "type": str(record.get("type") or ""),
+        "method": str(record.get("method") or ""),
+        "status": str(record.get("status") or ""),
+        "task_id": str(record.get("task_id") or ""),
+        "error_code": str(record.get("error_code") or ""),
+    }
+
+
+def _delegation_observability_links(trace: list[dict[str, Any]]) -> dict[str, str]:
+    links = {"invocation_id": "", "source_execution_id": "", "handoff_id": ""}
+    for row in trace:
+        envelope = row.get("envelope")
+        if not isinstance(envelope, dict):
+            continue
+        observability = envelope.get("observability")
+        if not isinstance(observability, dict):
+            continue
+        links = {
+            "invocation_id": str(observability.get("invocation_id") or ""),
+            "source_execution_id": str(observability.get("execution_id") or ""),
+            "handoff_id": str(observability.get("handoff_id") or ""),
+        }
+        break
+    return links

@@ -12,4 +12,10 @@ tool-loop	tests/brain/tool_loops/test_engine.py
 task-lifecycle	tests/task/test_lifecycle.py
 delegation	tests/brain/modes/test_delegate_e2e.py
 scheduling	tests/runtime/test_cron_project_cycle.py
-approval	tests/integration/test_action_approval_e2e.py
+approval	tests/policy/test_m2_integration.py
+architecture	tests/architecture/test_module_service_boundary.py
+closure-verdict	tests/brain/test_closure_verdict_contract.py
+approval-replay	tests/brain/test_confirmation_replay_bridge_integration.py
+steering-budget	tests/brain/tool_loops/test_budget_steering.py
+steering-repeat	tests/brain/tool_loops/test_repeated_tool_steering.py
+session-replay	tests/session/test_sqlite_store_replay.py

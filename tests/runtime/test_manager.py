@@ -3,7 +3,12 @@ from __future__ import annotations
 from threading import Event
 from time import monotonic, sleep
 
-from openminion.services.runtime import AgentRuntimeManager, TurnRequest, TurnResponse
+from openminion.services.runtime import (
+    AgentRuntimeManager,
+    TurnError,
+    TurnRequest,
+    TurnResponse,
+)
 
 
 def test_turn_request_keeps_positional_explicit_agent_compatibility() -> None:
@@ -114,6 +119,41 @@ def test_cancel_queued_turn() -> None:
         cancelled = second.result(timeout_s=2)
         assert cancelled.errors
         assert cancelled.errors[0].code == "cancelled"
+    finally:
+        manager.shutdown()
+
+
+def test_cancel_active_turn_emits_cancelled_terminal_event() -> None:
+    started = Event()
+    events: list[str] = []
+
+    def _executor(req, emit_chunk, cancel_event):  # noqa: ANN001
+        del req, emit_chunk
+        started.set()
+        assert cancel_event.wait(timeout=2)
+        return TurnResponse(
+            final_text="",
+            errors=[TurnError(code="cancelled", message="turn cancelled")],
+        )
+
+    manager = AgentRuntimeManager(
+        turn_executor=_executor,
+        on_runtime_event=lambda event_type, _payload: events.append(event_type),
+    )
+    manager.start()
+    try:
+        handle = manager.submit_turn(
+            TurnRequest(
+                trace_id="trace-active",
+                agent_id="ops",
+                session_id="session-active",
+                input_text="wait",
+            )
+        )
+        assert started.wait(timeout=2)
+        assert manager.cancel_turn("trace-active") is True
+        assert handle.result(timeout_s=2).errors[0].code == "cancelled"
+        assert events[-1] == "runtime.turn.cancelled"
     finally:
         manager.shutdown()
 

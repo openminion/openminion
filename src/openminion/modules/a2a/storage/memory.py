@@ -30,7 +30,11 @@ class MemoryStateStore(StateStore):
         self._agents: dict[str, AgentDescriptor] = {}
 
     def reserve_idempotency(
-        self, key: str, scope: str
+        self,
+        key: str,
+        scope: str,
+        *,
+        request_fingerprint: str | None = None,
     ) -> tuple[bool, IdempotencyRecord | None]:
         with self._lock:
             row = self._idempotency.get((scope, key))
@@ -43,9 +47,14 @@ class MemoryStateStore(StateStore):
                 status=A2A_IDEMPOTENCY_STATUS_IN_PROGRESS,
                 created_at=now,
                 updated_at=now,
+                request_fingerprint=request_fingerprint,
             )
             self._idempotency[(scope, key)] = rec
             return True, copy.deepcopy(rec)
+
+    def get_idempotency(self, key: str, scope: str) -> IdempotencyRecord | None:
+        with self._lock:
+            return copy.deepcopy(self._idempotency.get((scope, key)))
 
     def finish_idempotency(
         self,

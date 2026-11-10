@@ -303,6 +303,7 @@ class ProductionBlockchainExecution:
                 policy_ctl, tool_registry=adapter.registry
             ),
             memory_api=None,
+            _memory_write_allowed_for_turn=True,
         )
         self.runner._approve = lambda *, state, command, logger: _approve_delegate(
             self.runner, state=state, command=command, logger=logger

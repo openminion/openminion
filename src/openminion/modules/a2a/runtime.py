@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
 import json
 import sqlite3
 import threading
@@ -36,6 +37,7 @@ from openminion.modules.a2a.errors import (
     ERROR_CODE_CANCELED,
     ERROR_CODE_FAILED,
     ERROR_CODE_HANDLER_ERROR,
+    ERROR_CODE_IDEMPOTENCY_CONFLICT,
     ERROR_CODE_IN_PROGRESS,
     ERROR_CODE_INVALID_ARGUMENT,
     ERROR_CODE_JOB_FAILED,
@@ -142,10 +144,7 @@ class A2ARuntime:
                 {"agent": resolved_agent, "method": envelope.method},
             )
 
-        scope = self._idempotency_scope(envelope, resolved_agent)
-        reserved, record = self.state_store.reserve_idempotency(
-            envelope.idempotency_key, scope
-        )
+        scope, reserved, record = self._reserve_call(envelope, resolved_agent)
         if record is None:
             return self._unknown_call_result(envelope, resolved_agent, cached=False)
         if not reserved:
@@ -677,6 +676,42 @@ class A2ARuntime:
         base_scope = f"{envelope.type}:{resolved_agent}:{envelope.method}"
         session_id = str(envelope.meta.get("session_id", "") or "").strip()
         return f"{base_scope}:{session_id}" if session_id else base_scope
+
+    def _reserve_call(
+        self, envelope: Envelope, resolved_agent: str
+    ) -> tuple[str, bool, IdempotencyRecord | None]:
+        key = envelope.idempotency_key
+        legacy_scope = self._idempotency_scope(envelope, resolved_agent)
+        if self.state_store.get_idempotency(key, legacy_scope) is not None:
+            raise A2AError(
+                ERROR_CODE_IDEMPOTENCY_CONFLICT,
+                "Legacy call record cannot verify the sender and arguments",
+            )
+
+        session_id = str(envelope.meta.get("session_id", "") or "").strip()
+        scope = "call-v2:" + json.dumps(
+            [resolved_agent, envelope.method, session_id, envelope.from_agent]
+        )
+        try:
+            arguments = json.dumps(
+                envelope.params, sort_keys=True, separators=(",", ":"), allow_nan=False
+            )
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise A2AError(
+                ERROR_CODE_INVALID_ARGUMENT, "Call arguments must be JSON-serializable"
+            ) from exc
+        fingerprint = hashlib.sha256(arguments.encode("utf-8")).hexdigest()
+        reserved, existing = self.state_store.reserve_idempotency(
+            key,
+            scope,
+            request_fingerprint=fingerprint,
+        )
+        if existing is not None and existing.request_fingerprint != fingerprint:
+            raise A2AError(
+                ERROR_CODE_IDEMPOTENCY_CONFLICT,
+                "Idempotency key was already used with different call arguments",
+            )
+        return scope, reserved, existing
 
     def _result_from_idempotency(
         self, *, existing: IdempotencyRecord, request: Envelope, resolved_agent: str

@@ -133,6 +133,7 @@ def build_runtime_cache_lookup_key(
         request.budgets_override.model_dump() if request.budgets_override else {}
     )
     budget_telemetry_hash = _stable_hash(request.budget_telemetry or {})
+    gateway_context_hash = _stable_hash(request.gateway_system_context.strip())
     return (
         request.session_id,
         request.agent_id,
@@ -149,6 +150,7 @@ def build_runtime_cache_lookup_key(
         budgets_hash,
         budget_telemetry_hash,
         continuity_query_hash,
+        gateway_context_hash,
     )
 
 
@@ -629,6 +631,9 @@ def _pack_version(
             "phase_hints": request.phase_hints,
             "live_state_overlay": request.live_state_overlay,
             "budgets": budgets.model_dump(),
+            "gateway_system_context": _stable_hash(
+                request.gateway_system_context.strip()
+            ),
         }
     )
 

@@ -296,12 +296,14 @@ def test_superseded_call_cannot_write_receipt(
     first = runtime(tmp_path, original_handler)
     # Simulate a reservation replaced by the previous runtime's reclaim algorithm.
     second = SQLiteStateStore(tmp_path / "runtime.db")
-    key, scope = request().idempotency_key, "call:writer:ticket.create"
+    key = request().idempotency_key
     try:
         with ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(first.call, request())
             try:
                 assert entered.wait(5)
+                scope, reserved, _ = first._reserve_call(request(), "writer")
+                assert not reserved
                 assert (
                     second._record_store.execute_count(
                         "UPDATE idempotency_keys SET created_at = ? WHERE scope = ? AND key = ?",

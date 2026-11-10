@@ -11,6 +11,7 @@ AUDIT_RECORDS_REVISION = "0002_audit"
 AUDIT_ARCHIVE_REVISION = "0003_archive"
 JOB_OWNER_REVISION = "0004_job_owner"
 JOB_IDEMPOTENCY_SCOPE_REVISION = "0005_job_idempotency_scope"
+CALL_REQUEST_FINGERPRINT_REVISION = "0006_call_request_fingerprint"
 
 
 def run_migrations(db_path: str | Path) -> None:
@@ -28,4 +29,5 @@ def list_migrations() -> list[str]:
         AUDIT_ARCHIVE_REVISION,
         JOB_OWNER_REVISION,
         JOB_IDEMPOTENCY_SCOPE_REVISION,
+        CALL_REQUEST_FINGERPRINT_REVISION,
     ]

@@ -107,8 +107,7 @@ def test_in_progress_replay_shape(runtime: A2ARuntime) -> None:
         timeout_ms=1000,
     )
 
-    route = runtime.registry.resolve(req)
-    scope = runtime._idempotency_scope(req, route.descriptor.agent_id)
+    scope, _, _ = runtime._reserve_call(req, "calc")
     runtime.state_store.set_idempotency_result(
         req.idempotency_key,
         scope,

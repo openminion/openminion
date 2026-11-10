@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from openminion.modules.a2a.errors import (
     A2AError,
     ERROR_CODE_AGENT_NOT_FOUND,
+    ERROR_CODE_IDEMPOTENCY_CONFLICT,
     ERROR_CODE_INTERNAL_ERROR,
     ERROR_CODE_INVALID_ARGUMENT,
     ERROR_CODE_INVALID_CONFIG,
@@ -51,6 +52,8 @@ _RUNTIME_DEPENDENCY_ERRORS = (
 def _status_for_a2a_error(exc: A2AError) -> HTTPStatus:
     if exc.code in _HTTP_400_CODES:
         return HTTPStatus.BAD_REQUEST
+    if exc.code == ERROR_CODE_IDEMPOTENCY_CONFLICT:
+        return HTTPStatus.CONFLICT
     if exc.code == ERROR_CODE_POLICY_DENIED:
         return HTTPStatus.FORBIDDEN
     if exc.code in _HTTP_404_CODES:

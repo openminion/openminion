@@ -247,7 +247,11 @@ def test_written_decision_card_surfaces_for_repeated_typed_sub_intent() -> None:
     )
 
     write_decision_memory(
-        runner=type("Runner", (), {"memory_api": memory})(),
+        runner=type(
+            "Runner",
+            (),
+            {"memory_api": memory, "_memory_write_allowed_for_turn": True},
+        )(),
         state=state,
         decision=decision,
     )
