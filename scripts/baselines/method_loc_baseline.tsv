@@ -92,11 +92,11 @@ src/openminion/modules/tool/executor.py	execute_single_call	198	current over-thr
 src/openminion/modules/tool/runtime/manager.py	ToolRegistryManager.compile	128	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/tool/schema_service.py	ToolSchemaService.collect_execution_tool_schemas	110	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/gateway/service.py	GatewayService.handle_message_streaming	116	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/services/gateway/turn/__init__.py	GatewayTurnRunner.run	197	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/services/gateway/turn/__init__.py	GatewayTurnRunner.run	196	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/health/observability.py	_build_brain_llm_mode_observability_check	167	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/health/service.py	collect_health_snapshot	199	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/runtime/bootstrap.py	build_brain_runner_bundle	282	Issue 342 passes the runtime-scoped artifact config to the existing session and shared artifact owners
-src/openminion/services/runtime/manager.py	AgentRuntimeManager._worker_loop	121	PSCC extracted shutdown queue finalization into its existing runtime owner
+src/openminion/services/runtime/manager.py	AgentRuntimeManager._worker_loop	105	PSCC extracted shutdown queue finalization into its existing runtime owner
 src/openminion/services/supervision/service.py	SupervisionService.evaluate	119	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/tools/browser/providers/playwright/config.py	provider_config_from_mapping	184	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/tools/exec/command_parser.py	_parse_command_posix	123	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes

@@ -76,3 +76,27 @@ def test_execute_turn_cancel_before_execution_skips_ingress() -> None:
 
     execute_ingress.assert_not_called()
     assert response.errors[0].code == "cancelled"
+
+
+def test_execute_turn_cancel_during_execution_returns_cancelled() -> None:
+    request = TurnRequest(
+        trace_id="trace-3",
+        agent_id="main",
+        session_id="session-3",
+        input_text="hello",
+    )
+    runtime = SimpleNamespace(config_path="config.json")
+    cancel_event = SimpleNamespace(is_set=lambda: True)
+
+    with mock.patch(
+        "openminion.services.runtime.daemon._execute_runtime_turn_with_timer",
+        side_effect=RuntimeError("Turn cancelled."),
+    ):
+        response = execute_turn(
+            runtime=runtime,
+            request=request,
+            emit_chunk=lambda _chunk: None,
+            cancel_event=cancel_event,
+        )
+
+    assert response.errors[0].code == "cancelled"

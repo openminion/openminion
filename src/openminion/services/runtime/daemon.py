@@ -395,8 +395,8 @@ def execute_turn(
         )
     except Exception as exc:
         return _turn_error_response(
-            code="turn_failed",
-            message=str(exc),
+            code="cancelled" if (cancelled := cancel_event.is_set()) else "turn_failed",
+            message="turn cancelled during execution" if cancelled else str(exc),
             retryable=False,
             duration_ms=_duration_since_ms(started),
         )
