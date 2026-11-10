@@ -48,12 +48,20 @@ async def _prompt_setup_selection(
     overlay: TerminalOverlayPresenter,
 ) -> tuple[Any, str, str, str] | None:
     presets = tuple(runtime.model_setup_presets())
-    console.print(Text("Add a model connection", style="bold"))
-    for index, preset in enumerate(presets, start=1):
-        console.print(f"  {index}. {preset.display_label} ({preset.api_format_label})")
+    # The overlay owns the screen, so the menu has to travel inside the prompt.
+    menu = "\n".join(
+        [
+            f"Add a model connection ({len(presets)} available):",
+            *(
+                f"  {index}. {preset.display_label} ({preset.api_format_label})"
+                for index, preset in enumerate(presets, start=1)
+            ),
+        ]
+    )
+    prompt = f"{menu}\nConnection number or id: "
 
     while True:
-        choice = await overlay.present_prompt_async("Connection number or id: ")
+        choice = await overlay.present_prompt_async(prompt)
         if not choice:
             return None
         preset = None

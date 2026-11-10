@@ -33,6 +33,7 @@ class _FakeRunner:
         self.meta_user_inputs: list[object] = []
         self.profile = _profile()
         self.options = SimpleNamespace(plan_checkpoint_interval=0)
+        self._memory_write_allowed_for_turn = True
 
     def _decide(
         self,

@@ -695,47 +695,53 @@ def test_autonomy_start_persists_repository_lifecycle_refs(tmp_path: Path) -> No
     assert "workspace_boundary" not in type(project_run).model_fields
 
 
-def test_autonomy_start_rejects_repository_outside_boundary(tmp_path: Path) -> None:
+def test_autonomy_start_rejects_repository_outside_boundary(
+    tmp_path: Path, capsys
+) -> None:
     boundary = tmp_path / "boundary"
     repository = tmp_path / "repository"
     boundary.mkdir()
     repository.mkdir()
     (repository / ".git").mkdir()
 
-    with pytest.raises(ValueError, match="inside the workspace boundary"):
-        _run_cli(
-            [
-                *_root_args(tmp_path),
-                "autonomy",
-                "start",
-                "--goal",
-                "reject ambiguous repository",
-                "--workspace",
-                str(boundary),
-                "--repository",
-                str(repository),
-            ]
-        )
+    rc, _output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "start",
+            "--goal",
+            "reject ambiguous repository",
+            "--workspace",
+            str(boundary),
+            "--repository",
+            str(repository),
+        ]
+    )
+
+    assert rc == 1
+    assert "inside the workspace boundary" in capsys.readouterr().err
 
 
-def test_autonomy_start_rejects_non_git_repository(tmp_path: Path) -> None:
+def test_autonomy_start_rejects_non_git_repository(tmp_path: Path, capsys) -> None:
     repository = tmp_path / "repository"
     repository.mkdir()
 
-    with pytest.raises(ValueError, match="does not contain .git"):
-        _run_cli(
-            [
-                *_root_args(tmp_path),
-                "autonomy",
-                "start",
-                "--goal",
-                "require exact repository",
-                "--workspace",
-                str(tmp_path),
-                "--repository",
-                str(repository),
-            ]
-        )
+    rc, _output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "start",
+            "--goal",
+            "require exact repository",
+            "--workspace",
+            str(tmp_path),
+            "--repository",
+            str(repository),
+        ]
+    )
+
+    assert rc == 1
+    assert "does not contain .git" in capsys.readouterr().err
 
 
 def test_autonomy_start_with_verify_command_records_test_evidence(

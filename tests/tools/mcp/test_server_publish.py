@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from pydantic import BaseModel
@@ -724,3 +725,48 @@ def test_published_server_rejects_missing_or_unsupported_protocol_metadata(
             },
         },
     }
+
+
+def _call_once(**extra: Any) -> tuple[dict, int]:
+    calls = {"n": 0}
+
+    def _handler(_: dict[str, Any]) -> dict[str, Any]:
+        calls["n"] += 1
+        return {"ok": True}
+
+    tool = PublishedTool(
+        name="counted",
+        description="counted",
+        input_schema={"type": "object"},
+        handler=_handler,
+    )
+    params = {**_modern_meta(), "name": "counted", **extra}
+    response = handle_published_mcp_request(
+        [tool],
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params},
+    )
+    return response, calls["n"]
+
+
+def test_an_omitted_argument_object_still_invokes_the_tool() -> None:
+    response, invocations = _call_once()
+
+    assert invocations == 1
+    assert "result" in response
+
+
+def test_an_empty_argument_object_still_invokes_the_tool() -> None:
+    response, invocations = _call_once(arguments={})
+
+    assert invocations == 1
+    assert "result" in response
+
+
+@pytest.mark.parametrize("malformed", [None, False, 0, "", []])
+def test_a_supplied_malformed_argument_value_never_invokes_the_tool(
+    malformed: Any,
+) -> None:
+    response, invocations = _call_once(arguments=malformed)
+
+    assert invocations == 0
+    assert response["error"]["code"] == -32602

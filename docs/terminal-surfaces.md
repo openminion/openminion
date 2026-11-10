@@ -38,6 +38,29 @@ The default terminal leaves mouse-wheel input with the terminal for native
 scrollback. It captures the mouse only while a clickable completion menu is
 open, then returns control to the terminal when the menu closes.
 
+## Failures and cancellation
+
+A failure that reaches the terminal renderer is reported as one line, not a
+traceback: exit 1 with an `INTERNAL_ERROR` envelope under `--json`, or a single
+`openminion: internal error: <type>: <detail>` line on stderr. Ask for the
+traceback with `--verbosity verbose`, `OPENMINION_VERBOSITY=verbose`, or the saved
+preference; any of the three re-raises the original exception.
+
+`ConfigError`, `RuntimeError` and `KeyError` never reach that renderer: they keep
+their existing exit-2 handling at every verbosity, so a dispatched command that
+raises one of them still exits 2 rather than 1. Two further cases stay outside the
+boundary on purpose: failures before a command is dispatched, and programming errors
+such as `TypeError` or `AttributeError`, which keep their traceback rather than being
+dressed up as operational failures.
+
+Ctrl-C or SIGTERM during `openminion run` exits immediately with 130 or 143
+instead of waiting for an in-flight provider thread; state stores are crash-safe,
+and whatever the aborted worker had not yet written is lost. That ownership belongs to
+the process entry points (`openminion` and `python -m openminion`); an imported
+`openminion.cli.main.main()` installs no signal handlers, so a Ctrl-C reaches the host as
+its own `KeyboardInterrupt`, and the CLI reports it as exit 130 when the call returns
+while the host's `finally` blocks still run.
+
 ## Terminal color
 
 The default interactive terminal detects color support automatically. Use the

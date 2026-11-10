@@ -194,6 +194,15 @@ def judge_context_section(request: BuildPackRequest) -> str:
         return ""
 
     lines: list[str] = []
+    applied_steering = hints.get("applied_turn_steering")
+    if isinstance(applied_steering, list) and applied_steering:
+        lines.append(
+            "Evaluate the task, success criteria, and final answer using these "
+            "user corrections in order. A later correction supersedes conflicting "
+            "earlier instructions. Preserve all other user constraints."
+        )
+        _append_json_context_line(lines, "applied_turn_steering", applied_steering)
+
     candidate_reason = str(hints.get("closure_candidate_reason") or "").strip()
     if candidate_reason:
         lines.append(f"candidate_reason: {candidate_reason}")

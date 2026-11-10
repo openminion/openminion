@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-
+import pytest
 from pydantic import BaseModel
 
 from openminion.modules.brain.adapters.a2a import LocalA2AAdapter
@@ -1080,6 +1080,18 @@ def test_tool_outcome_is_not_staged_when_the_turn_may_not_write_memory() -> None
                 ),
                 logger=logger,
             )
+            del runner._memory_write_allowed_for_turn
+            with pytest.raises(AttributeError, match="_memory_write_allowed_for_turn"):
+                RunnerCommandExecutor(runner).finalize_tool_result(
+                    state=state,
+                    prepared_dispatch=prepared,
+                    raw_result=RawToolResult(
+                        command_id=command.command_id,
+                        tool_name=command.tool_name,
+                        raw_output={"ok": False},
+                    ),
+                    logger=logger,
+                )
 
         assert [
             entry
@@ -1088,6 +1100,27 @@ def test_tool_outcome_is_not_staged_when_the_turn_may_not_write_memory() -> None
         ] == []
         assert state.memory_candidates == []
         assert "staged_count" not in state.module_state.get("tool_outcome_memory", {})
+
+        runner._memory_write_allowed_for_turn = True
+        with patch.object(
+            runner, "_normalize_execution_result", return_value=(failed, None)
+        ):
+            RunnerCommandExecutor(runner).finalize_tool_result(
+                state=state,
+                prepared_dispatch=prepared,
+                raw_result=RawToolResult(
+                    command_id=command.command_id,
+                    tool_name=command.tool_name,
+                    raw_output={"ok": False},
+                ),
+                logger=logger,
+            )
+
+        assert [
+            entry["title"]
+            for entry in _memory_entries(runner)
+            if entry.get("kind") == "candidate"
+        ] == ["tool_outcome:file.read:failure:READ_ERROR"]
 
 
 def test_tool_outcome_staging_is_bounded_per_turn() -> None:

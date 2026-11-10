@@ -12,6 +12,7 @@ from openminion.modules.config import (
     resolve_module_data_root,
     resolve_module_home_root,
 )
+from openminion.modules.storage.io import ensure_private_directory
 from openminion.modules.storage.record_store import configure_connection
 
 
@@ -61,7 +62,7 @@ def connect_database(
 ) -> sqlite3.Connection:
     path = resolve_database_path(database_path, env=env)
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        ensure_private_directory(path.parent)
         connection = sqlite3.connect(str(path), check_same_thread=False)
     except OSError as exc:
         raise StorageError(f"Unable to prepare storage path at {path}: {exc}") from exc

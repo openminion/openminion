@@ -396,6 +396,7 @@ def test_two_blockchain_sends_bind_only_first_pending_approval(tmp_path) -> None
     runner = SimpleNamespace(
         policy_api=_policy_adapter(ctl),
         memory_api=None,
+        _memory_write_allowed_for_turn=True,
     )
     runner._approve = lambda *, state, command, logger: _approve_delegate(
         runner,

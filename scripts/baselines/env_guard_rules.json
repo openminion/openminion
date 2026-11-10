@@ -43,12 +43,6 @@
       "reason": "Must use EnvironmentConfig"
     },
     {
-      "path": "src/openminion/cli/styles.py",
-      "max_calls": 0,
-      "category": "runtime-reader",
-      "reason": "Must use EnvironmentConfig"
-    },
-    {
       "path": "src/openminion/modules/context/cli.py",
       "max_calls": 5,
       "category": "bootstrap",
@@ -91,18 +85,6 @@
       "reason": "CLI bootstrap - uses bootstrap_env()"
     },
     {
-      "path": "src/openminion/modules/rlm/cli.py",
-      "max_calls": 5,
-      "category": "bootstrap",
-      "reason": "CLI bootstrap - uses bootstrap_env()"
-    },
-    {
-      "path": "src/openminion/modules/llm/providers/_cortensor_config.py",
-      "max_calls": 0,
-      "category": "runtime-reader",
-      "reason": "Must use EnvironmentConfig"
-    },
-    {
       "path": "src/openminion/modules/llm/providers/factory.py",
       "max_calls": 0,
       "category": "runtime-reader",
@@ -121,12 +103,6 @@
       "reason": "Must use EnvironmentConfig"
     },
     {
-      "path": "src/openminion/modules/llm/orchestration.py",
-      "max_calls": 0,
-      "category": "runtime-reader",
-      "reason": "Secret/env:// URL resolution must use EnvironmentConfig"
-    },
-    {
       "path": "src/openminion/modules/secret/service.py",
       "max_calls": 0,
       "category": "runtime-reader",
@@ -139,37 +115,7 @@
       "reason": "Core implementation file"
     },
     {
-      "path": "src/openminion/services/gateway/utils.py",
-      "max_calls": 0,
-      "category": "runtime-reader",
-      "reason": "Must use EnvironmentConfig"
-    },
-    {
-      "path": "src/openminion/services/health.py",
-      "max_calls": 0,
-      "category": "runtime-reader",
-      "reason": "Must use EnvironmentConfig"
-    },
-    {
-      "path": "src/openminion/services/sidecars.py",
-      "max_calls": 5,
-      "category": "subprocess-passthrough",
-      "reason": "Subprocess env inheritance"
-    },
-    {
-      "path": "src/openminion/services/agent/identity_runtime.py",
-      "max_calls": 0,
-      "category": "runtime-reader",
-      "reason": "Must use EnvironmentConfig"
-    },
-    {
       "path": "src/openminion/services/agent/telemetry.py",
-      "max_calls": 0,
-      "category": "runtime-reader",
-      "reason": "Must use EnvironmentConfig"
-    },
-    {
-      "path": "src/openminion/services/brain/bridge.py",
       "max_calls": 0,
       "category": "runtime-reader",
       "reason": "Must use EnvironmentConfig"
@@ -179,36 +125,6 @@
       "max_calls": 0,
       "category": "runtime-reader",
       "reason": "Feature flags and DB path must use EnvironmentConfig"
-    },
-    {
-      "path": "src/openminion/services/freshness_enforcement.py",
-      "max_calls": 0,
-      "category": "runtime-reader",
-      "reason": "API key checks must use EnvironmentConfig"
-    },
-    {
-      "path": "src/openminion/tools/browser_pinchtab/provider.py",
-      "max_calls": 0,
-      "category": "runtime-reader",
-      "reason": "Must use EnvironmentConfig"
-    },
-    {
-      "path": "src/openminion/tools/search_tavily/plugin.py",
-      "max_calls": 0,
-      "category": "runtime-reader",
-      "reason": "Must use EnvironmentConfig"
-    },
-    {
-      "path": "src/openminion/tools/search_tavily/tavily_search.py",
-      "max_calls": 0,
-      "category": "runtime-reader",
-      "reason": "Must use EnvironmentConfig"
-    },
-    {
-      "path": "src/openminion/tools/search_brave/tool.py",
-      "max_calls": 0,
-      "category": "runtime-reader",
-      "reason": "Must use EnvironmentConfig"
     },
     {
       "path": "src/openminion/tools/time/plugin.py",

@@ -246,3 +246,12 @@ otherwise:
 3. `openminion.tools.*`
 4. `tests/`
 5. `scripts/`
+
+One example worth naming: `openminion.modules.brain.runtime.approval` exports
+`gate_destructive_action` and `LLMActionApprovalVerifier`, but no in-tree production
+caller constructs or calls them, and its `enabled` flag defaults to false. That
+absence covers this repository only — external importers are not observable here,
+which is why the exports are retained rather than removed.
+Destructive-action approval is owned by the policy confirmation flow, which holds
+the confirmation, grant and replay contracts. The approval package is available
+code, not the gate that judges a destructive action today.

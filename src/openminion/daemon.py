@@ -26,6 +26,7 @@ from openminion.base.logging import (
     format_structured_event,
     get_logger,
 )
+from openminion.modules.storage.io import ensure_private_directory
 from openminion.modules.telemetry.lifecycle import (
     build_component_identity,
     build_lifecycle_telemetry_event,
@@ -433,9 +434,9 @@ def run_server(
         if pid_file
         else resolve_daemon_pid_file(config)
     )
-    resolved_pid_file.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_directory(resolved_pid_file.parent)
     resolved_log_file = resolve_daemon_log_file(config)
-    resolved_log_file.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_directory(resolved_log_file.parent)
     runtime_log_level = str(
         getattr(getattr(config, "runtime", object()), "log_level", "INFO") or "INFO"
     )

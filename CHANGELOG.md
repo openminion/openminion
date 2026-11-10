@@ -7,6 +7,105 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `/model setup` now shows the provider list inside its own prompt instead of printing
+  it to the console first: the overlay takes the screen before the prompt appears, so the
+  numbered menu was never visible and the connection had to be chosen from memory. The
+  menu is repeated when an entry is rejected (Refs #707).
+
+- A provider factory no longer substitutes `echo` when the config names no usable
+  default agent: a missing or unknown `default_agent` in a multi-agent catalog now
+  raises the canonical `UnknownProfileError` from `build_provider` and
+  `build_runtime_llm_handle` instead of silently building echo. A single-agent
+  catalog, an explicitly selected default and an echo agent keep working, and an
+  empty catalog still resolves to echo (Refs #650).
+
+- Document that `modules/brain/runtime/approval` has no in-tree production caller:
+  the policy confirmation flow remains the owner of destructive-action approval, and
+  the approval helper's `enabled` flag defaults to false (Refs #678).
+- A same-session context rebuild now treats the rendered `gateway_system_context` as
+  pack identity: the runtime cache lookup key and `pack_version` include the stripped
+  gateway context, so changing that input returns the newly rendered bytes instead of
+  the previous pack's cached bytes (Refs #644).
+- Slack Socket Mode keeps an import-time fault out of its install guidance: only a
+  `ModuleNotFoundError` that names `slack_sdk` itself and leaves no resolvable spec
+  raises `MissingSlackSocketDependency` with the extra name, while a fault raised
+  inside an installed SDK - its own `__init__` or a dependency it imports - propagates
+  as itself. HTTP mode and injected-client paths are untouched (Refs #651).
+- A malformed plan `criterion_ids` value is now rejected instead of defaulted: an
+  explicitly supplied `false`, `{}` or `null` reaches `TaskPlan` validation and emits
+  `task_plan.invalid_trailer`, where the truthiness default silently turned it into an
+  empty criteria list and the plan was accepted. The field stays an optional array — no
+  null is accepted — and an absent key or `[]` still declares with no criteria
+  (Refs #649).
+
+- `subagent()` now populates `SubagentRunContext.tool_allowlist` from the child
+  `Agent`'s resolved tool names (`tuple(child.tools)`) instead of raw `tools`
+  items, so `@tool`-decorated callables work in `subagent(parent, tools=[...])`
+  without raising `TypeError` when inbound metadata is projected (Refs #703).
+
+- `write_decision_memory` and `_stage_tool_outcome_candidate` now read
+  `runner._memory_write_allowed_for_turn` directly instead of defaulting a
+  missing attribute to `True` via `getattr`, while preserving `BrainRunner`'s
+  standalone constructor default and per-turn service policy evaluation
+  (Refs #647).
+
+- A malformed MCP `tools/call` arguments value is no longer treated as an omitted
+  one: only an absent field defaults to an empty object, so a supplied `null`, `false`,
+  `0`, `""` or `[]` now returns `-32602` without invoking the tool instead of running it
+  as if nothing had been passed. Omitted and empty-object calls, and the separation
+  between invalid requests and tool-level failures, are unchanged (Refs #658).
+
+
+
+- A truncated tool result now tells the model that its output is partial: the tool
+  message carries `truncated`, `returned_length` and `total_length` when the result was
+  actually truncated, and carries nothing extra otherwise (Refs #675).
+
+
+
+- The env-guard validator now fails on a rule whose path no longer exists, and the
+  fourteen stale rules behind that check are removed so a re-created path cannot
+  inherit an old allowance (Refs #668).
+
+
+
+- New storage directories are created private (0700) before any database, sidecar or
+  log is written, so the 0644 files SQLite creates are not readable by other users; an
+  existing directory keeps its own mode (Refs #618).
+- Report failures that reach the terminal renderer as one scriptable line instead of a
+  traceback: exit 1 with an `INTERNAL_ERROR` envelope (`--json`) or a single stderr
+  line, and the verbose verbosity source — the flag, `OPENMINION_VERBOSITY` or the saved
+  preference — re-raises so the traceback stays available. `ConfigError`, `RuntimeError`
+  and `KeyError` keep their existing exit-2 handling at every verbosity, startup before
+  dispatch is unchanged, and programming errors such as `TypeError` keep their
+  traceback. SIGINT/SIGTERM cancel the
+  one-shot `run` command immediately (exit 130/143) instead of waiting for an in-flight
+  provider thread. The handlers belong to the process entry points — the `openminion`
+  console script and `python -m openminion` — so an imported `main()` never takes a
+  host's signals or its cleanup, even for `run` (Refs #629).
+
+
+
+- `daemon stop` now verifies the recorded PID before signalling it: the process must
+  carry the exact `-m openminion.daemon serve` launch form with matching `--config`,
+  `--pid-file`, `--host` and `--port`, and the PID file must still name it on a final
+  reread, the process executable must still be a Python launcher, and missing,
+  unreadable, duplicated or contradictory identity is refused without a signal
+  (Refs #616).
+
+- File tools reject non-string `path` values instead of stringifying them: an
+  integer, list or object path is now `invalid_arguments`/`type_mismatch` rather
+  than a `NOT_FOUND` lookup of `str(value)` (Refs #666).
+
+
+
+
+
+- `daemon start` now reports a child that exited before answering separately from a
+  live timeout: the observed exit code, the requested endpoint and the log path (or
+  that no log file was written), instead of always blaming a health timeout
+  (Refs #617).
+
 - Scope synchronous A2A retries by the declared sender, destination, method,
   and session. Reusing a key with different arguments returns
   `IDEMPOTENCY_CONFLICT` (HTTP 409). Matching legacy call records also return
@@ -25,6 +124,10 @@ This file tracks package-facing release notes for `openminion`.
   modified, bypass entries keep their meaning, and the environment's TLS
   trust configuration (`SSL_CERT_FILE` / `SSL_CERT_DIR`) is preserved for
   direct requests (Refs #686).
+
+- Pass current-turn steering to the closure judge in the order it was applied,
+  preserving the rest of the user's request when the judge revises the final
+  answer (Refs #661).
 
 ## Current package line - 2026-11-06
 

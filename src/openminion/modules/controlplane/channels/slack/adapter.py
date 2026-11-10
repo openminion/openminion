@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 import queue
 from typing import Any
@@ -59,6 +60,24 @@ def build_slack_runner(
     )
 
 
+def _sdk_root_is_absent(exc: ModuleNotFoundError) -> bool:
+    """True only when the finders cannot resolve the ``slack_sdk`` root itself.
+
+    ``ModuleNotFoundError.name`` records what the importer failed to find, so a
+    ``slack_sdk.socket_mode`` entry - or a dependency the installed SDK imports
+    from its ``__init__`` - is a fault in an installed package, not a missing
+    extra. A root-name failure still has to leave no spec behind, because an
+    installed ``__init__`` can raise that same root-name error about itself.
+    """
+    if exc.name != "slack_sdk":
+        return False
+    try:
+        return importlib.util.find_spec("slack_sdk") is None
+    except (ImportError, ValueError):
+        # A finder that faults while being asked again has not proved absence.
+        return False
+
+
 class SlackSdkSocketClient:
     """Tiny adapter around slack_sdk SocketModeClient.
 
@@ -71,10 +90,13 @@ class SlackSdkSocketClient:
             from slack_sdk.socket_mode import SocketModeClient
             from slack_sdk.socket_mode.response import SocketModeResponse
             from slack_sdk.web import WebClient
-        except Exception as exc:  # pragma: no cover - optional dependency
+        except ModuleNotFoundError as exc:
+            if not _sdk_root_is_absent(exc):
+                raise
             raise MissingSlackSocketDependency(
                 "Slack Socket Mode requires openminion[slack]."
             ) from exc
+
         self._SocketModeResponse = SocketModeResponse
         self._queue: queue.Queue[dict[str, Any]] = queue.Queue()
         self._client = SocketModeClient(

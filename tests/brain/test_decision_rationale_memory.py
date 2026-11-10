@@ -3,6 +3,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from openminion.modules.brain.execution import entry as entry_module
 from openminion.modules.brain.execution.entry import build_execution_entry_request
 from openminion.modules.brain.execution.loop_contracts import ExecutionResult
@@ -113,7 +115,7 @@ def _working_state(session_id: str = "s-drm-02") -> WorkingState:
 def test_write_decision_memory_transports_typed_decision_fields_only() -> None:
     memory = _MemoryAPI()
     logger = _Logger()
-    runner = SimpleNamespace(memory_api=memory)
+    runner = SimpleNamespace(memory_api=memory, _memory_write_allowed_for_turn=True)
     decision = ActDecision(
         confidence=0.82,
         reason_code="delegate_requested_exact_target",
@@ -164,7 +166,7 @@ def test_write_decision_memory_transports_typed_decision_fields_only() -> None:
 
 def test_write_decision_memory_supports_brain_put_record_adapter() -> None:
     memory = _PutOnlyMemoryAPI()
-    runner = SimpleNamespace(memory_api=memory)
+    runner = SimpleNamespace(memory_api=memory, _memory_write_allowed_for_turn=True)
     decision = RespondDecision(
         respond_kind="answer",
         reason_code="entry_text_response",
@@ -184,6 +186,7 @@ def test_write_decision_memory_binds_active_memory_access_context() -> None:
     runner = SimpleNamespace(
         memory_api=memory,
         profile=SimpleNamespace(agent_id="agent-drm"),
+        _memory_write_allowed_for_turn=True,
     )
     decision = RespondDecision(
         respond_kind="answer",
@@ -204,7 +207,7 @@ def test_write_decision_memory_binds_active_memory_access_context() -> None:
 
 def test_write_decision_memory_writes_empty_rationale_without_filtering() -> None:
     memory = _MemoryAPI()
-    runner = SimpleNamespace(memory_api=memory)
+    runner = SimpleNamespace(memory_api=memory, _memory_write_allowed_for_turn=True)
     decision = RespondDecision(
         respond_kind="answer",
         confidence=0.4,
@@ -227,7 +230,7 @@ def test_write_decision_memory_writes_empty_rationale_without_filtering() -> Non
 
 def test_write_decision_memory_bounds_rationale_without_semantic_rewrite() -> None:
     memory = _MemoryAPI()
-    runner = SimpleNamespace(memory_api=memory)
+    runner = SimpleNamespace(memory_api=memory, _memory_write_allowed_for_turn=True)
     long_rationale = "verified-by-model " * 40
     decision = RespondDecision(
         respond_kind="answer",
@@ -254,7 +257,7 @@ def test_write_decision_memory_skips_without_memory_api() -> None:
     )
 
     result = write_decision_memory(
-        SimpleNamespace(memory_api=None),
+        SimpleNamespace(memory_api=None, _memory_write_allowed_for_turn=True),
         state=_state(),
         decision=decision,
         logger=logger,
@@ -288,6 +291,16 @@ def test_write_decision_memory_skips_when_the_turn_may_not_write_memory() -> Non
     assert logger.events[-1]["event"] == "brain.decision_memory.skipped"
     assert logger.events[-1]["payload"] == {"reason": "memory_write_not_authorized"}
 
+    del runner._memory_write_allowed_for_turn
+    with pytest.raises(AttributeError, match="_memory_write_allowed_for_turn"):
+        write_decision_memory(
+            runner,
+            state=_state(),
+            decision=decision,
+            logger=logger,
+        )
+    assert memory.records == []
+
     # The same runner on a turn that may write.
     runner._memory_write_allowed_for_turn = True
     assert write_decision_memory(runner, state=_state(), decision=decision) == [
@@ -313,6 +326,7 @@ def test_dispatch_writes_decision_memory_once_after_finalized_decision(
         options=SimpleNamespace(),
         _decide=lambda **_: decision,
         _evaluate_meta=lambda **_: None,
+        _memory_write_allowed_for_turn=True,
     )
     state = _working_state()
 
@@ -366,6 +380,7 @@ def test_dispatch_decision_memory_failure_does_not_change_route(
         options=SimpleNamespace(),
         _decide=lambda **_: decision,
         _evaluate_meta=lambda **_: None,
+        _memory_write_allowed_for_turn=True,
     )
     state = _working_state("s-drm-02-fail")
 
