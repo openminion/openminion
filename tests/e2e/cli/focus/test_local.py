@@ -938,14 +938,15 @@ def test_focus_pty_long_paste_keeps_transcript_top_down_and_composer_inline(
             time.sleep(0.05)
         else:
             raise AssertionError("second long draft did not render")
-        session.resize(rows=36, cols=72)
-        rows = session.screen_lines
-        assert _occupied_rows(session)[-1].startswith("◆ "), "\n".join(rows)
-        assert session.cursor_position[0] <= 35
-        session.resize(rows=42, cols=100)
-        rows = session.screen_lines
-        assert _occupied_rows(session)[-1].startswith("◆ "), "\n".join(rows)
-        assert session.cursor_position[0] <= 41
+        for height, width in ((36, 72), (42, 100)):
+            session.resize(rows=height, cols=width)
+            while True:
+                rows, cursor = session.screen_snapshot
+                footer = next((row for row in reversed(rows) if row), "")
+                if footer.startswith("◆ ") or time.monotonic() >= deadline:
+                    break
+            assert footer.startswith("◆ "), "\n".join(rows)
+            assert cursor[0] <= height - 1
         session.send("\x15")
 
 

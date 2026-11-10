@@ -11,6 +11,9 @@ from typing import Any, Callable
 from uuid import uuid4
 
 
+SteeringScope = tuple[str, str, str]
+
+
 class TurnInputIntent(StrEnum):
     QUEUE_NEXT = "queue_next"
     STEER_CURRENT = "steer_current"
@@ -139,6 +142,7 @@ class TurnInputQueue:
         self._on_event = on_event
         self._lock = RLock()
         self._entries: list[TurnInputQueueEntry] = []
+        self._applied: dict[SteeringScope, dict[str, TurnInputQueueEntry]] = {}
         self._idempotency: dict[tuple[str, str, str], str] = {}
 
     def enqueue(
@@ -380,6 +384,11 @@ class TurnInputQueue:
                 self._emit(QUEUE_EVENT_DEQUEUED, updated.event_payload())
         return reserved
 
+    def list_applied_steering(self, scope: SteeringScope) -> list[TurnInputQueueEntry]:
+        """Return steering for a session, agent and trace in application order."""
+        with self._lock:
+            return list(self._applied.get(scope, {}).values())
+
     def complete_steering(
         self,
         *,
@@ -592,23 +601,22 @@ class TurnInputQueue:
     ) -> list[TurnInputQueueEntry]:
         requested_ids = [str(queue_id or "").strip() for queue_id in queue_ids]
         requested_ids = [queue_id for queue_id in requested_ids if queue_id]
-        if not requested_ids:
+        if not (requested := dict.fromkeys(requested_ids)):
             return []
         normalized_trace_id = _require_non_empty(target_trace_id, "target_trace_id")
-        requested = set(requested_ids)
         with self._lock:
-            matches = [
-                (index, entry)
+            matches = {
+                entry.queue_id: (index, entry)
                 for index, entry in enumerate(self._entries)
                 if entry.queue_id in requested
-            ]
+            }
             if len(matches) != len(requested):
                 raise TurnInputQueueError(
                     "QUEUE_ENTRY_NOT_FOUND",
                     "A steering queue entry was not found.",
                     {"queue_ids": requested_ids},
                 )
-            for _index, entry in matches:
+            for _index, entry in matches.values():
                 if (
                     entry.intent != TurnInputIntent.STEER_CURRENT
                     or entry.target_trace_id != normalized_trace_id
@@ -619,24 +627,25 @@ class TurnInputQueue:
                         "The steering batch state changed before transition.",
                         {"queue_id": entry.queue_id, "status": entry.status.value},
                     )
-            now = _utc_now_iso()
+            completed = target_status == TurnInputQueueStatus.COMPLETED
+            completed_at = _utc_now_iso() if completed else None
+            event_type = QUEUE_EVENT_COMPLETED if completed else QUEUE_EVENT_REQUEUED
             updated_by_id: dict[str, TurnInputQueueEntry] = {}
-            for index, entry in matches:
+            for queue_id in requested:
+                index, entry = matches[queue_id]
                 updated = replace(
                     entry,
                     status=target_status,
-                    completed_at=(
-                        now if target_status == TurnInputQueueStatus.COMPLETED else None
-                    ),
+                    completed_at=completed_at,
                     status_version=entry.status_version + 1,
                 )
-                self._entries[index] = updated
-                updated_by_id[updated.queue_id] = updated
-                event_type = (
-                    QUEUE_EVENT_COMPLETED
-                    if target_status == TurnInputQueueStatus.COMPLETED
-                    else QUEUE_EVENT_REQUEUED
-                )
+                self._entries[index] = updated_by_id[queue_id] = updated
+                scope = (entry.session_id, entry.agent_id, normalized_trace_id)
+                applied = self._applied.setdefault(scope, {})
+                if completed:
+                    applied[queue_id] = updated
+                else:
+                    applied.pop(queue_id, None)
                 self._emit(event_type, updated.event_payload())
             return [updated_by_id[queue_id] for queue_id in requested_ids]
 

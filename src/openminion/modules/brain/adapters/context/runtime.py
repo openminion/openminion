@@ -15,6 +15,7 @@ _PHASE_PROMPT_HINT_KEYS = {
     "current_datetime",
     "freshness_contract",
     "freshness_obligations",
+    "applied_turn_steering",
     "closure_candidate_reason",
     "closure_action_summary",
     "closure_action_outputs",
