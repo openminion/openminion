@@ -133,9 +133,7 @@ def test_virtual_environment_base_interpreter_stops_the_daemon(
         daemon_cmd.sys, "_base_executable", str(base_python), raising=False
     )
     pid_file, state = stop_env
-    process = _install_process(
-        state, _serve_argv(pid_file), exe=str(base_python)
-    )
+    process = _install_process(state, _serve_argv(pid_file), exe=str(base_python))
 
     assert daemon_cmd.daemon_stop(None) == 0
     assert process.terminated == 1
