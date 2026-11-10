@@ -7,6 +7,11 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Approval for a destructive invocation is bound to the exact once-grant payload and
+  consumed exactly once: a second `check_command` for the same command requires a new
+  confirmation, and the exhaustion assertion is back in the integration test so the
+  binding cannot regress silently (Refs #642).
+
 - `/model setup` now shows the provider list inside its own prompt instead of printing
   it to the console first: the overlay takes the screen before the prompt appears, so the
   numbered menu was never visible and the connection had to be chosen from memory. The
