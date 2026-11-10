@@ -602,37 +602,19 @@ class AgentRuntimeManager:
             )
             self._emit_turn_started_status(request, handle, queue_wait_ms)
 
+            cancel_message = ""
             if handle.cancel_event.is_set():
+                cancel_message = "turn cancelled before execution"
+            elif not self._limiter.acquire(handle.cancel_event):
+                cancel_message = "turn cancelled during scheduling"
+            if cancel_message:
                 response = TurnResponse(
                     final_text="",
                     telemetry=TurnTelemetry(queue_wait_ms=queue_wait_ms),
                     errors=[
                         TurnError(
                             code=RUNTIME_TURN_STATUS_CANCELLED,
-                            message="turn cancelled before execution",
-                            retryable=False,
-                        )
-                    ],
-                )
-                self._complete_handle(
-                    request, handle, response, RUNTIME_TURN_STATUS_CANCELLED
-                )
-                self._finish_turn(
-                    instance=instance,
-                    request=request,
-                    response=response,
-                    status=RUNTIME_TURN_STATUS_CANCELLED,
-                )
-                continue
-
-            if not self._limiter.acquire(handle.cancel_event):
-                response = TurnResponse(
-                    final_text="",
-                    telemetry=TurnTelemetry(queue_wait_ms=queue_wait_ms),
-                    errors=[
-                        TurnError(
-                            code=RUNTIME_TURN_STATUS_CANCELLED,
-                            message="turn cancelled during scheduling",
+                            message=cancel_message,
                             retryable=False,
                         )
                     ],
@@ -679,11 +661,13 @@ class AgentRuntimeManager:
                     queue_wait_ms=queue_wait_ms,
                 ),
             )
-            status = (
-                RUNTIME_TURN_STATUS_FAILED
-                if response.errors
-                else RUNTIME_TURN_STATUS_COMPLETED
-            )
+            status = RUNTIME_TURN_STATUS_COMPLETED
+            if response.errors:
+                status = (
+                    RUNTIME_TURN_STATUS_CANCELLED
+                    if response.errors[0].code == RUNTIME_TURN_STATUS_CANCELLED
+                    else RUNTIME_TURN_STATUS_FAILED
+                )
             self._complete_handle(request, handle, response, status)
             self._finish_turn(
                 instance=instance, request=request, response=response, status=status

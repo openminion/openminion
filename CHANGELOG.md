@@ -1,12 +1,19 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-11-06
+Last updated: 2026-11-09
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+## Current package line - 2026-11-09
+
+- Added session-scoped delegated-task inspection for Desktop, including safe job
+  structure, observability identifiers, and a payload-redacted A2A timeline.
+- Preserve explicit cancelled turns across the daemon and runtime manager so
+  Desktop's stop-and-run-next flow advances the retained queue instead of
+  entering failure repair, while deadline timeouts remain failed turns.
 - Approval for a destructive invocation is bound to the exact once-grant payload and
   consumed exactly once: a second `check_command` for the same command requires a new
   confirmation, and the exhaustion assertion is back in the integration test so the
