@@ -121,3 +121,45 @@ def test_validator_accepts_canonical_owner_stack(tmp_path: Path) -> None:
         )
         == []
     )
+
+
+def test_validator_rejects_a_missing_mandatory_budget_row(tmp_path: Path) -> None:
+    validator = _load_module("validate_services_layout_missing_row", VALIDATOR_PATH)
+    services_root = tmp_path / "services"
+    services_root.mkdir()
+    (services_root / "__init__.py").write_text("VALUE = 1\n", encoding="utf-8")
+    baseline = tmp_path / "baseline.tsv"
+    baseline.write_text("scope\tmax_python_files\tmax_loc\n", encoding="utf-8")
+
+    hits = validator.validate_layout(
+        services_root=services_root,
+        scan_roots=[],
+        baseline_path=baseline,
+    )
+
+    assert (
+        "Missing mandatory budget row (scope is unchecked without it): services" in hits
+    )
+
+
+def test_validator_still_checks_rows_beside_the_aggregate(tmp_path: Path) -> None:
+    validator = _load_module("validate_services_layout_beside", VALIDATOR_PATH)
+    services_root = tmp_path / "services"
+    (services_root / "stats").mkdir(parents=True)
+    (services_root / "stats" / "__init__.py").write_text(
+        "VALUE = 1\nVALUE = 2\n", encoding="utf-8"
+    )
+    baseline = tmp_path / "baseline.tsv"
+    baseline.write_text(
+        "scope\tmax_python_files\tmax_loc\nservices\t10\t100\nservices/stats\t1\t1\n",
+        encoding="utf-8",
+    )
+
+    hits = validator.validate_layout(
+        services_root=services_root,
+        scan_roots=[],
+        baseline_path=baseline,
+    )
+
+    assert "services/stats LOC ratchet increased: 2 > 1" in hits
+    assert not [hit for hit in hits if "Missing mandatory" in hit]

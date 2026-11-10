@@ -176,7 +176,14 @@ def validate_layout(
                 f"Duplicate {scope} owner stack files: " + ", ".join(unexpected)
             )
 
-    for scope, (max_files, max_loc) in _load_budgets(baseline_path).items():
+    budgets = _load_budgets(baseline_path)
+    # A scope with no row has no cap, so an absent aggregate row must fail, not pass.
+    if "services" not in budgets:
+        errors.append(
+            "Missing mandatory budget row (scope is unchecked without it): services"
+        )
+
+    for scope, (max_files, max_loc) in budgets.items():
         relative = scope.removeprefix("services").lstrip("/")
         root = services_root / relative if relative else services_root
         files, loc = _python_shape(root)
