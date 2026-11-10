@@ -53,6 +53,78 @@ class _RecordingTelemetry:
         self.events.append((event_type, dict(payload)))
 
 
+def test_a2a_adapter_inspection_enforces_scope_and_redacts_payloads() -> None:
+    class _Job:
+        task_id = "job-1"
+        trace_id = "trace-1"
+        agent_id = "child"
+        method = "delegate"
+        state = "RUNNING"
+        current_step = "working"
+        progress = 0.5
+        owner_agent_id = "parent"
+        idempotency_scope = "job.start:child:delegate:task-delegate::session-1"
+        created_at = "2026-11-09T00:00:00Z"
+        updated_at = "2026-11-09T00:00:01Z"
+        heartbeat_at = "2026-11-09T00:00:01Z"
+
+    class _Runtime:
+        def job_status(self, task_id: str):
+            assert task_id == "job-1"
+            return _Job()
+
+        def query_trace(self, trace_id: str, limit: int):
+            assert trace_id == "trace-1"
+            assert limit == 1000
+            return [
+                {
+                    "ts": "2026-11-09T00:00:00Z",
+                    "msg_id": "message-1",
+                    "trace_id": trace_id,
+                    "from_agent": "parent",
+                    "to_agent": "child",
+                    "type": "job.start",
+                    "method": "delegate",
+                    "status": "JOB_QUEUED",
+                    "task_id": "job-1",
+                    "error_code": None,
+                    "envelope": {
+                        "observability": {
+                            "invocation_id": "invocation-1",
+                            "execution_id": "execution-1",
+                            "handoff_id": "handoff-1",
+                        },
+                        "params": {"instruction": "private"},
+                    },
+                    "data": {"result": "private"},
+                }
+            ]
+
+    adapter = A2actlAdapter(agent_id="parent")
+    adapter._runtime = _Runtime()
+
+    payload = adapter.inspect_task(
+        task_id="job-1",
+        session_id="task-delegate::session-1",
+        trace_id="unused",
+    )
+    denied = adapter.inspect_task(
+        task_id="job-1",
+        session_id="task-delegate::other-session",
+        trace_id="unused",
+    )
+
+    assert payload["status"] == "success"
+    assert payload["outputs"]["timeline"][0]["type"] == "job.start"
+    assert payload["outputs"]["links"] == {
+        "invocation_id": "invocation-1",
+        "source_execution_id": "execution-1",
+        "handoff_id": "handoff-1",
+    }
+    assert "private" not in str(payload)
+    assert denied["error"]["code"] == "A2A_JOB_INSPECT_FAILED"
+
+
 def test_current_turn_approval_callback_reaches_bound_a2a_adapter() -> None:
     initial_callback = object()
     current_callback = object()
@@ -540,6 +612,51 @@ def test_recent_delegation_list_uses_bound_session_and_limit() -> None:
 
     assert result.ok is True
     assert result.outputs["jobs"][0]["task_id"] == "job-1"
+
+
+def test_delegation_inspection_returns_only_structural_runtime_facts() -> None:
+    class _Owner:
+        def call(self, **_kwargs: Any) -> dict[str, Any]:
+            return {}
+
+        def inspect_task(self, *, task_id: str, session_id: str, trace_id: str):
+            assert task_id == "job-1"
+            assert session_id == "task-delegate::session-1"
+            assert trace_id == "task-delegate:inspect:job-1"
+            return {
+                "status": "success",
+                "task_id": task_id,
+                "trace_id": "trace-1",
+                "summary": "Delegation inspection is available.",
+                "outputs": {
+                    "support": "supported",
+                    "authority": "session_task_owner",
+                    "task": {"task_id": task_id, "state": "RUNNING"},
+                    "links": {},
+                    "timeline": [],
+                    "child_session": {"status": "not_recorded"},
+                    "raw_content": {"status": "unavailable"},
+                },
+                "private_result": "must not cross the adapter",
+            }
+
+    owner = _Owner()
+    adapter = A2aRuntimeDelegateAdapter(
+        a2a_call=owner.call,
+        parent_agent_id="parent",
+    )
+    adapter.bind_observability(
+        session_id="session-1",
+        turn_id="turn-1",
+        invocation_id="11111111-1111-4111-8111-111111111111",
+        execution_id="21111111-1111-4111-8111-111111111111",
+    )
+
+    result = adapter.inspect(task_id="job-1")
+
+    assert result.ok is True
+    assert result.outputs["task"]["task_id"] == "job-1"
+    assert "private_result" not in result.outputs
 
 
 def test_recent_delegation_list_requires_bound_agent_and_session() -> None:

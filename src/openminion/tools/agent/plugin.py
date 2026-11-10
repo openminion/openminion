@@ -178,22 +178,13 @@ class TaskDelegateArgs(BaseModel):
     @model_validator(mode="after")
     def _validate_action_fields(self) -> "TaskDelegateArgs":
         normalized_mode = self.mode.strip().lower()
-        allowed = {
-            "sync",
-            "async",
-            "list",
-            "status",
-            "result",
-            "resume",
-            "cancel",
-            "review",
-            "accept",
-            "reject",
-        }
+        allowed = frozenset(
+            "sync async list status result inspect resume cancel review accept reject".split()
+        )
         if normalized_mode not in allowed:
             raise ValueError(
-                "mode must be one of: sync, async, list, status, result, resume, "
-                "cancel, review, accept, reject"
+                "mode must be one of: sync, async, list, status, result, inspect, "
+                "resume, cancel, review, accept, reject"
             )
         self.mode = normalized_mode
         child_permission_mode = self.child_permission_mode.strip().lower()
@@ -230,7 +221,9 @@ class TaskDelegateArgs(BaseModel):
             if not self.child_artifact:
                 raise ValueError("child_artifact is required for accept/reject")
         elif normalized_mode != "list" and not self.task_id.strip():
-            raise ValueError("task_id is required for status/result/resume/cancel")
+            raise ValueError(
+                "task_id is required for status/result/inspect/resume/cancel"
+            )
         return self
 
 
@@ -504,6 +497,8 @@ def _h_task_delegate(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
         return _handle_child_artifact_review(validated, ctx, seam)
     if validated.mode == "list":
         result = seam.list_recent(limit=validated.limit)
+    elif validated.mode == "inspect":
+        result = seam.inspect(task_id=validated.task_id)
     elif validated.mode in {"status", "result"}:
         result = seam.status(task_id=validated.task_id)
     elif validated.mode == "resume":

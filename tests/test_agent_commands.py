@@ -517,7 +517,9 @@ def test_delegate_request_threads_runtime_resolver_to_a2a_builder(monkeypatch) -
     assert seen["approval_callback"] is approval_callback
 
 
-@pytest.mark.parametrize("action", ["list", "status", "result", "resume", "cancel"])
+@pytest.mark.parametrize(
+    "action", ["list", "status", "result", "inspect", "resume", "cancel"]
+)
 def test_delegation_lifecycle_accepts_explicit_scope(action):
     args = build_parser().parse_args(
         [

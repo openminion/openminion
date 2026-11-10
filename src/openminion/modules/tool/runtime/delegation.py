@@ -102,6 +102,8 @@ class A2ADelegateApi(Protocol):
 
     def list_recent(self, *, limit: int = 20) -> A2ADelegateResult: ...
 
+    def inspect(self, *, task_id: str) -> A2ADelegateResult: ...
+
     def resume(self, *, task_id: str) -> A2ADelegateResult: ...
 
     def cancel(self, *, task_id: str) -> A2ADelegateResult: ...
@@ -792,6 +794,62 @@ class A2aRuntimeDelegateAdapter:
             content=f"{len(jobs)} recent delegation(s).",
             outputs={"jobs": jobs, "count": len(jobs), "limit": requested_limit},
         )
+
+    def inspect(self, *, task_id: str) -> A2ADelegateResult:
+        caller = getattr(self._a2a_call, "inspect_task", None)
+        if not callable(caller):
+            owner = getattr(self._a2a_call, "__self__", None)
+            caller = getattr(owner, "inspect_task", None)
+        normalized_task_id = str(task_id or "").strip()
+        if not callable(caller) or not normalized_task_id:
+            return A2ADelegateResult(
+                ok=False,
+                status="failed",
+                error_code="A2A_DELEGATE_INSPECT_UNAVAILABLE",
+                error_message="Delegation inspection is not available.",
+                task_id=normalized_task_id,
+            )
+        try:
+            raw = caller(
+                task_id=normalized_task_id,
+                session_id=self._delegation_session_id(),
+                trace_id=f"task-delegate:inspect:{normalized_task_id}",
+            )
+            payload = raw if isinstance(raw, dict) else {}
+            outputs = payload.get("outputs")
+            if str(
+                payload.get("status") or ""
+            ).strip().lower() == "success" and isinstance(outputs, dict):
+                return A2ADelegateResult(
+                    ok=True,
+                    status="success",
+                    content=str(payload.get("summary") or "").strip(),
+                    trace_id=str(payload.get("trace_id") or "").strip(),
+                    task_id=str(payload.get("task_id") or normalized_task_id).strip(),
+                    outputs=dict(outputs),
+                )
+            error = payload.get("error")
+            if not isinstance(error, dict):
+                error = {}
+            return A2ADelegateResult(
+                ok=False,
+                status="failed",
+                error_code=str(error.get("code") or "A2A_DELEGATE_INSPECT_FAILED"),
+                error_message=str(
+                    error.get("message")
+                    or payload.get("summary")
+                    or "Delegation inspection failed."
+                ),
+                task_id=normalized_task_id,
+            )
+        except (RuntimeError, ValueError, TypeError, AttributeError, KeyError) as exc:
+            return A2ADelegateResult(
+                ok=False,
+                status="failed",
+                error_code="A2A_RUNTIME_ERROR",
+                error_message=str(exc),
+                task_id=normalized_task_id,
+            )
 
     def cancel(self, *, task_id: str) -> A2ADelegateResult:
         return self._run_lifecycle("cancel", task_id, "cancel_task")
