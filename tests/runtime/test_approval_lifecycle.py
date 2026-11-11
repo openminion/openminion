@@ -11,6 +11,7 @@ import pytest
 
 from openminion.modules.policy.models import build_consent_preview
 from openminion.services.runtime.daemon import execute_turn
+from openminion.services.runtime.ingress import TurnTimeoutError
 from openminion.services.runtime.ingress.requests import build_manager_turn_request
 from openminion.services.runtime.manager import (
     AgentRuntimeManager,
@@ -513,20 +514,14 @@ def test_daemon_negotiated_approval_cancel_returns_cancelled_turn() -> None:
 
 
 @pytest.mark.parametrize(
-    ("raised_factory", "expected_code", "expected_retryable"),
+    ("raised_exception", "expected_code", "expected_retryable"),
     [
-        (lambda: RuntimeError("provider boom"), "turn_failed", False),
-        (
-            lambda: __import__(
-                "openminion.api.turns", fromlist=["TurnTimeoutError"]
-            ).TurnTimeoutError("turn timed out"),
-            "turn_timeout",
-            True,
-        ),
+        (RuntimeError("provider boom"), "turn_failed", False),
+        (TurnTimeoutError("turn timed out"), "turn_timeout", True),
     ],
 )
 def test_daemon_execute_turn_preserves_ordinary_error_and_timeout_neighbors(
-    raised_factory, expected_code: str, expected_retryable: bool
+    raised_exception: Exception, expected_code: str, expected_retryable: bool
 ) -> None:
     request = TurnRequest("trace-neighbor", "main", "session-neighbor", "run it")
     with (
@@ -536,7 +531,7 @@ def test_daemon_execute_turn_preserves_ordinary_error_and_timeout_neighbors(
         ),
         mock.patch(
             "openminion.services.runtime.daemon.execute_runtime_turn",
-            side_effect=lambda **_kwargs: (_ for _ in ()).throw(raised_factory()),
+            side_effect=raised_exception,
         ),
     ):
         response = execute_turn(
