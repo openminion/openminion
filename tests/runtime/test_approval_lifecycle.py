@@ -11,6 +11,7 @@ import pytest
 
 from openminion.modules.policy.models import build_consent_preview
 from openminion.services.runtime.daemon import execute_turn
+from openminion.services.runtime.ingress import TurnTimeoutError
 from openminion.services.runtime.ingress.requests import build_manager_turn_request
 from openminion.services.runtime.manager import (
     AgentRuntimeManager,
@@ -439,3 +440,243 @@ def test_consent_preview_refuses_to_truncate_exact_action():
             {},
             confirmation_preview={"display_lines": ["Recipient: fixture", "x" * 5000]},
         )
+
+
+def test_daemon_negotiated_approval_cancel_returns_cancelled_turn() -> None:
+    session_events: list[dict[str, object]] = []
+    requested_ready = Event()
+    handle = _handle(trace_id="trace-daemon-cancel")
+    runtime = SimpleNamespace(
+        runtime_manager=SimpleNamespace(
+            get_turn_handle=lambda trace_id: (
+                handle if trace_id == handle.trace_id else None
+            )
+        ),
+        sessions=SimpleNamespace(
+            append_event=lambda **kwargs: (
+                session_events.append(dict(kwargs)),
+                requested_ready.set()
+                if kwargs["event_type"] == "approval.requested"
+                else None,
+            )
+        ),
+    )
+    request = TurnRequest(
+        trace_id=handle.trace_id,
+        agent_id="main",
+        session_id=handle.session_id,
+        input_text="run it",
+        stream=True,
+        meta={"approval_transport": "turn_stream"},
+    )
+
+    def _fake_execute_runtime_turn(**kwargs):  # noqa: ANN003
+        approval_callback = kwargs["approval_callback"]
+
+        def _cancel() -> None:
+            assert requested_ready.wait(timeout=1.0)
+            assert handle.cancel() is True
+
+        canceller = Thread(target=_cancel)
+        canceller.start()
+        try:
+            return asyncio.run(
+                approval_callback("exec.run", {"command": "pytest"}, "call-1", {})
+            )
+        finally:
+            canceller.join(timeout=1.0)
+
+    with (
+        mock.patch(
+            "openminion.services.runtime.daemon.runtime_turn_request_from_manager_request",
+            return_value=SimpleNamespace(timeout_seconds=2.0),
+        ),
+        mock.patch(
+            "openminion.services.runtime.daemon.execute_runtime_turn",
+            side_effect=_fake_execute_runtime_turn,
+        ),
+    ):
+        response = execute_turn(
+            runtime=runtime,
+            request=request,
+            emit_chunk=lambda _chunk: None,
+            cancel_event=handle.cancel_event,
+        )
+
+    assert response.final_text == ""
+    assert response.errors[0].code == "cancelled"
+    assert response.errors[0].retryable is False
+    assert [event["event_type"] for event in session_events] == [
+        "approval.requested",
+        "approval.resolved",
+    ]
+    assert session_events[1]["payload"]["outcome"] == "cancelled"
+
+
+@pytest.mark.parametrize(
+    ("raised_exception", "expected_code", "expected_retryable"),
+    [
+        (RuntimeError("provider boom"), "turn_failed", False),
+        (TurnTimeoutError("turn timed out"), "turn_timeout", True),
+    ],
+)
+def test_daemon_execute_turn_preserves_ordinary_error_and_timeout_neighbors(
+    raised_exception: Exception, expected_code: str, expected_retryable: bool
+) -> None:
+    request = TurnRequest("trace-neighbor", "main", "session-neighbor", "run it")
+    with (
+        mock.patch(
+            "openminion.services.runtime.daemon.runtime_turn_request_from_manager_request",
+            return_value=SimpleNamespace(timeout_seconds=2.0),
+        ),
+        mock.patch(
+            "openminion.services.runtime.daemon.execute_runtime_turn",
+            side_effect=raised_exception,
+        ),
+    ):
+        response = execute_turn(
+            runtime=SimpleNamespace(),
+            request=request,
+            emit_chunk=lambda _chunk: None,
+            cancel_event=Event(),
+        )
+
+    assert response.final_text == ""
+    assert response.errors[0].code == expected_code
+    assert response.errors[0].retryable is expected_retryable
+
+
+def test_gateway_persistence_aborts_before_writing_completed_when_cancelled() -> None:
+    from openminion.modules.runtime.sync import await_with_cancel
+    from openminion.services.gateway.turn.flow_persistence import (
+        GatewayTurnPersistenceDeliveryMixin,
+    )
+
+    finished_runs: list[tuple[str, dict[str, object]]] = []
+    appended_messages: list[dict[str, object]] = []
+
+    class _Harness(GatewayTurnPersistenceDeliveryMixin):
+        def __init__(self) -> None:
+            self._agent_id = "main"
+            self._agent = SimpleNamespace(memory_capture_assurance_enabled=False)
+            self._security = SimpleNamespace(
+                evaluate_policy=lambda **_kw: None,
+                enforce_policy=lambda **_kw: None,
+            )
+            self._lifecycle_ops = SimpleNamespace(
+                emit_turn_event=lambda **_kw: None,
+                emit_terminal_run_state=lambda **_kw: None,
+                corr_payload=lambda **_kw: {},
+            )
+            self._sessions = SimpleNamespace(
+                finish_run_record=lambda run_id, **kw: finished_runs.append(
+                    (run_id, kw)
+                ),
+                append_message=lambda **kw: (
+                    appended_messages.append(kw),
+                    SimpleNamespace(id="msg-1"),
+                )[1],
+            )
+
+    harness = _Harness()
+    routing = SimpleNamespace(
+        session=SimpleNamespace(id="session-cancel"),
+        conversation_id="",
+        thread_id="",
+        attach_id="",
+        normalized_request_id="req-1",
+    )
+    response = SimpleNamespace(
+        id="resp-1",
+        body="Tool execution denied by operator.",
+        metadata={},
+        channel="console",
+        target="user",
+    )
+    cancel_event = Event()
+
+    async def _persist_after_cancel() -> None:
+        cancel_event.set()
+        harness._complete_suppressed_idle_tick(
+            routing=routing,
+            run_id="run-idle",
+            response=response,
+            lifecycle_payload={},
+            typed_terminal_resolver=None,
+            session_turn_fence_token=None,
+        )
+
+    with pytest.raises(RuntimeError, match="cancelled"):
+        asyncio.run(
+            await_with_cancel(
+                _persist_after_cancel(), timeout_s=2.0, cancel_event=cancel_event
+            )
+        )
+    assert finished_runs == []
+
+    cancel_outbound = Event()
+
+    async def _outbound_after_cancel() -> None:
+        cancel_outbound.set()
+        harness._build_outbound_and_persist(
+            routing,
+            run_id="run-1",
+            response=response,
+            memory_context_meta={},
+            memory_retrieval_meta={},
+        )
+
+    with pytest.raises(RuntimeError, match="cancelled"):
+        asyncio.run(
+            await_with_cancel(
+                _outbound_after_cancel(), timeout_s=2.0, cancel_event=cancel_outbound
+            )
+        )
+    assert finished_runs == []
+    assert appended_messages == []
+
+
+@pytest.mark.parametrize("callback_mode", ["deny", "allow"])
+def test_sidecar_approval_aborts_on_turn_cancellation(
+    callback_mode: str,
+) -> None:
+    from openminion.modules.runtime.sync import await_with_cancel
+    from openminion.modules.tool.sidecars import (
+        maybe_allow_denied_call_with_operator_approval,
+    )
+
+    cancel_sidecar = Event()
+    sidecar_cancelled = False
+
+    async def _sidecar_callback(*_args: object) -> bool:
+        cancel_sidecar.set()
+        return callback_mode == "allow"
+
+    async def _run_sidecar() -> None:
+        nonlocal sidecar_cancelled
+        try:
+            await maybe_allow_denied_call_with_operator_approval(
+                call=SimpleNamespace(id="call-1", source="provider"),
+                tool_name="lookup_order",
+                tool_args={"order_id": "A-104"},
+                decision=SimpleNamespace(
+                    allowed=False,
+                    requires_confirm=True,
+                    code="REQUIRE_APPROVAL",
+                    reason="ask",
+                    details={},
+                    modified_args=None,
+                ),
+                approval_callback=_sidecar_callback,
+            )
+        except asyncio.CancelledError:
+            sidecar_cancelled = True
+            raise
+
+    with pytest.raises(RuntimeError, match="cancelled"):
+        asyncio.run(
+            await_with_cancel(
+                _run_sidecar(), timeout_s=2.0, cancel_event=cancel_sidecar
+            )
+        )
+    assert sidecar_cancelled is True

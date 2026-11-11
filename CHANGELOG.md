@@ -7,6 +7,13 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Cancelling an active turn while waiting on tool or sidecar approval now aborts
+  execution instead of falling through the operator-denial path and racing gateway
+  persistence as `completed`: stream and inline approval callbacks propagate
+  turn cancellation immediately, pending canonical confirmations settle as denied
+  without running the tool, and gateway outbound persistence checks cancellation
+  before writing a successful terminal run state (Refs #527).
+
 ## Current package line - 2026-11-09
 
 - Added session-scoped delegated-task inspection for Desktop, including safe job

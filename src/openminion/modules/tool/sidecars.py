@@ -3,6 +3,7 @@
 from collections.abc import Mapping
 from typing import Any
 
+from openminion.modules.runtime.sync import raise_if_cancelled
 from openminion.modules.telemetry.trace.phase_timing import active_chat_phase
 from openminion.modules.tool.base import ToolExecutionResult
 from openminion.modules.tool.constants import OPENMINION_CONFIG_PATH_ENV
@@ -64,15 +65,20 @@ def ensure_tool_sidecar_ready(
             f"Starting local {sidecar} requires approval.",
             {"approval_id": approval_id, "sidecar": sidecar},
         )
-    if not approval_callback(
-        f"sidecar.{sidecar}.autostart",
-        {"sidecar": sidecar},
-        approval_id,
-        _approval_policy_facts(
-            tool_name=f"sidecar.{sidecar}.autostart",
-            reason_code="sidecar_autostart_required",
-        ),
-    ):
+    raise_if_cancelled()
+    approved = bool(
+        approval_callback(
+            f"sidecar.{sidecar}.autostart",
+            {"sidecar": sidecar},
+            approval_id,
+            _approval_policy_facts(
+                tool_name=f"sidecar.{sidecar}.autostart",
+                reason_code="sidecar_autostart_required",
+            ),
+        )
+    )
+    raise_if_cancelled()
+    if not approved:
         raise ToolRuntimeError(
             "POLICY_DENIED",
             f"Starting local {sidecar} was denied.",
@@ -128,7 +134,8 @@ def sidecar_blocked_result(
 async def approve_sidecar_autostart(
     *, approval_callback: Any, sidecar: str, call: Any
 ) -> bool:
-    return bool(
+    raise_if_cancelled()
+    approved = bool(
         await approval_callback(
             f"sidecar.{sidecar}.autostart",
             {"sidecar": sidecar},
@@ -139,6 +146,8 @@ async def approve_sidecar_autostart(
             ),
         )
     )
+    raise_if_cancelled()
+    return approved
 
 
 async def filter_call_without_policy(
@@ -187,6 +196,7 @@ async def maybe_allow_denied_call_with_operator_approval(
         return None
     if not (decision.requires_confirm or decision.code == "REQUIRE_APPROVAL"):
         return None
+    raise_if_cancelled()
     with active_chat_phase("approval_wait"):
         approved = bool(
             await approval_callback(
@@ -200,6 +210,7 @@ async def maybe_allow_denied_call_with_operator_approval(
                 ),
             )
         )
+    raise_if_cancelled()
     if not approved:
         return None
     approved_call = provider_call_from_decision(
