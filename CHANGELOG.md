@@ -11,6 +11,19 @@ This file tracks package-facing release notes for `openminion`.
   delivered to the model when tool-message limits shorten a page, so following
   `next_offset` reads every character.
 
+- The published wheel and sdist now carry the approval criteria resources: the four
+  `modules/brain/runtime/approval/criteria/*.md` files were present in the release tree
+  but omitted from both artifacts, so the exported `default_criteria_registry()` raised
+  `FileNotFoundError` for `git_reset_hard.md` in an installed environment. They are now
+  declared as package data (Refs #678).
+
+- Cancelling an active turn while waiting on tool or sidecar approval now aborts
+  execution instead of falling through the operator-denial path and racing gateway
+  persistence as `completed`: stream and inline approval callbacks propagate
+  turn cancellation immediately, pending canonical confirmations settle as denied
+  without running the tool, and gateway outbound persistence checks cancellation
+  before writing a successful terminal run state (Refs #527).
+
 ## Current package line - 2026-11-09
 
 - Added session-scoped delegated-task inspection for Desktop, including safe job
