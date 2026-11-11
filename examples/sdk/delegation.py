@@ -73,7 +73,16 @@ def run_handoff(
             )
 
 
-def _print_handoff(result: AgentRunResult[str]) -> int:
+def _print_handoff(result: AgentRunResult[str], approval: str = "pause") -> int:
+    if approval == "deny":
+        print(
+            "denied: the operator refused the handoff, so the researcher did not run."
+        )
+        print(
+            "The text below is the runtime's denial notice, not the researcher's answer:"
+        )
+        print(result.text)
+        return 0
     if result.metadata.get("respond_kind") == "policy_confirmation_prompt":
         print("paused: the policy asks the operator before the handoff runs.")
         print("The text below is that operator prompt, not the researcher's answer:")
@@ -104,7 +113,8 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.mode == "handoff":
-        return _print_handoff(run_handoff(args.prompt, args.agent, args.approval))
+        result = run_handoff(args.prompt, args.agent, args.approval)
+        return _print_handoff(result, args.approval)
     print(run_subagent(args.prompt, args.agent))
     return 0
 

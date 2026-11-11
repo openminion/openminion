@@ -7,6 +7,9 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `examples/sdk/delegation.py --mode handoff --approval deny` no longer prints the pause
+  guidance after an operator denial; it now says the handoff was denied and the researcher
+  did not run. Pause, allow_once and the approval callback are unchanged (Refs #526).
 - The published wheel and sdist now carry the approval criteria resources: the four
   `modules/brain/runtime/approval/criteria/*.md` files were present in the release tree
   but omitted from both artifacts, so the exported `default_criteria_registry()` raised

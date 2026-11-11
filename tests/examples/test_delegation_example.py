@@ -75,7 +75,11 @@ class _RecorderAgent:
             )
         approved = callback(HANDOFF_TOOL, {"message": message}, "approval-1")
         if not approved:
-            return SimpleNamespace(text=DENIED_REPLY, metadata={}, thread_id=None)
+            return SimpleNamespace(
+                text=DENIED_REPLY,
+                metadata={"respond_kind": "policy_confirmation_prompt"},
+                thread_id="thread-1",
+            )
         target = self.handoffs[0].target
         answer = target.run(message)
         return SimpleNamespace(text=answer.text, metadata={}, thread_id=None)
@@ -130,6 +134,9 @@ def test_handoff_deny_ends_without_running_target(monkeypatch, capsys) -> None:
     out = capsys.readouterr().out
     assert "operator: denying handoff of 'Review this launch plan.'" in out
     assert DENIED_REPLY in out
+    assert "denied: the operator refused the handoff" in out
+    assert "paused:" not in out
+    assert "agent.run(" not in out
 
 
 def test_handoff_allow_once_runs_target_once(monkeypatch, capsys) -> None:
@@ -262,7 +269,7 @@ def _asking_wrapper(callback, asked):
     return asking
 
 
-def test_runtime_denial_runs_no_target(tmp_path, monkeypatch) -> None:
+def test_runtime_denial_runs_no_target(tmp_path, monkeypatch, capsys) -> None:
     module = run_path(str(SCRIPT))
     provider = _HandoffProvider()
     runtime = _runtime(tmp_path, monkeypatch, provider, constraint=None)
@@ -276,6 +283,13 @@ def test_runtime_denial_runs_no_target(tmp_path, monkeypatch) -> None:
     assert asked == [HANDOFF_TOOL]
     assert result.text.startswith(f"{AGENT_ID}: {DENIED_REPLY}")
     assert target_runs == []
+    assert result.metadata.get("respond_kind") == "policy_confirmation_prompt"
+    capsys.readouterr()
+    module["_print_handoff"](result, "deny")
+    out = capsys.readouterr().out
+    assert "denied: the operator refused the handoff" in out
+    assert "paused:" not in out
+    assert "agent.run(" not in out
 
 
 def test_runtime_allow_once_runs_target_exactly_once(tmp_path, monkeypatch) -> None:
