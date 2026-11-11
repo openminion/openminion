@@ -204,6 +204,14 @@ def build_freshness_hints(
                 "lookup, say the timeframe could not be confirmed instead of "
                 "inventing one."
             )
+            if obligations.require_live_data
+            else (
+                "Anchor local chronology to the requested date and source "
+                "effective dates. Apply only amendments in effect on that date, "
+                "preserving provisions they leave unchanged. If dates or "
+                "precedence are missing, ambiguous, or conflicting, state what "
+                "cannot be confirmed instead of inventing an effective rule."
+            )
         }
     return hints
 

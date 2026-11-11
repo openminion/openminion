@@ -309,6 +309,27 @@ def _run(
     return result.text, calls
 
 
+def test_local_exact_date_entry_text_is_delivered_without_live_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, observed: dict[str, list]
+) -> None:
+    script = Script(
+        classifier={**SOURCES_ONLY, "needs_exact_date": True}, first_entry="text"
+    )
+
+    text, calls = _run(script, tmp_path, monkeypatch, forced_tools=[])
+
+    assert calls == []
+    assert text.endswith(ENTRY_TEXT)
+    assert observed["respond"] == [
+        {
+            "answer": ENTRY_TEXT,
+            "time_sensitive": True,
+            "obligations": [False, True, True],
+            "result": [],
+        }
+    ]
+
+
 def test_first_entry_text_without_the_required_evidence_is_a_freshness_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, observed: dict[str, list]
 ) -> None:
