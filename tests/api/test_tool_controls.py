@@ -292,8 +292,12 @@ def test_submitted_turn_delivers_policy_approval(sdk_tools, decision):
 def test_submitted_turn_cancel_races_never_persist_completed_or_run_tool(
     sdk_tools, monkeypatch
 ):
+    from openminion.services.runtime.manager import TurnHandle
+
     runtime, _requests, state = sdk_tools
     calls = []
+    post_allow_cancels = []
+    race_session = "stream-allow-then-cancel"
 
     @tool(dangerous=True)
     def lookup_order(order_id: str) -> str:
@@ -302,52 +306,17 @@ def test_submitted_turn_cancel_races_never_persist_completed_or_run_tool(
 
     build_registrar(lookup_order.tool_family_spec()).register(runtime.tools)
     runtime.tools.get("lookup_order").prompt_visible_runtime_name = True
-
-    for idx in range(6):
-        state["tool_sent"] = False
-        session_id = f"stream-cancel-repeat-{idx}"
-        handle = runtime.submit_turn(
-            payload={
-                "message": "Check A-104",
-                "session_id": session_id,
-                "allowed_tools": ["lookup_order"],
-                "forced_tools": ["lookup_order"],
-                "timeout_seconds": 10,
-            }
-        )
-        for chunk in handle.stream(timeout_s=15):
-            if chunk.kind == "approval" and chunk.data["phase"] == "requested":
-                assert handle.cancel()
-        response = handle.result(timeout_s=2)
-        assert response.final_text == ""
-        assert response.errors and response.errors[0].code == "cancelled"
-        runs = list_runs(None, session_id=session_id, runtime=runtime)["runs"]
-        assert len(runs) == 1 and runs[0]["state"] == "failed"
-        events = list_run_events(
-            None, session_id=session_id, run_id=runs[0]["run_id"], runtime=runtime
-        )["events"]
-        assert events[-1]["event_type"] == "run.failed"
-
     state["tool_sent"] = False
-    original_request = runtime.runtime_manager.submit_turn
 
-    def submit_with_post_allow_cancel(req):
-        submitted = original_request(req)
-        base_request_approval = submitted.request_approval
+    base_request_approval = TurnHandle.request_approval
 
-        def request_approval_then_cancel(**kwargs):
-            approved = base_request_approval(**kwargs)
-            if approved:
-                submitted.cancel()
-            return approved
+    def request_approval_then_cancel(handle: TurnHandle, **kwargs):
+        approved = base_request_approval(handle, **kwargs)
+        if approved and handle.session_id == race_session:
+            post_allow_cancels.append(handle.cancel())
+        return approved
 
-        monkeypatch.setattr(submitted, "request_approval", request_approval_then_cancel)
-        return submitted
-
-    monkeypatch.setattr(
-        runtime.runtime_manager, "submit_turn", submit_with_post_allow_cancel
-    )
-    race_session = "stream-allow-then-cancel"
+    monkeypatch.setattr(TurnHandle, "request_approval", request_approval_then_cancel)
     race_handle = runtime.submit_turn(
         payload={
             "message": "Check A-104",
@@ -357,17 +326,32 @@ def test_submitted_turn_cancel_races_never_persist_completed_or_run_tool(
             "timeout_seconds": 10,
         }
     )
+    requested = []
     for chunk in race_handle.stream(timeout_s=15):
         if chunk.kind == "approval" and chunk.data["phase"] == "requested":
+            requested.append(chunk.data)
             assert race_handle.resolve_approval(
                 approval_id=chunk.data["approval_id"], decision="allow_once"
             )
     race_response = race_handle.result(timeout_s=2)
+    assert len(requested) == 1
+    assert post_allow_cancels == [True]
     assert calls == []
     assert race_response.final_text == ""
     assert race_response.errors and race_response.errors[0].code == "cancelled"
     race_runs = list_runs(None, session_id=race_session, runtime=runtime)["runs"]
     assert len(race_runs) == 1 and race_runs[0]["state"] == "failed"
+    events = list_run_events(
+        None, session_id=race_session, run_id=race_runs[0]["run_id"], runtime=runtime
+    )["events"]
+    terminal_events = [
+        event
+        for event in events
+        if event["event_type"] in {"run.completed", "run.failed", "run.cancelled"}
+    ]
+    assert terminal_events == [events[-1]]
+    assert events[-1]["event_type"] == "run.failed"
+    assert events[-1]["payload"]["error_code"] == "CancelledError"
 
 
 @pytest.mark.parametrize("forced", [False, True])

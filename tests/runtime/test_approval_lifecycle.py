@@ -479,11 +479,9 @@ def test_daemon_negotiated_approval_cancel_returns_cancelled_turn() -> None:
         canceller = Thread(target=_cancel)
         canceller.start()
         try:
-            with pytest.raises(asyncio.CancelledError):
-                asyncio.run(
-                    approval_callback("exec.run", {"command": "pytest"}, "call-1", {})
-                )
-            raise RuntimeError("Turn cancelled.")
+            return asyncio.run(
+                approval_callback("exec.run", {"command": "pytest"}, "call-1", {})
+            )
         finally:
             canceller.join(timeout=1.0)
 
@@ -506,11 +504,51 @@ def test_daemon_negotiated_approval_cancel_returns_cancelled_turn() -> None:
 
     assert response.final_text == ""
     assert response.errors[0].code == "cancelled"
+    assert response.errors[0].retryable is False
     assert [event["event_type"] for event in session_events] == [
         "approval.requested",
         "approval.resolved",
     ]
     assert session_events[1]["payload"]["outcome"] == "cancelled"
+
+
+@pytest.mark.parametrize(
+    ("raised_factory", "expected_code", "expected_retryable"),
+    [
+        (lambda: RuntimeError("provider boom"), "turn_failed", False),
+        (
+            lambda: __import__(
+                "openminion.api.turns", fromlist=["TurnTimeoutError"]
+            ).TurnTimeoutError("turn timed out"),
+            "turn_timeout",
+            True,
+        ),
+    ],
+)
+def test_daemon_execute_turn_preserves_ordinary_error_and_timeout_neighbors(
+    raised_factory, expected_code: str, expected_retryable: bool
+) -> None:
+    request = TurnRequest("trace-neighbor", "main", "session-neighbor", "run it")
+    with (
+        mock.patch(
+            "openminion.services.runtime.daemon.runtime_turn_request_from_manager_request",
+            return_value=SimpleNamespace(timeout_seconds=2.0),
+        ),
+        mock.patch(
+            "openminion.services.runtime.daemon.execute_runtime_turn",
+            side_effect=lambda **_kwargs: (_ for _ in ()).throw(raised_factory()),
+        ),
+    ):
+        response = execute_turn(
+            runtime=SimpleNamespace(),
+            request=request,
+            emit_chunk=lambda _chunk: None,
+            cancel_event=Event(),
+        )
+
+    assert response.final_text == ""
+    assert response.errors[0].code == expected_code
+    assert response.errors[0].retryable is expected_retryable
 
 
 def test_gateway_persistence_aborts_before_writing_completed_when_cancelled() -> None:
@@ -603,64 +641,14 @@ def test_gateway_persistence_aborts_before_writing_completed_when_cancelled() ->
     assert appended_messages == []
 
 
-@pytest.mark.parametrize("callback_mode", ["deny", "allow", "futures_cancelled"])
-def test_inline_tool_and_sidecar_approvals_abort_on_turn_cancellation(
+@pytest.mark.parametrize("callback_mode", ["deny", "allow"])
+def test_sidecar_approval_aborts_on_turn_cancellation(
     callback_mode: str,
 ) -> None:
-    import concurrent.futures
-    from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
     from openminion.modules.runtime.sync import await_with_cancel
     from openminion.modules.tool.sidecars import (
         maybe_allow_denied_call_with_operator_approval,
     )
-
-    resolved: list[tuple[str, str]] = []
-    replayed: list[dict[str, object]] = []
-    adapter = object.__new__(ToolAdapter)
-    adapter.policy_ctl = SimpleNamespace(
-        resolve_confirmation=lambda approval_id, decision: resolved.append(
-            (approval_id, decision)
-        )
-    )
-    adapter.execute = lambda **kwargs: replayed.append(kwargs) or {"status": "done"}
-    cancel_inline = Event()
-
-    def _inline_callback(*_args: object) -> bool:
-        if callback_mode == "futures_cancelled":
-            raise concurrent.futures.CancelledError
-        cancel_inline.set()
-        return callback_mode == "allow"
-
-    adapter._approval_callback = _inline_callback
-    inline_cancelled = False
-
-    async def _run_inline() -> None:
-        nonlocal inline_cancelled
-        try:
-            await asyncio.to_thread(
-                adapter._replay_inline_approval,
-                command={"tool_name": "ops.command.run", "args": {"cmd": "ls"}},
-                tool_name="ops.command.run",
-                args={"cmd": "ls"},
-                approval_id="approval-1",
-                session_id="session-1",
-                trace_id="trace-1",
-                start_time=0.0,
-            )
-        except asyncio.CancelledError:
-            inline_cancelled = True
-            raise
-
-    with pytest.raises((RuntimeError, asyncio.CancelledError)):
-        asyncio.run(
-            await_with_cancel(_run_inline(), timeout_s=2.0, cancel_event=cancel_inline)
-        )
-    assert inline_cancelled is True
-    assert resolved == [("approval-1", "deny")]
-    assert replayed == []
-
-    if callback_mode == "futures_cancelled":
-        return
 
     cancel_sidecar = Event()
     sidecar_cancelled = False

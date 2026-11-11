@@ -466,7 +466,8 @@ def test_command_run_projects_terminal_evidence_without_false_verification(
     assert completed.data["evidence"]["truncated"] is transport_result.truncated
 
 
-def test_focus_tool_adapter_resolves_ops_confirmation_once(tmp_path) -> None:
+@pytest.fixture
+def ops_policy_adapter(tmp_path):
     registry = ToolRegistry()
     REGISTRAR.register(registry)
     policy = PolicyCtl.with_sqlite(
@@ -474,15 +475,23 @@ def test_focus_tool_adapter_resolves_ops_confirmation_once(tmp_path) -> None:
     )
     service = local_ops_service()
     service.action_policy = policy
-    plan = service.plan_command(
-        target_id="local", argv=("printf", "ready"), session_id="session-1"
-    )
     adapter = ToolAdapter(
         workspace_root=tmp_path,
         runtime_registry=registry,
         policy_ctl=policy,
         ops_service=service,
         artifactctl=SimpleNamespace(),
+    )
+    try:
+        yield adapter, service, policy
+    finally:
+        policy.close()
+
+
+def test_focus_tool_adapter_resolves_ops_confirmation_once(ops_policy_adapter) -> None:
+    adapter, service, _policy = ops_policy_adapter
+    plan = service.plan_command(
+        target_id="local", argv=("printf", "ready"), session_id="session-1"
     )
     approvals = []
     adapter.set_approval_callback(
@@ -533,6 +542,112 @@ def test_focus_tool_adapter_resolves_ops_confirmation_once(tmp_path) -> None:
     )
     assert second["status"] == "success"
     assert len(approvals) == 2
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "allow",
+        "deny",
+        "cancel_allow",
+        "cancel_deny",
+        "futures_cancelled",
+        "callback_error",
+    ],
+)
+def test_focus_tool_adapter_canonical_confirmation_and_cancellation_boundary(
+    ops_policy_adapter, mode: str
+) -> None:
+    import asyncio
+    import concurrent.futures
+    from threading import Event
+
+    from openminion.modules.runtime.sync import await_with_cancel
+
+    adapter, service, policy = ops_policy_adapter
+    plan = service.plan_command(
+        target_id="local", argv=("printf", "ready"), session_id="session-1"
+    )
+    cancel_event = Event()
+    approvals: list[str] = []
+
+    def _callback(
+        _tool: str, _args: dict[str, object], approval_id: str, _facts: object
+    ) -> bool:
+        approvals.append(approval_id)
+        if mode == "futures_cancelled":
+            raise concurrent.futures.CancelledError
+        if mode == "callback_error":
+            cancel_event.set()
+            raise RuntimeError("callback interrupted by cancellation")
+        if mode in {"cancel_allow", "cancel_deny"}:
+            cancel_event.set()
+        return mode in {"allow", "cancel_allow"}
+
+    adapter.set_approval_callback(_callback)
+    inline_cancelled = False
+    result: dict[str, object] | None = None
+
+    async def _execute_inline() -> dict[str, object]:
+        nonlocal inline_cancelled
+        try:
+            return adapter.execute(
+                command={
+                    "tool_name": TOOL_OPS_COMMAND_RUN,
+                    "args": {"plan_id": plan.plan_id, "plan_hash": plan.plan_hash},
+                },
+                session_id="session-1",
+                trace_id=f"trace-{mode}",
+            )
+        except asyncio.CancelledError:
+            inline_cancelled = True
+            raise
+
+    if mode in {"allow", "deny"}:
+        result = asyncio.run(
+            await_with_cancel(
+                _execute_inline(), timeout_s=2.0, cancel_event=cancel_event
+            )
+        )
+    else:
+        with pytest.raises((RuntimeError, asyncio.CancelledError)):
+            asyncio.run(
+                await_with_cancel(
+                    _execute_inline(), timeout_s=2.0, cancel_event=cancel_event
+                )
+            )
+        assert inline_cancelled is True
+
+    assert len(approvals) == 1
+    rows = policy._store._record_store.query_dicts(
+        "SELECT state, resolution_action, grant_id "
+        "FROM policy_pending_confirmations WHERE approval_id = ?",
+        (approvals[0],),
+    )
+    assert len(rows) == 1
+    row = rows[0]
+
+    if mode == "allow":
+        assert result["status"] == "success"
+        assert row["state"] == "allowed"
+        assert row["resolution_action"] == "allow_once"
+        assert row["grant_id"]
+        assert len(service.jobs.list()) == 1
+        assert service.jobs.list()[0].policy_grant_id == row["grant_id"]
+    else:
+        if mode == "deny":
+            assert result["status"] == "error"
+            assert result["error"]["code"] == "POLICY_DENIED"
+        assert row == {
+            "state": "denied",
+            "resolution_action": "deny",
+            "grant_id": None,
+        }
+        assert policy.list_grants() == []
+        assert all(
+            job.policy_grant_id == "" and job.status != "succeeded"
+            for job in service.jobs.list()
+        )
 
 
 def test_focus_tool_adapter_returns_policy_resolution_error(tmp_path) -> None:
