@@ -7,6 +7,11 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Importing `openminion.modules.tool.executor` directly now succeeds without
+  circular-dependency failures: `ToolSpec` resolution inside the executor is
+  deferred until runtime so the registry re-export does not attempt to import
+  partially initialized executor symbols (Refs #733).
+
 ## Current package line - 2026-11-13
 
 - `examples/sdk/delegation.py --mode handoff --approval deny` now reports a denial only
