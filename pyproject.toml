@@ -215,6 +215,9 @@ package-dir = { "" = "src" }
 "openminion" = ["py.typed"]
 "openminion.cli.presentation.bundled_commands" = ["*.md"]
 "openminion.modules.storage.migrations" = ["postgres_histories.json"]
+# default_criteria_registry() reads these four files from the package directory, so
+# they have to travel with the wheel and the sdist.
+"openminion.modules.brain.runtime.approval" = ["criteria/*.md"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

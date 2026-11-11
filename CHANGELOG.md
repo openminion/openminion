@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- The published wheel and sdist now carry the approval criteria resources: the four
+  `modules/brain/runtime/approval/criteria/*.md` files were present in the release tree
+  but omitted from both artifacts, so the exported `default_criteria_registry()` raised
+  `FileNotFoundError` for `git_reset_hard.md` in an installed environment. They are now
+  declared as package data (Refs #678).
+
 - Cancelling an active turn while waiting on tool or sidecar approval now aborts
   execution instead of falling through the operator-denial path and racing gateway
   persistence as `completed`: stream and inline approval callbacks propagate
