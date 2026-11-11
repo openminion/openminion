@@ -1,11 +1,15 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-11-09
+Last updated: 2026-11-11
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
+
+- Keep `file.read` continuation offsets and returned lengths aligned with the text
+  delivered to the model when tool-message limits shorten a page, so following
+  `next_offset` reads every character.
 
 - The published wheel and sdist now carry the approval criteria resources: the four
   `modules/brain/runtime/approval/criteria/*.md` files were present in the release tree
