@@ -20,6 +20,7 @@ from openminion.services.runtime.manager import (
 )
 from openminion.modules.brain.diagnostics.status import phase_status_payload
 from openminion.modules.policy.models import build_consent_preview
+from openminion.modules.runtime.sync import raise_if_cancelled
 from openminion.modules.telemetry.lifecycle import (
     lifecycle_event_from_payload,
     map_cron_event_to_lifecycle_event,
@@ -393,7 +394,7 @@ def execute_turn(
             retryable=True,
             duration_ms=_duration_since_ms(started),
         )
-    except Exception as exc:
+    except (Exception, asyncio.CancelledError) as exc:
         return _turn_error_response(
             code="cancelled" if (cancelled := cancel_event.is_set()) else "turn_failed",
             message="turn cancelled during execution" if cancelled else str(exc),
@@ -435,6 +436,7 @@ def _execute_runtime_turn_with_timer(
                 runtime=runtime,
                 request=request,
                 timeout_seconds=ingress_request.timeout_seconds,
+                cancel_event=cancel_event,
             )
         turn_result = execute_runtime_turn(
             runtime=runtime,
@@ -451,12 +453,20 @@ def _approval_callback_for_turn(
     runtime: "RuntimeFacade",
     request: Any,
     timeout_seconds: float,
+    cancel_event: Any | None = None,
 ) -> Any | None:
     manager = getattr(runtime, "runtime_manager", None)
     handle = manager.get_turn_handle(request.trace_id) if manager is not None else None
     if handle is None:
         return None
     turn_deadline_mono = monotonic() + float(timeout_seconds)
+
+    def _abort_if_cancelled() -> None:
+        if handle.cancel_event.is_set() or (
+            cancel_event is not None and cancel_event.is_set()
+        ):
+            raise asyncio.CancelledError("Turn cancelled.")
+        raise_if_cancelled()
 
     def _record_event(payload: dict[str, Any]) -> None:
         try:
@@ -478,10 +488,11 @@ def _approval_callback_for_turn(
     async def _approval_callback(
         tool_name: str, args: dict[str, Any], callback_id: Any, facts: dict[str, Any]
     ) -> bool:
+        _abort_if_cancelled()
         remaining_turn_seconds = max(0.0, turn_deadline_mono - monotonic())
         if remaining_turn_seconds <= 0:
             return False
-        return await asyncio.to_thread(
+        approved = await asyncio.to_thread(
             handle.request_approval,
             tool_name=tool_name,
             consent_preview=build_consent_preview(
@@ -491,6 +502,8 @@ def _approval_callback_for_turn(
             timeout_s=min(55.0, remaining_turn_seconds * 0.9),
             on_event=_record_event,
         )
+        _abort_if_cancelled()
+        return bool(approved)
 
     return _approval_callback
 

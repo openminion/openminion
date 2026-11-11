@@ -9,6 +9,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from openminion import Agent, APIRuntime, Handoff, tool
+from openminion.api.queries.runs import list_run_events, list_runs
 from openminion.modules.tool.framework import build_registrar
 from openminion.base.config import OpenMinionConfig, save_config
 from openminion.base.config.core import ActionPolicyRuleConfig, ActionPolicyMatchConfig
@@ -149,12 +150,14 @@ def test_empty_tools_differs_from_defaults(sdk_tools, tools):
 
 
 @pytest.mark.parametrize(
-    "decision", ["allow", "async", "deny", "error", "cancel", "interactive"]
+    "decision",
+    ["allow", "async", "deny", "error", "cancel", "cancel_deny", "interactive"],
 )
 def test_action_policy_callback_controls_execution(sdk_tools, decision):
     runtime, _requests, _state = sdk_tools
     calls, approvals = [], []
     cancelled = Event()
+    session_id = f"callback-policy-{decision}"
 
     @tool(dangerous=True)
     def lookup_order(order_id: str) -> str:
@@ -165,7 +168,7 @@ def test_action_policy_callback_controls_execution(sdk_tools, decision):
         approvals.append((name, args, approval_id))
         if decision == "error":
             raise RuntimeError("fixture callback failed")
-        if decision == "cancel":
+        if decision in {"cancel", "cancel_deny"}:
             cancelled.set()
         return decision in {"allow", "async", "cancel"}
 
@@ -175,13 +178,21 @@ def test_action_policy_callback_controls_execution(sdk_tools, decision):
     callback = approve_async if decision == "async" else approve
     agent = Agent(
         runtime=runtime,
+        session_id=session_id,
         tools=[lookup_order],
         forced_tools=["lookup_order"],
         output_type=Answer if decision in {"allow", "async"} else str,
     )
-    if decision == "cancel":
+    if decision in {"cancel", "cancel_deny"}:
         with pytest.raises(RuntimeError, match="cancelled"):
             agent.run("Check A-104", approval_callback=approve, cancel_event=cancelled)
+        runs = list_runs(None, session_id=session_id, runtime=runtime)["runs"]
+        assert len(runs) == 1 and runs[0]["state"] == "failed"
+        events = list_run_events(
+            None, session_id=session_id, run_id=runs[0]["run_id"], runtime=runtime
+        )["events"]
+        assert events[-1]["event_type"] == "run.failed"
+        assert events[-1]["payload"]["error_code"] == "CancelledError"
     else:
         result = agent.run(
             "Check A-104",
@@ -204,6 +215,7 @@ def test_action_policy_callback_controls_execution(sdk_tools, decision):
         _state["tool_sent"] = False
         followup = Agent(
             runtime=runtime,
+            session_id=session_id,
             tools=[lookup_order],
             forced_tools=["lookup_order"],
         )
@@ -217,6 +229,7 @@ def test_action_policy_callback_controls_execution(sdk_tools, decision):
 def test_submitted_turn_delivers_policy_approval(sdk_tools, decision):
     runtime, _requests, _state = sdk_tools
     calls = []
+    session_id = f"stream-policy-{decision}"
 
     @tool(dangerous=True)
     def lookup_order(order_id: str) -> str:
@@ -228,7 +241,7 @@ def test_submitted_turn_delivers_policy_approval(sdk_tools, decision):
     handle = runtime.submit_turn(
         payload={
             "message": "Check A-104",
-            "session_id": "stream-policy",
+            "session_id": session_id,
             "allowed_tools": ["lookup_order"],
             "forced_tools": ["lookup_order"],
             "timeout_seconds": 10,
@@ -242,17 +255,119 @@ def test_submitted_turn_delivers_policy_approval(sdk_tools, decision):
         assert calls == []
         assert chunk.data["tool_name"] == "lookup_order"
         if decision == "cancel":
-            handle.cancel()
+            assert handle.cancel()
         else:
             assert handle.resolve_approval(
                 approval_id=chunk.data["approval_id"], decision=decision
             )
-    handle.result(timeout_s=2)
+    response = handle.result(timeout_s=2)
     assert len(requested) == 1
     assert calls == (["A-104"] if decision == "allow_once" else [])
     assert not handle.resolve_approval(
         approval_id=requested[0]["approval_id"], decision="allow_once"
     )
+    runs = list_runs(None, session_id=session_id, runtime=runtime)["runs"]
+    assert len(runs) == 1
+    events = list_run_events(
+        None, session_id=session_id, run_id=runs[0]["run_id"], runtime=runtime
+    )["events"]
+    terminal_events = [
+        event
+        for event in events
+        if event["event_type"] in {"run.completed", "run.failed", "run.cancelled"}
+    ]
+    assert terminal_events == [events[-1]]
+    if decision == "cancel":
+        assert response.final_text == ""
+        assert response.errors and response.errors[0].code == "cancelled"
+        assert runs[0]["state"] == "failed"
+        assert events[-1]["event_type"] == "run.failed"
+        assert events[-1]["payload"]["error_code"] == "CancelledError"
+    else:
+        assert response.errors == []
+        assert runs[0]["state"] == "completed"
+        assert events[-1]["event_type"] == "run.completed"
+
+
+def test_submitted_turn_cancel_races_never_persist_completed_or_run_tool(
+    sdk_tools, monkeypatch
+):
+    runtime, _requests, state = sdk_tools
+    calls = []
+
+    @tool(dangerous=True)
+    def lookup_order(order_id: str) -> str:
+        calls.append(order_id)
+        return "ready"
+
+    build_registrar(lookup_order.tool_family_spec()).register(runtime.tools)
+    runtime.tools.get("lookup_order").prompt_visible_runtime_name = True
+
+    for idx in range(6):
+        state["tool_sent"] = False
+        session_id = f"stream-cancel-repeat-{idx}"
+        handle = runtime.submit_turn(
+            payload={
+                "message": "Check A-104",
+                "session_id": session_id,
+                "allowed_tools": ["lookup_order"],
+                "forced_tools": ["lookup_order"],
+                "timeout_seconds": 10,
+            }
+        )
+        for chunk in handle.stream(timeout_s=15):
+            if chunk.kind == "approval" and chunk.data["phase"] == "requested":
+                assert handle.cancel()
+        response = handle.result(timeout_s=2)
+        assert response.final_text == ""
+        assert response.errors and response.errors[0].code == "cancelled"
+        runs = list_runs(None, session_id=session_id, runtime=runtime)["runs"]
+        assert len(runs) == 1 and runs[0]["state"] == "failed"
+        events = list_run_events(
+            None, session_id=session_id, run_id=runs[0]["run_id"], runtime=runtime
+        )["events"]
+        assert events[-1]["event_type"] == "run.failed"
+
+    state["tool_sent"] = False
+    original_request = runtime.runtime_manager.submit_turn
+
+    def submit_with_post_allow_cancel(req):
+        submitted = original_request(req)
+        base_request_approval = submitted.request_approval
+
+        def request_approval_then_cancel(**kwargs):
+            approved = base_request_approval(**kwargs)
+            if approved:
+                submitted.cancel()
+            return approved
+
+        monkeypatch.setattr(submitted, "request_approval", request_approval_then_cancel)
+        return submitted
+
+    monkeypatch.setattr(
+        runtime.runtime_manager, "submit_turn", submit_with_post_allow_cancel
+    )
+    race_session = "stream-allow-then-cancel"
+    race_handle = runtime.submit_turn(
+        payload={
+            "message": "Check A-104",
+            "session_id": race_session,
+            "allowed_tools": ["lookup_order"],
+            "forced_tools": ["lookup_order"],
+            "timeout_seconds": 10,
+        }
+    )
+    for chunk in race_handle.stream(timeout_s=15):
+        if chunk.kind == "approval" and chunk.data["phase"] == "requested":
+            assert race_handle.resolve_approval(
+                approval_id=chunk.data["approval_id"], decision="allow_once"
+            )
+    race_response = race_handle.result(timeout_s=2)
+    assert calls == []
+    assert race_response.final_text == ""
+    assert race_response.errors and race_response.errors[0].code == "cancelled"
+    race_runs = list_runs(None, session_id=race_session, runtime=runtime)["runs"]
+    assert len(race_runs) == 1 and race_runs[0]["state"] == "failed"
 
 
 @pytest.mark.parametrize("forced", [False, True])

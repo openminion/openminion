@@ -7,6 +7,7 @@ from openminion.modules.brain.constants import (
     SESSION_EVENT_POLICY_CONFIRMATION_PROMPT,
 )
 from openminion.modules.policy import RISK_LOW
+from openminion.modules.runtime.sync import raise_if_cancelled
 from openminion.modules.task.run import RUN_STATE_COMPLETED, RUN_STATE_FAILED
 from openminion.modules.telemetry.trace.phase_timing import active_chat_phase
 from openminion.services.gateway.constants import CALLER_HANDLES_DELIVERY_METADATA_KEY
@@ -81,6 +82,7 @@ class GatewayTurnPersistenceDeliveryMixin:
         typed_terminal_resolver: Callable[..., Any] | None,
         session_turn_fence_token: int | None,
     ) -> Message:
+        raise_if_cancelled()
         self._finish_run_record(
             run_id,
             status="completed",
@@ -133,6 +135,7 @@ class GatewayTurnPersistenceDeliveryMixin:
         memory_retrieval_meta: dict[str, str],
         session_turn_fence_token: int | None = None,
     ) -> tuple[Message, Any]:
+        raise_if_cancelled()
         session_id = routing.session.id
         conversation_id = routing.conversation_id
         thread_id = routing.thread_id
