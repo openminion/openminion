@@ -7,6 +7,11 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `build_delegate_tool` now dumps Pydantic `BaseModel` outputs from `Handoff` target
+  agents with `model_dump(mode="json")` so delegated structured results serialize cleanly
+  in `ToolExecutionBatch.to_metadata_payload()` while leaving non-model outputs and run
+  metadata unchanged.
+
 - `daemon start` now creates the `state/` and `logs/` parents under the storage
   private-directory contract instead of the process umask: the startup owner made them
   first at 0755, so the later storage helper preserved them and the daemon database and

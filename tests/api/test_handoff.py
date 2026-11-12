@@ -253,6 +253,45 @@ def test_concurrent_handoff_runs_do_not_collide() -> None:
     assert "transfer_to_child" not in runtime.tools.list()
 
 
+def test_build_delegate_tool_serializes_basemodel_target_output() -> None:
+    import json
+    from datetime import date
+    from openminion.modules.tool.registry import ToolExecutionBatch
+    from openminion.modules.tool.runtime.registry_toolspec import (
+        _tool_result_from_payload,
+    )
+    from pydantic import BaseModel
+
+    class _Verdict(BaseModel):
+        severity: str
+        summary: str
+        reviewed_on: date
+
+    specialist = Agent(
+        runtime=_FakeRuntime(
+            '{"severity": "high", "summary": "reentrancy", "reviewed_on": "2026-11-12"}'
+        ),
+        name="specialist",
+        output_type=_Verdict,
+    )
+    decl = build_delegate_tool(Handoff(target=specialist))
+    payload = decl.handler(decl.args_model(message="audit"))
+    assert payload == {
+        "ok": True,
+        "content": '{"severity": "high", "summary": "reentrancy", "reviewed_on": "2026-11-12"}',
+        "data": {
+            "output": {
+                "severity": "high",
+                "summary": "reentrancy",
+                "reviewed_on": "2026-11-12",
+            }
+        },
+    }
+    result = _tool_result_from_payload(tool_name=decl.name, payload=payload)
+    batch_payload = ToolExecutionBatch(results=[result]).to_metadata_payload()
+    assert json.loads(batch_payload)[0]["data"] == payload["data"]
+
+
 def test_agent_handoffs_param_compiles_to_family_spec() -> None:
     runtime = _FakeRuntime()
     agent_b = Agent(runtime=runtime, name="b")
