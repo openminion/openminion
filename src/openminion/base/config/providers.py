@@ -78,6 +78,7 @@ class OllamaProviderConfig:
     api_key: str = ""
     api_key_env: str = "OLLAMA_API_KEY"
     tool_call_strategy: str = "fallback"
+    num_ctx: int = 0
 
 
 @dataclass
