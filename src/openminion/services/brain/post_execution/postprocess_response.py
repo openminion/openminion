@@ -190,7 +190,10 @@ def _attach_finish_reason(
     elif status_lower in {"error", "failed"}:
         metadata["finish_reason"] = "error"
     else:
-        metadata["finish_reason"] = "stop"
+        reason = str(getattr(step_out, "_accepted_finish_reason", "") or "").strip()
+        metadata["finish_reason"] = (
+            reason if reason not in {"", "stop", "tool_calls"} else "stop"
+        )
 
 
 def _attach_telemetry_flag(self, *, metadata: dict[str, str]) -> None:

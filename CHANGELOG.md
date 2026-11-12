@@ -7,6 +7,10 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- A turn whose accepted answer was truncated or filtered now reports the provider's
+  termination (`finish_reason: length`, `content_filter`, …) instead of an unconditional
+  `stop`, and keeps `stop` when the answer was replaced (Refs #602).
+
 - `build_delegate_tool` now dumps Pydantic `BaseModel` outputs from `Handoff` target
   agents with `model_dump(mode="json")` so delegated structured results serialize cleanly
   in `ToolExecutionBatch.to_metadata_payload()` while leaving non-model outputs and run
