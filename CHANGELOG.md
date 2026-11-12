@@ -7,6 +7,11 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `probe_provider_session` now evaluates Cortensor `api_mode`, `base_url`, and session IDs
+  through `resolve_cortensor_runtime_config(config)` so `CORTENSOR_*` environment overrides
+  match runtime execution, and `CortensorProvider._complete_via_openai_chat_mode` now
+  forwards `http_client_for_config(self._http_client, config)` to `_post_with_retries`.
+
 - `daemon start` now creates the `state/` and `logs/` parents under the storage
   private-directory contract instead of the process umask: the startup owner made them
   first at 0755, so the later storage helper preserved them and the daemon database and

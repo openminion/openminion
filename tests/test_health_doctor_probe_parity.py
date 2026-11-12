@@ -145,3 +145,96 @@ class HealthDoctorProbeParityTests(unittest.TestCase):
 
 def _check_by_id(payload: dict) -> dict:
     return {check["id"]: check for check in payload["checks"]}
+
+
+class CortensorDoctorEnvAndPoolParityTests(unittest.TestCase):
+    def test_probe_provider_session_honors_cortensor_env_overrides(self) -> None:
+        from openminion.services.health.probes import probe_provider_session
+
+        cfg = OpenMinionConfig()
+        cfg.providers.cortensor.session_id = 0
+        with patch.dict(
+            "os.environ",
+            {
+                "CORTENSOR_API_MODE": "",
+                "CORTENSOR_API_URL": "",
+                "CORTENSOR_SESSION_ID": "",
+                "CORTENSOR_SESSION_IDS": "",
+                "CORTENSOR_DEDICATED_SESSION_IDS": "",
+                "CORTENSOR_EPHEMERAL_SESSION_IDS": "",
+            },
+            clear=False,
+        ):
+            missing_probe = probe_provider_session(cfg, "cortensor")
+            self.assertIsNotNone(missing_probe)
+            assert missing_probe is not None
+            self.assertEqual(missing_probe.status, "fail")
+
+            with patch.dict("os.environ", {"CORTENSOR_SESSION_ID": "42"}, clear=False):
+                router_probe = probe_provider_session(cfg, "cortensor")
+            self.assertIsNotNone(router_probe)
+            assert router_probe is not None
+            self.assertEqual(router_probe.status, "ok")
+            self.assertIn("42", router_probe.message)
+
+            with patch.dict(
+                "os.environ",
+                {"CORTENSOR_DEDICATED_SESSION_IDS": "7, 9"},
+                clear=False,
+            ):
+                dedicated_probe = probe_provider_session(cfg, "cortensor")
+            self.assertIsNotNone(dedicated_probe)
+            assert dedicated_probe is not None
+            self.assertEqual(dedicated_probe.status, "ok")
+            self.assertIn("7, 9", dedicated_probe.message)
+
+            with patch.dict(
+                "os.environ",
+                {
+                    "CORTENSOR_API_MODE": "openai_chat",
+                    "CORTENSOR_API_URL": "https://api.cortensor.app/v1",
+                },
+                clear=False,
+            ):
+                portal_probe = probe_provider_session(cfg, "cortensor")
+            self.assertIsNone(portal_probe)
+
+    def test_cortensor_openai_chat_mode_forwards_configured_http_client(self) -> None:
+        from openminion.modules.llm.providers.cortensor.adapter import CortensorProvider
+        from openminion.modules.llm.schemas import LLMRequest, Message
+
+        provider = CortensorProvider()
+        try:
+            req = LLMRequest(
+                provider="cortensor",
+                model="gpt-oss-20b",
+                messages=[Message(role="user", content="ping")],
+            )
+            with patch.object(
+                provider,
+                "_post_with_retries",
+                return_value={"choices": [{"message": {"content": "pong"}}]},
+            ) as post_mock:
+                provider.complete(
+                    req,
+                    config={
+                        "api_mode": "openai_chat",
+                        "base_url": "https://api.cortensor.app/v1",
+                        "http_connection_reuse_enabled": True,
+                    },
+                )
+                self.assertIs(
+                    post_mock.call_args.kwargs.get("http_client"),
+                    provider._http_client,
+                )
+                provider.complete(
+                    req,
+                    config={
+                        "api_mode": "openai_chat",
+                        "base_url": "https://api.cortensor.app/v1",
+                        "http_connection_reuse_enabled": False,
+                    },
+                )
+                self.assertIsNone(post_mock.call_args.kwargs.get("http_client"))
+        finally:
+            provider.close()

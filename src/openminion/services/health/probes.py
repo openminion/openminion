@@ -4,6 +4,7 @@ from typing import Any
 from collections.abc import Callable, Iterable
 
 from openminion.base.config.env import resolve_environment_config
+from openminion.modules.llm import resolve_cortensor_runtime_config
 from openminion.modules.storage.runtime.context import build_runtime_storage
 
 
@@ -164,12 +165,13 @@ def probe_provider_key(config: Any, provider_name: str) -> ProbeResult | None:
 def probe_provider_session(config: Any, provider_name: str) -> ProbeResult | None:
     if provider_name != "cortensor":
         return None
+    resolved_provider = resolve_cortensor_runtime_config(config)
     if not _cortensor_completion_mode(
-        api_mode=config.providers.cortensor.api_mode,
-        base_url=config.providers.cortensor.base_url,
+        api_mode=resolved_provider.api_mode,
+        base_url=resolved_provider.base_url,
     ):
         return None
-    session_ids = _resolve_cortensor_session_candidates(config)
+    session_ids = _resolve_cortensor_session_candidates(resolved_provider)
     if not session_ids:
         return ProbeResult(
             id="provider.cortensor.session_id",
@@ -315,14 +317,14 @@ def _resolve_key_source(config_key: str, env_name: str, default_env: str) -> str
     return None
 
 
-def _resolve_cortensor_session_candidates(config: Any) -> list[int]:
+def _resolve_cortensor_session_candidates(cortensor_config: Any) -> list[int]:
     seen: set[int] = set()
     results: list[int] = []
     for raw_value in [
-        config.providers.cortensor.session_id,
-        *list(config.providers.cortensor.session_ids),
-        *list(config.providers.cortensor.dedicated_session_ids),
-        *list(config.providers.cortensor.ephemeral_session_ids),
+        cortensor_config.session_id,
+        *list(cortensor_config.session_ids),
+        *list(cortensor_config.dedicated_session_ids),
+        *list(cortensor_config.ephemeral_session_ids),
     ]:
         try:
             parsed = int(raw_value)

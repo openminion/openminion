@@ -16,12 +16,14 @@ __all__ = [
     "ToolSpec",
     "UsageInfo",
     "is_provider_recovery_fallback_text",
+    "resolve_cortensor_runtime_config",
 ]
 if TYPE_CHECKING:  # pragma: no cover
     from .runtime.client import LLMCTL, LLMClient
     from .errors import ErrorCode, LLMCtlError
     from .providers.factory import RuntimeLLMHandle
     from .providers.contracts import ProviderError
+    from .providers.cortensor.config import resolve_cortensor_runtime_config
     from .providers.normalization import is_provider_recovery_fallback_text
     from .schemas import (
         LLMRequest,
@@ -52,6 +54,10 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "is_provider_recovery_fallback_text": (
         ".providers.normalization",
         "is_provider_recovery_fallback_text",
+    ),
+    "resolve_cortensor_runtime_config": (
+        ".providers.cortensor.config",
+        "resolve_cortensor_runtime_config",
     ),
 }
 

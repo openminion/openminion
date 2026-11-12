@@ -275,6 +275,7 @@ class CortensorProvider:
             ),
             trace_metadata=request.metadata,
             env=config.get("__env__"),
+            http_client=http_client_for_config(self._http_client, config),
             telemetryctl=config.get("telemetryctl"),
         )
 
