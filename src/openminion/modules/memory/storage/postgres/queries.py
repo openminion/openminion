@@ -8,6 +8,43 @@ from .query_terms import _tsquery_candidates
 from .sql import _named_params
 from ...errors import NotFoundError
 
+# Expiry is an instant, not a string: a stored offset must not change readability and the
+# comparison keeps the stored precision, because CAST(... AS timestamptz) is
+# microsecond-exact. PostgreSQL raises instead of returning null on an impossible value,
+# so the predicate proves the value is a calendar-valid instant from year 0001 before the
+# cast: month lengths and leap years are spelled out inside the pattern (POSIX ERE has no
+# lookahead) and the year is written so 0000 cannot match. Anything else - year 0000,
+# 2020-02-30, 2020-13-01, '!' - is not an expiry and never hides a record. A value without
+# an offset is read as UTC. Groups are capturing because SQLAlchemy's text() reads
+# "?:<digit>" as a bind parameter.
+_EXPIRY_YEAR = r"([1-9][0-9]{3}|[0-9][1-9][0-9]{2}|[0-9]{2}[1-9][0-9]|[0-9]{3}[1-9])"
+_EXPIRY_LEAP_YEAR = (
+    r"[0-9]{2}(0[48]|[2468][048]|[13579][26])"
+    r"|(0[48]|[2468][048]|[13579][26])00"
+)
+_EXPIRY_DATE = (
+    _EXPIRY_YEAR
+    + r"-((0[13578]|1[02])-(0[1-9]|[12][0-9]|3[01])"
+    + r"|(0[469]|11)-(0[1-9]|[12][0-9]|30)"
+    + r"|02-(0[1-9]|1[0-9]|2[0-8]))"
+    + r"|("
+    + _EXPIRY_LEAP_YEAR
+    + r")-02-29"
+)
+_EXPIRY_INSTANT = (
+    r"("
+    + _EXPIRY_DATE
+    + r")[T ]([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]{1,6})?"
+    r"(Z|[+-](0[0-9]:[0-5][0-9]|1[0-3]:[0-5][0-9]|14:00))?"
+)
+_EXPIRY_OFFSET = r"(Z|[+-][0-9]{2}:[0-9]{2})$"
+_EXPIRY_CLAUSE = (
+    "(expires_at IS NULL OR CASE WHEN expires_at ~ '^" + _EXPIRY_INSTANT + "$'"
+    " THEN CAST(expires_at || CASE WHEN expires_at ~ '" + _EXPIRY_OFFSET + "'"
+    " THEN '' ELSE 'Z' END AS timestamptz)"
+    " > CAST(:query_now AS timestamptz) ELSE TRUE END)"
+)
+
 
 def _active_record_clause(*, include_invalidated: bool) -> list[str]:
     clauses = (
@@ -17,6 +54,10 @@ def _active_record_clause(*, include_invalidated: bool) -> list[str]:
     )
     if not include_invalidated:
         clauses.append("(valid_to IS NULL OR valid_to > :query_now)")
+        # Expiry is enforced on read as well as by the purge run, and compared as an
+        # instant so a stored offset cannot change readability. A value that is not a
+        # calendar-valid instant is not an expiry, so the record stays visible.
+        clauses.append(_EXPIRY_CLAUSE)
     return clauses
 
 
@@ -200,7 +241,8 @@ def retrieve_by_entities(
           JOIN memory_entities e ON r.id = e.record_id
          WHERE r.is_deleted = FALSE
            AND (r.valid_to IS NULL OR r.valid_to > :query_now)
-        """,
+        """
+        + f"AND {_EXPIRY_CLAUSE}",
         f"AND e.entity IN ({entities_sql})",
         f"AND r.scope IN ({scopes_sql})",
     ]
