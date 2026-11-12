@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import io
+import logging
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from threading import Event
 from types import SimpleNamespace
 
+import pytest
+
 from openminion.api.routes.contracts import APIRouteContext
 from openminion.api.routes.turns import handle_request
+from openminion.base.logging import _build_formatter
 from openminion.services.runtime import AgentRuntimeManager, TurnRequest, TurnResponse
 from openminion.services.runtime.turn_input import TurnInputQueue
 from openminion.services.runtime.turn_input.lifecycle import (
@@ -194,6 +199,114 @@ def test_enqueue_and_list_turn_inputs_with_session_event() -> None:
     assert listed is not None
     assert listed.status == HTTPStatus.OK
     assert [entry["queue_id"] for entry in listed.payload["entries"]] == ["q1"]
+
+
+def test_a_failed_session_audit_write_keeps_the_queue_and_reports_bounded_facts(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    runtime = _Runtime()
+    attempts: list[dict[str, str]] = []
+    writer_text = (
+        "idempotency_key=key-123 metadata={'note': 'meta-value'} text=secret user text"
+    )
+
+    def failing_append_event(*, session_id: str, event_type: str, payload: dict):
+        attempts.append({"session_id": session_id, "event_type": event_type})
+        raise OSError(writer_text)
+
+    monkeypatch.setattr(runtime.sessions, "append_event", failing_append_event)
+
+    with caplog.at_level(logging.WARNING, logger="openminion.api"):
+        result = handle_request(
+            _ctx(runtime),
+            method_name="POST",
+            path="/v1/sessions/s1/turn-inputs",
+            body={
+                "agent_id": "a1",
+                "text": "secret user text",
+                "source_client": "api",
+                "idempotency_key": "key-123",
+                "metadata": {"note": "meta-value"},
+            },
+            query=None,
+        )
+
+        listed = handle_request(
+            _ctx(runtime),
+            method_name="GET",
+            path="/v1/sessions/s1/turn-inputs",
+            body=None,
+            query=None,
+        )
+
+    # The dropped audit write changes neither the response nor the queued entry.
+    assert result is not None
+    assert result.status == HTTPStatus.ACCEPTED
+    assert result.payload["entry"]["queue_id"] == "q1"
+    assert result.payload["entry"]["status"] == "queued"
+    assert listed is not None
+    assert listed.status == HTTPStatus.OK
+    assert [entry["queue_id"] for entry in listed.payload["entries"]] == ["q1"]
+
+    # Exactly one write attempt, and it left no audit event behind.
+    assert attempts == [{"session_id": "s1", "event_type": "turn_input.enqueued"}]
+    assert runtime.sessions.events == []
+
+    # The warning goes through the real formatter and carries bounded facts only.
+    records = [record for record in caplog.records if record.name == "openminion.api"]
+    assert len(records) == 1
+    record = records[0]
+    formatted = _build_formatter(stream=io.StringIO()).format(record)
+    assert "turn_input.enqueued" in formatted
+    assert "q1" in formatted
+    assert "s1" in formatted
+    assert "OSError" in formatted
+    assert record.exc_info is None
+    assert record.exc_text is None
+    for leaked in (
+        "secret user text",
+        "key-123",
+        "meta-value",
+        "idempotency_key",
+        "metadata",
+    ):
+        assert leaked not in formatted
+
+
+def test_a_recorded_session_audit_write_logs_no_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    runtime = _Runtime()
+
+    with caplog.at_level(logging.WARNING, logger="openminion.api"):
+        result = handle_request(
+            _ctx(runtime),
+            method_name="POST",
+            path="/v1/sessions/s1/turn-inputs",
+            body={"agent_id": "a1", "text": "next question", "source_client": "api"},
+            query=None,
+        )
+
+        listed = handle_request(
+            _ctx(runtime),
+            method_name="GET",
+            path="/v1/sessions/s1/turn-inputs",
+            body=None,
+            query=None,
+        )
+
+    assert result is not None
+    assert result.status == HTTPStatus.ACCEPTED
+    assert result.payload["entry"]["queue_id"] == "q1"
+    assert listed is not None
+    assert listed.status == HTTPStatus.OK
+    assert [entry["queue_id"] for entry in listed.payload["entries"]] == ["q1"]
+    assert [event.event_type for event in runtime.sessions.events] == [
+        "turn_input.enqueued"
+    ]
+    assert [
+        record for record in caplog.records if record.name == "openminion.api"
+    ] == []
 
 
 def test_drop_turn_input_uses_status_version_and_records_event() -> None:
