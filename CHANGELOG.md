@@ -7,6 +7,11 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- A failed usage-event read is no longer indistinguishable from an empty turn: the
+  collector returns the events it did read plus a read-failed flag, and the metadata carries
+  `llm_usage_events_incomplete` so partial totals are not reported as complete
+  (Refs #648).
+
 - `build_delegate_tool` now dumps Pydantic `BaseModel` outputs from `Handoff` target
   agents with `model_dump(mode="json")` so delegated structured results serialize cleanly
   in `ToolExecutionBatch.to_metadata_payload()` while leaving non-model outputs and run
