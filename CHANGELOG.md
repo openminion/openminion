@@ -7,6 +7,10 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- The agent loop's stall rule now counts consecutive failures: a productive batch clears
+  the no-progress counter, so two intermittent failures spread across a turn no longer end it
+  while work is still getting done (Refs #679).
+
 - `build_delegate_tool` now dumps Pydantic `BaseModel` outputs from `Handoff` target
   agents with `model_dump(mode="json")` so delegated structured results serialize cleanly
   in `ToolExecutionBatch.to_metadata_payload()` while leaving non-model outputs and run
