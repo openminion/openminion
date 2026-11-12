@@ -7,6 +7,11 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Respect directory boundaries in `find`/`search` file globs: a single `*` no longer
+  crosses a separator, `**` recurses to any depth, character classes and ranges match like
+  `fnmatch` without matching `/`, and hidden, pruning and limit behaviour is unchanged
+  (Refs #492).
+
 - `build_delegate_tool` now dumps Pydantic `BaseModel` outputs from `Handoff` target
   agents with `model_dump(mode="json")` so delegated structured results serialize cleanly
   in `ToolExecutionBatch.to_metadata_payload()` while leaving non-model outputs and run
