@@ -7,6 +7,11 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `examples/sdk/delegation.py --mode handoff --approval deny` now reports a denial only
+  when the run actually ended at the handoff confirmation; an ordinary answer with no
+  confirmation is printed unchanged, and the pause guidance is no longer shown after a
+  denial. Pause, allow_once and the approval callback are unchanged (Refs #526).
+
 - `build_delegate_tool` now dumps Pydantic `BaseModel` outputs from `Handoff` target
   agents with `model_dump(mode="json")` so delegated structured results serialize cleanly
   in `ToolExecutionBatch.to_metadata_payload()` while leaving non-model outputs and run
