@@ -48,6 +48,65 @@ bucket usage and the trimming decisions instead of interpreting a target as a
 hard bound on the wire request. Local rebuilding time, repeated request bytes
 and provider-billed uncached tokens are separate measurements.
 
+## Automatic fact extraction
+
+Automatic fact extraction is enabled by default. When it runs, the turn makes
+one auxiliary structured model call before the user message is interpreted.
+The call asks for candidate facts, user preferences and tasks that the user
+stated explicitly. Its result is staged as memory candidates; it is not part of
+the reply.
+
+The supported switch is the top-level `brain.auto_fact_extraction` section:
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `true` | Run extraction on eligible turns. |
+| `model_tier` | `reflect` | Model tier used to pick the extraction model. |
+| `max_items_per_turn` | `5` | Maximum candidates requested from one message. |
+| `min_user_message_chars` | `8` | Shorter messages, after trimming, are skipped. |
+| `initial_confidence` | `0.3` | Confidence given to staged candidates. |
+| `timeout_seconds` | `20` | Transport read timeout for the call; not a bound on total extraction time (#634). |
+
+```json
+{
+  "brain": {
+    "auto_fact_extraction": {"enabled": false}
+  }
+}
+```
+
+An `auto_fact_extraction` key under `agents.<id>` currently has no effect. The
+agent-profile parser does not read it, and the top-level section stays in
+force.
+
+The model comes from the effective agent profile. With the default `reflect`
+tier, extraction uses `reflect_model`, then `decide_model`, then `act_model`,
+whichever is set first. It is not necessarily the model of the main action
+request. Another tier tries `<tier>_model`, then `reflect_model`, then
+`decide_model`.
+
+The call goes through the existing structured-output retry path. It is one
+logical call, counted in the turn's LLM calls, but it can make more than one
+provider request. It offers only the forced `submit_output` structured-output
+tool. That tool list belongs to this auxiliary call: the turn's later entry and
+action requests carry their own tools.
+
+Extraction does not run when:
+
+- `enabled` is `false`;
+- the message is shorter than `min_user_message_chars`;
+- the message is an explicit `tool <name> ...` command;
+- capture is excluded for the turn or memory writes are not authorized for it;
+- the turn skips its initial user-message append;
+- the LLM, context or memory service is unavailable, or no extraction model is
+  configured.
+
+A failed extraction emits `brain.auto_fact_extraction.skipped` with reason
+`extraction_failed`, and the turn continues. The `started`, `completed` and
+`skipped` events of `brain.auto_fact_extraction` show what happened on a given
+turn. When you measure request counts or cost, account for this call on its
+own, or compare with `enabled` set to `false` as one changed setting.
+
 ## Choose a change from evidence
 
 Use a bounded representative task and record:
