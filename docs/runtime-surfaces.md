@@ -89,6 +89,21 @@ Returning true grants that invocation once; false or a callback failure prevents
 execution. Without a callback, the interactive confirmation flow remains in
 place. Submitted turns deliver the same request through approval stream events.
 
+Which `@tool` functions get a confirmation depends on how they are declared.
+Under the default action policy:
+
+- a bare `@tool` is a local write with unknown reversibility, so it is
+  confirmed before it runs;
+- `@tool(min_scope="READ_ONLY", idempotent=True)` is a read with no side
+  effects and runs without confirmation, as in `examples/sdk/tool_agent.py`.
+  Explicit denials, sensitive-target handling and operator policy still apply;
+- `idempotent=True` alone still leaves a write, which is confirmed;
+- `dangerous=True` is destructive and irreversible, and requires confirmation
+  unless a matching grant or an explicit policy rule resolves it first;
+- `tags` and `capabilities` do not declare risk.
+
+The docstring of `openminion.tool` lists the full mapping.
+
 In that flow the turn ends with `respond_kind` `policy_confirmation_prompt` in
 its metadata, and the call waits on the turn's thread. A later `run()` without
 a thread starts a new thread, so it does not answer the confirmation. To answer
