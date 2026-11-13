@@ -1,11 +1,13 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-11-09
+Last updated: 2026-11-13
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
+
+## Current package line - 2026-11-13
 
 - `examples/sdk/delegation.py --mode handoff --approval deny` now reports a denial only
   when the run actually ended at the handoff confirmation; an ordinary answer with no
