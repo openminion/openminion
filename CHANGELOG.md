@@ -7,6 +7,10 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `subagent()` now forwards `parent.agent_id` and inherits `parent.model` when `model` is
+  not explicitly overridden, preserving runtime default profile resolution for unconfigured
+  parents and explicit child `model` overrides.
+
 ## Current package line - 2026-11-13
 
 - `examples/sdk/delegation.py --mode handoff --approval deny` now reports a denial only
