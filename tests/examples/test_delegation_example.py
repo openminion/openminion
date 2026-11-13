@@ -219,9 +219,7 @@ class _HandoffProvider(_Provider):
         return _completion({"role": "assistant", "content": REPLY}, "stop")
 
 
-def _handoff_turn(
-    runtime: Any, provider: _HandoffProvider, callback: Any
-) -> tuple[Any, list[str]]:
+def _handoff_turn(runtime: Any, callback: Any) -> tuple[Any, list[str]]:
     target_runs: list[str] = []
 
     def recording_run(message: str, **_kwargs: Any) -> Any:
@@ -246,7 +244,6 @@ def _handoff_turn(
                 "Research this launch plan.", approval_callback=callback
             )
     assert result.run_state == "completed"
-    assert provider.handed_off is True
     return result, target_runs
 
 
@@ -254,10 +251,11 @@ def test_runtime_pause_leaves_target_unrun(tmp_path, monkeypatch) -> None:
     provider = _HandoffProvider()
     runtime = _runtime(tmp_path, monkeypatch, provider, constraint=None)
     try:
-        result, target_runs = _handoff_turn(runtime, provider, None)
+        result, target_runs = _handoff_turn(runtime, None)
     finally:
         runtime.close()
 
+    assert provider.handed_off is True
     assert result.text.startswith(f"{AGENT_ID}: Policy confirmation required.")
     assert result.metadata.get("respond_kind") == "policy_confirmation_prompt"
     assert target_runs == []
@@ -278,10 +276,11 @@ def test_runtime_denial_runs_no_target(tmp_path, monkeypatch, capsys) -> None:
     asked: list[str] = []
     callback = _asking_wrapper(module["operator_decision"]("deny"), asked)
     try:
-        result, target_runs = _handoff_turn(runtime, provider, callback)
+        result, target_runs = _handoff_turn(runtime, callback)
     finally:
         runtime.close()
 
+    assert provider.handed_off is True
     assert asked == [HANDOFF_TOOL]
     assert result.text.startswith(f"{AGENT_ID}: {DENIED_REPLY}")
     assert target_runs == []
@@ -314,34 +313,11 @@ def test_runtime_answer_without_confirmation_prints_unchanged(
         if approval == "pause"
         else _asking_wrapper(module["operator_decision"](approval), asked)
     )
-    target_runs: list[str] = []
     try:
-        with Agent(
-            runtime=runtime,
-            name="researcher",
-            instructions="Research one bounded question and return concise findings.",
-        ) as researcher:
-            original_run = researcher.run
-
-            def recording_run(message: str, **_kwargs: Any) -> Any:
-                target_runs.append(message)
-                return original_run(message)
-
-            researcher.run = recording_run  # type: ignore[method-assign]
-            with Agent(
-                runtime=runtime,
-                name="coordinator",
-                instructions="Delegate research questions to the researcher.",
-                handoffs=[Handoff(target=researcher)],
-                forced_tools=[HANDOFF_TOOL],
-            ) as coordinator:
-                result = coordinator.run(
-                    "Research this launch plan.", approval_callback=callback
-                )
+        result, target_runs = _handoff_turn(runtime, callback)
     finally:
         runtime.close()
 
-    assert result.run_state == "completed"
     assert result.metadata.get("respond_kind") != "policy_confirmation_prompt"
     assert asked == []
     assert target_runs == []
@@ -357,10 +333,11 @@ def test_runtime_allow_once_runs_target_exactly_once(tmp_path, monkeypatch) -> N
     asked: list[str] = []
     callback = _asking_wrapper(module["operator_decision"]("allow_once"), asked)
     try:
-        result, target_runs = _handoff_turn(runtime, provider, callback)
+        result, target_runs = _handoff_turn(runtime, callback)
     finally:
         runtime.close()
 
+    assert provider.handed_off is True
     assert asked == [HANDOFF_TOOL]
     assert target_runs == ["Research this launch plan."]
     assert result.text.startswith(f"{AGENT_ID}: ")
