@@ -10,6 +10,18 @@ This file tracks package-facing release notes for `openminion`.
 - `examples/sdk/delegation.py --mode handoff --approval deny` no longer prints the pause
   guidance after an operator denial; it now says the handoff was denied and the researcher
   did not run. Pause, allow_once and the approval callback are unchanged (Refs #526).
+
+- `build_delegate_tool` now dumps Pydantic `BaseModel` outputs from `Handoff` target
+  agents with `model_dump(mode="json")` so delegated structured results serialize cleanly
+  in `ToolExecutionBatch.to_metadata_payload()` while leaving non-model outputs and run
+  metadata unchanged.
+
+- `daemon start` now creates the `state/` and `logs/` parents under the storage
+  private-directory contract instead of the process umask: the startup owner made them
+  first at 0755, so the later storage helper preserved them and the daemon database and
+  its WAL stayed reachable through a world-readable directory. A caller-owned directory
+  keeps its own mode (Refs #618).
+
 - The published wheel and sdist now carry the approval criteria resources: the four
   `modules/brain/runtime/approval/criteria/*.md` files were present in the release tree
   but omitted from both artifacts, so the exported `default_criteria_registry()` raised
