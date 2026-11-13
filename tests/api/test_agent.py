@@ -14,7 +14,7 @@ from openminion.api.agent import (
     Agent,
     AgentOutputValidationError,
     AgentRunResult,
-    _extract_json_object,
+    _iter_json_objects,
 )
 from openminion.modules.controlplane.constants import (
     CALLER_HANDLES_DELIVERY_METADATA_KEY,
@@ -604,11 +604,39 @@ def test_agent_rejects_invalid_result_facts_before_output_validation() -> None:
         Agent(output_type=_ReplyModel, runtime=_MalformedRuntime()).run("hello")
 
 
-def test_extract_json_object_handles_nested_braces() -> None:
+def test_iter_json_objects_handles_nested_braces() -> None:
     text = 'prefix {"a": {"b": 1}} suffix'
-    assert _extract_json_object(text) == '{"a": {"b": 1}}'
+    assert list(_iter_json_objects(text)) == ['{"a": {"b": 1}}']
 
 
-def test_extract_json_object_returns_none_when_no_object() -> None:
-    assert _extract_json_object("no braces here") is None
-    assert _extract_json_object("") is None
+def test_iter_json_objects_yields_nothing_when_no_object() -> None:
+    assert list(_iter_json_objects("no braces here")) == []
+    assert list(_iter_json_objects("")) == []
+
+
+def test_agent_extracts_matching_json_after_inline_prose_json_span() -> None:
+    reply = (
+        'Checked tool stats {"files": 2}. '
+        'Final verdict: {"sentiment": "positive", "summary": "all clean"}'
+    )
+    result = Agent(output_type=_ReplyModel, runtime=_FakeRuntime(reply)).run("evaluate")
+    assert result.output.sentiment == "positive"
+    assert result.output.summary == "all clean"
+
+
+def test_agent_raises_validation_error_when_no_json_span_matches() -> None:
+    reply = 'Checked {"files": 2} and {"count": 3} without verdict.'
+    with pytest.raises(AgentOutputValidationError) as exc_info:
+        Agent(output_type=_ReplyModel, runtime=_FakeRuntime(reply)).run("evaluate")
+    assert exc_info.value.raw_text == reply
+    assert exc_info.value.validation_error is not None
+
+
+def test_agent_stops_scanning_after_first_valid_json_before_deep_trailing_span() -> (
+    None
+):
+    deep_trailing = '{"x":' * 1100 + "1" + "}" * 1100
+    reply = f'Result: {{"sentiment": "positive", "summary": "ok"}}\nTrailing: {deep_trailing}'
+    result = Agent(output_type=_ReplyModel, runtime=_FakeRuntime(reply)).run("evaluate")
+    assert result.output.sentiment == "positive"
+    assert result.output.summary == "ok"

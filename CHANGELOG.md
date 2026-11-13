@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `Agent._coerce_output` now incrementally scans subsequent balanced JSON object spans
+  when prose contains an earlier non-matching `{...}` snippet before the structured output
+  object, stopping at the first valid candidate while raising
+  `AgentOutputValidationError` with the initial `ValidationError` when no candidate
+  validates.
+
 ## Current package line - 2026-11-13
 
 - `examples/sdk/delegation.py --mode handoff --approval deny` now reports a denial only
