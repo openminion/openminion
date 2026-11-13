@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import inspect
 import json
 import time
@@ -531,11 +532,12 @@ class BrainBridgeTurnMixin:
 
             def _sync_approval_callback(*args: Any, **kwargs: Any) -> bool:
                 result = async_approval_callback(*args, **kwargs)
-                return bool(
-                    asyncio.run_coroutine_threadsafe(result, loop).result()
-                    if inspect.isawaitable(result)
-                    else result
-                )
+                if not inspect.isawaitable(result):
+                    return bool(result)
+                try:
+                    return bool(asyncio.run_coroutine_threadsafe(result, loop).result())
+                except concurrent.futures.CancelledError as exc:
+                    raise asyncio.CancelledError("Turn cancelled.") from exc
 
             approval_callback = _sync_approval_callback
         try:

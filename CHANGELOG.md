@@ -1,11 +1,42 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-11-09
+Last updated: 2026-11-13
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
+
+## Current package line - 2026-11-13
+
+- `examples/sdk/delegation.py --mode handoff --approval deny` now reports a denial only
+  when the run actually ended at the handoff confirmation; an ordinary answer with no
+  confirmation is printed unchanged, and the pause guidance is no longer shown after a
+  denial. Pause, allow_once and the approval callback are unchanged (Refs #526).
+
+- `build_delegate_tool` now dumps Pydantic `BaseModel` outputs from `Handoff` target
+  agents with `model_dump(mode="json")` so delegated structured results serialize cleanly
+  in `ToolExecutionBatch.to_metadata_payload()` while leaving non-model outputs and run
+  metadata unchanged.
+
+- `daemon start` now creates the `state/` and `logs/` parents under the storage
+  private-directory contract instead of the process umask: the startup owner made them
+  first at 0755, so the later storage helper preserved them and the daemon database and
+  its WAL stayed reachable through a world-readable directory. A caller-owned directory
+  keeps its own mode (Refs #618).
+
+- The published wheel and sdist now carry the approval criteria resources: the four
+  `modules/brain/runtime/approval/criteria/*.md` files were present in the release tree
+  but omitted from both artifacts, so the exported `default_criteria_registry()` raised
+  `FileNotFoundError` for `git_reset_hard.md` in an installed environment. They are now
+  declared as package data (Refs #678).
+
+- Cancelling an active turn while waiting on tool or sidecar approval now aborts
+  execution instead of falling through the operator-denial path and racing gateway
+  persistence as `completed`: stream and inline approval callbacks propagate
+  turn cancellation immediately, pending canonical confirmations settle as denied
+  without running the tool, and gateway outbound persistence checks cancellation
+  before writing a successful terminal run state (Refs #527).
 
 ## Current package line - 2026-11-09
 

@@ -19,6 +19,7 @@ from openminion.cli.transport.daemon_client import (
     resolve_daemon_endpoint,
 )
 from openminion.cli.bootstrap.loader import load_config
+from openminion.modules.storage.io import ensure_private_directory
 
 _PROBE_STATUS_MISMATCH: str = "mismatch"
 
@@ -669,8 +670,10 @@ def _start_daemon(endpoint: DaemonEndpoint) -> dict[str, object]:
         data_root=endpoint.data_root or None,
     )
 
-    pid_file.parent.mkdir(parents=True, exist_ok=True)
-    log_file.parent.mkdir(parents=True, exist_ok=True)
+    # Create these with the storage contract, not the process umask: the daemon's own
+    # owner preserves an existing directory, so a 0755 parent made here would stick.
+    ensure_private_directory(pid_file.parent)
+    ensure_private_directory(log_file.parent)
 
     existing_pid = read_pid(pid_file)
     if existing_pid and process_alive(existing_pid):

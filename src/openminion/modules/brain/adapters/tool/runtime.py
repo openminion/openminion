@@ -1,3 +1,4 @@
+import asyncio
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -8,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Iterator, Mapping, cast
 from openminion.base.config import resolve_data_root, resolve_home_root
 from openminion.base.config.env import resolve_environment_config
 from openminion.modules.artifact.refs import create_default_artifactctl
-from openminion.modules.policy.models import PolicyControlError
+from openminion.modules.runtime.sync import raise_if_cancelled
 from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_NEEDS_USER,
     BRAIN_ACTION_STATUS_SUCCESS,
@@ -45,8 +46,11 @@ from .command_metadata import (
 )
 from .policy_authorization import (
     authorize_exact_tool_call,
+    deny_inline_canonical_confirmation,
+    invoke_inline_approval_callback,
     requires_canonical_policy,
     requires_policy_confirmation,
+    settle_inline_canonical_confirmation,
 )
 from .github_merge import execute_github_merge_pr_project_effect
 from .github_release import execute_github_release_project_effect
@@ -56,7 +60,6 @@ from .project_github import execute_github_open_pr_project_effect
 from .project_git import execute_git_remote_project_effect, is_git_remote_project_action
 from .policy_context import (
     _agent_id_from_policy,
-    _approval_policy_facts,
     _apply_agent_command_policy,
     _apply_reactions_default_policy,
     _background_write_authorized,
@@ -74,7 +77,6 @@ from .policy_context import (
 from .results import (
     _error_envelope,
     _normalized_artifact_refs,
-    _policy_error,
     _tool_allowlist_error,
     run_runtime_tool,
     run_tool_spec,
@@ -317,23 +319,26 @@ class ToolAdapter:
         details: Mapping[str, Any] | None = None,
         reason_code: str = "",
     ) -> dict[str, Any] | None:
-        callback = self._approval_callback
-        if callback is None:
+        if self._approval_callback is None:
             return None
         try:
-            approved = bool(
-                callback(
-                    tool_name,
-                    dict(args),
-                    approval_id,
-                    _approval_policy_facts(
-                        tool_name=tool_name,
-                        details=details,
-                        reason_code=reason_code,
-                    ),
-                )
+            approved = invoke_inline_approval_callback(
+                self._approval_callback,
+                policy_ctl=self.policy_ctl,
+                tool_name=tool_name,
+                args=args,
+                approval_id=approval_id,
+                details=details,
+                reason_code=reason_code,
             )
         except Exception as exc:
+            try:
+                raise_if_cancelled()
+            except asyncio.CancelledError:
+                deny_inline_canonical_confirmation(
+                    self.policy_ctl, tool_name, approval_id
+                )
+                raise
             return _error_envelope(
                 status=BRAIN_STATE_ERROR,
                 summary="Tool approval failed",
@@ -342,23 +347,14 @@ class ToolAdapter:
                 latency_ms=int((time.monotonic() - start_time) * 1000),
                 details={"reason": "approval_callback_failed"},
             )
-        if requires_canonical_policy(tool_name):
-            if self.policy_ctl is None:
-                return _error_envelope(
-                    status=BRAIN_STATE_ERROR,
-                    summary="Operations approval is unavailable",
-                    code="POLICY_DENIED",
-                    message="Operations approval is unavailable.",
-                    latency_ms=int((time.monotonic() - start_time) * 1000),
-                    details={"reason": "action_policy_unavailable"},
-                )
-            try:
-                self.policy_ctl.resolve_confirmation(
-                    approval_id,
-                    "allow_once" if approved else "deny",
-                )
-            except PolicyControlError as exc:
-                return _policy_error(exc, int((time.monotonic() - start_time) * 1000))
+        if policy_err := settle_inline_canonical_confirmation(
+            self.policy_ctl,
+            tool_name=tool_name,
+            approval_id=approval_id,
+            approved=approved,
+            start_time=start_time,
+        ):
+            return policy_err
         if not approved:
             return _error_envelope(
                 status=BRAIN_STATE_ERROR,
