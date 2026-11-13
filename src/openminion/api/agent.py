@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Iterator
 from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass, field
 import json
@@ -259,17 +259,14 @@ class Agent(Generic[InputT, OutputT]):
             try:
                 return cast(OutputT, self.output_type.model_validate_json(text))
             except ValidationError as exc:
-                # Some providers wrap JSON answers in prose; recover the first
-                # balanced object before failing validation.
-                stripped = _extract_json_object(text)
-                if stripped:
+                for candidate in _iter_json_objects(text):
                     try:
                         return cast(
                             OutputT,
-                            self.output_type.model_validate_json(stripped),
+                            self.output_type.model_validate_json(candidate),
                         )
                     except ValidationError:
-                        pass
+                        continue
                 raise AgentOutputValidationError(
                     f"Reply did not validate against {self.output_type.__name__}: {exc}",
                     raw_text=text,
@@ -439,17 +436,23 @@ class Agent(Generic[InputT, OutputT]):
         self.close()
 
 
-def _extract_json_object(text: str) -> str | None:
-    """Return the first decodable JSON object span from ``text``."""
+def _iter_json_objects(text: str) -> Iterator[str]:
+    """Yield all balanced JSON object spans from ``text`` in appearance order."""
 
     decoder = json.JSONDecoder()
-    for start, character in enumerate(text):
-        if character != "{":
+    index = 0
+    length = len(text)
+    while index < length:
+        if text[index] != "{":
+            index += 1
             continue
         try:
-            value, end = decoder.raw_decode(text[start:])
+            value, end = decoder.raw_decode(text[index:])
         except json.JSONDecodeError:
+            index += 1
             continue
         if isinstance(value, dict):
-            return text[start : start + end]
-    return None
+            yield text[index : index + end]
+            index += end
+        else:
+            index += 1
