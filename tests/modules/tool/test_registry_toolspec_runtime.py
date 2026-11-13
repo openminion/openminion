@@ -202,6 +202,45 @@ def test_execute_tool_spec_call_preserves_task_runtime_owners(tmp_path, monkeypa
     assert result.data == {"task_manager": True, "scheduler": {"state": "ready"}}
 
 
+def test_validated_tool_arguments_preserves_explicit_none_field(
+    tmp_path, monkeypatch
+) -> None:
+    from openminion import tool
+
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / ".openminion"))
+
+    @tool
+    def fetch_logs(limit: int | None = 10, tag: str | None = None) -> dict[str, object]:
+        return {"limit": limit, "tag": tag}
+
+    ctx = _context(tmp_path, {})
+
+    explicit_none = execute_tool_spec_call(
+        tool=fetch_logs.tool_decl,
+        arguments={"limit": None},
+        context=ctx,
+    )
+    assert explicit_none.ok is True
+    assert explicit_none.data == {"limit": None, "tag": None}
+
+    omitted_default = execute_tool_spec_call(
+        tool=fetch_logs.tool_decl,
+        arguments={},
+        context=ctx,
+    )
+    assert omitted_default.ok is True
+    assert omitted_default.data == {"limit": 10, "tag": None}
+
+    explicit_zero = execute_tool_spec_call(
+        tool=fetch_logs.tool_decl,
+        arguments={"limit": 0},
+        context=ctx,
+    )
+    assert explicit_zero.ok is True
+    assert explicit_zero.data == {"limit": 0, "tag": None}
+
+
 def test_execute_tool_spec_call_runtime_env_allows_json_metadata_payload(
     tmp_path, monkeypatch
 ):

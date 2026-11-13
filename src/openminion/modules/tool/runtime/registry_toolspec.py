@@ -96,7 +96,11 @@ def _validated_tool_arguments(
             )
         parsed = validation.structured_payload
         if hasattr(parsed, "model_dump"):
-            return parsed.model_dump(exclude_none=True)
+            return {
+                key: value
+                for key, value in parsed.model_dump().items()
+                if value is not None or key in parsed.model_fields_set
+            }
         if isinstance(parsed, Mapping):
             return dict(parsed)
         return dict(arguments)

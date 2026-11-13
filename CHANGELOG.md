@@ -7,6 +7,10 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `_validated_tool_arguments` now preserves explicitly supplied `None` fields via
+  `parsed.model_fields_set` instead of stripping them with `exclude_none=True`, while
+  continuing to omit unset optional parameters so Python defaults still apply.
+
 ## Current package line - 2026-11-13
 
 - `examples/sdk/delegation.py --mode handoff --approval deny` now reports a denial only
