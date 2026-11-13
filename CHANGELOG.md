@@ -7,6 +7,10 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `subagent()` now forwards `parent.agent_id` and inherits `parent.model` when `model` is
+  not explicitly overridden, preserving runtime default profile resolution for unconfigured
+  parents and explicit child `model` overrides.
+
 - The turn's tool-result projection now records a security event only for a real policy decision:
   it keeps the producer's `blocked_kind`/`denial_source`, recognises the concrete legacy decision
   codes (`require_approval`, `confirm_required`, `approval_denied`, `policy_denied`,

@@ -371,10 +371,18 @@ def test_subagent_reuses_parent_runtime() -> None:
 
 def test_subagent_propagates_name_and_model() -> None:
     runtime = _FakeRuntime()
-    parent = Agent(runtime=runtime, name="parent")
+    parent = Agent(
+        runtime=runtime,
+        name="parent",
+        agent_id="reviewer",
+        model="openai:gpt-4.1",
+    )
     child = subagent(parent, model="anthropic:claude-haiku", name="haiku-helper")
     assert child.model == "anthropic:claude-haiku"
     assert child.name == "haiku-helper"
+    child.run("check")
+    assert runtime.last_payload["agent_id"] == "reviewer"
+    assert runtime.last_payload["override_model"] == "anthropic:claude-haiku"
 
 
 def test_subagent_has_explicit_bounded_run_context() -> None:
@@ -559,6 +567,29 @@ def test_subagent_issues_and_revokes_fresh_memory_grant_per_run(tmp_path) -> Non
         assert all(grant.revoked_at is not None for grant in policy.list_grants())
     finally:
         policy.close()
+
+
+def test_subagent_inherits_parent_agent_id_and_default_model() -> None:
+    runtime = _FakeRuntime()
+    parent = Agent(
+        runtime=runtime,
+        name="parent",
+        agent_id="cortensor-reviewer",
+        model="qwen2.5:7b-instruct",
+    )
+    child = subagent(parent, name="child", instructions="audit")
+    assert child.agent_id == "cortensor-reviewer"
+    assert child.model == "qwen2.5:7b-instruct"
+    child.run("check")
+    assert runtime.last_payload["agent_id"] == "cortensor-reviewer"
+    assert runtime.last_payload["override_model"] == "qwen2.5:7b-instruct"
+
+    default_parent = Agent(runtime=runtime, name="default-parent")
+    default_child = subagent(default_parent, name="default-child")
+    default_child.run("check-default")
+    assert default_child.agent_id is None
+    assert "agent_id" not in runtime.last_payload
+    assert "override_model" not in runtime.last_payload
 
 
 def test_delegated_memory_is_not_granted_before_tool_registry_validation(
