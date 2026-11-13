@@ -179,6 +179,16 @@ def _build_tool_runtime_context(
     return runtime_ctx
 
 
+def _json_safe_tool_value(value: Any) -> Any:
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    if isinstance(value, Mapping):
+        return {key: _json_safe_tool_value(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_tool_value(item) for item in value]
+    return value
+
+
 def _tool_result_from_payload(*, tool_name: str, payload: Any) -> ToolExecutionResult:
     payload_dict = (
         dict(payload)
@@ -228,6 +238,7 @@ def _tool_result_from_payload(*, tool_name: str, payload: Any) -> ToolExecutionR
         data["error_code"] = str(raw_error.get("code", "") or "EXEC_ERROR")
         if isinstance(raw_error.get("details"), Mapping):
             data["details"] = dict(raw_error["details"])
+    data = _json_safe_tool_value(data)
     if not content and data:
         try:
             content = json.dumps(data, sort_keys=True, default=str)

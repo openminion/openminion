@@ -7,6 +7,11 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `_tool_result_from_payload` now normalizes Pydantic `BaseModel` values across direct
+  results, nested collections, and `error.details` payloads with `model_dump(mode="json")`
+  so `ToolExecutionBatch.to_metadata_payload()` and tool-result summaries emit JSON
+  without altering tool-envelope fields or ordinary mapping-key serialization.
+
 ## Current package line - 2026-11-13
 
 - `examples/sdk/delegation.py --mode handoff --approval deny` now reports a denial only
