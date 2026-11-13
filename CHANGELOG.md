@@ -7,6 +7,10 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `_validated_tool_arguments` now preserves explicitly supplied `None` fields via
+  `parsed.model_fields_set` instead of stripping them with `exclude_none=True`, while
+  continuing to omit unset optional parameters so Python defaults still apply.
+
 - The turn's tool-result projection now records a security event only for a real policy decision:
   it keeps the producer's `blocked_kind`/`denial_source`, recognises the concrete legacy decision
   codes (`require_approval`, `confirm_required`, `approval_denied`, `policy_denied`,
