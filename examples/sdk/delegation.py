@@ -74,6 +74,9 @@ def run_handoff(
 
 
 def _print_handoff(result: AgentRunResult[str], approval: str = "pause") -> int:
+    if result.metadata.get("respond_kind") != "policy_confirmation_prompt":
+        print(result.text)
+        return 0
     if approval == "deny":
         print(
             "denied: the operator refused the handoff, so the researcher did not run."
@@ -83,15 +86,12 @@ def _print_handoff(result: AgentRunResult[str], approval: str = "pause") -> int:
         )
         print(result.text)
         return 0
-    if result.metadata.get("respond_kind") == "policy_confirmation_prompt":
-        print("paused: the policy asks the operator before the handoff runs.")
-        print("The text below is that operator prompt, not the researcher's answer:")
-        print(result.text)
-        print("This script ends here. An application that keeps its Agent open")
-        print("answers the same prompt on the waiting thread, for example")
-        print(f'agent.run("yes", thread_id={result.thread_id!r}).')
-        return 0
+    print("paused: the policy asks the operator before the handoff runs.")
+    print("The text below is that operator prompt, not the researcher's answer:")
     print(result.text)
+    print("This script ends here. An application that keeps its Agent open")
+    print("answers the same prompt on the waiting thread, for example")
+    print(f'agent.run("yes", thread_id={result.thread_id!r}).')
     return 0
 
 

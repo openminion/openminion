@@ -14,6 +14,8 @@ from runpy import run_path
 from types import SimpleNamespace
 from typing import Any, ClassVar, Self, cast
 
+import pytest
+
 from openminion import Agent, Handoff
 from openminion.api.handoff import build_delegate_family_spec
 from openminion.base.config import OpenMinionConfig
@@ -290,6 +292,62 @@ def test_runtime_denial_runs_no_target(tmp_path, monkeypatch, capsys) -> None:
     assert "denied: the operator refused the handoff" in out
     assert "paused:" not in out
     assert "agent.run(" not in out
+
+
+class _AnswerOnlyProvider(_Provider):
+    """Scripted provider: the coordinator answers directly and never hands off."""
+
+    def respond(self, body: dict[str, Any]) -> dict[str, Any]:
+        return _completion({"role": "assistant", "content": REPLY}, "stop")
+
+
+@pytest.mark.parametrize("approval", ["deny", "allow_once", "pause"])
+def test_runtime_answer_without_confirmation_prints_unchanged(
+    tmp_path, monkeypatch, capsys, approval
+) -> None:
+    module = run_path(str(SCRIPT))
+    provider = _AnswerOnlyProvider()
+    runtime = _runtime(tmp_path, monkeypatch, provider, constraint=None)
+    asked: list[str] = []
+    callback = (
+        None
+        if approval == "pause"
+        else _asking_wrapper(module["operator_decision"](approval), asked)
+    )
+    target_runs: list[str] = []
+    try:
+        with Agent(
+            runtime=runtime,
+            name="researcher",
+            instructions="Research one bounded question and return concise findings.",
+        ) as researcher:
+            original_run = researcher.run
+
+            def recording_run(message: str, **_kwargs: Any) -> Any:
+                target_runs.append(message)
+                return original_run(message)
+
+            researcher.run = recording_run  # type: ignore[method-assign]
+            with Agent(
+                runtime=runtime,
+                name="coordinator",
+                instructions="Delegate research questions to the researcher.",
+                handoffs=[Handoff(target=researcher)],
+                forced_tools=[HANDOFF_TOOL],
+            ) as coordinator:
+                result = coordinator.run(
+                    "Research this launch plan.", approval_callback=callback
+                )
+    finally:
+        runtime.close()
+
+    assert result.run_state == "completed"
+    assert result.metadata.get("respond_kind") != "policy_confirmation_prompt"
+    assert asked == []
+    assert target_runs == []
+    capsys.readouterr()
+    assert module["_print_handoff"](result, approval) == 0
+    assert capsys.readouterr().out == f"{result.text}\n"
 
 
 def test_runtime_allow_once_runs_target_exactly_once(tmp_path, monkeypatch) -> None:
