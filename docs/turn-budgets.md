@@ -86,8 +86,11 @@ request. Another tier tries `<tier>_model`, then `reflect_model`, then
 `decide_model`.
 
 The call goes through the existing structured-output retry path. It is one
-logical call, counted in the turn's LLM calls, but it can make more than one
-provider request. It offers only the forced `submit_output` structured-output
+logical extraction call, but it can make more than one provider request, and
+billed usage is a separate measurement. The turn's LLM-call counter records it
+only when the structured call returns, so a provider failure can leave a model
+request uncounted; the counter is not a count of attempted provider requests.
+It offers only the forced `submit_output` structured-output
 tool. That tool list belongs to this auxiliary call: the turn's later entry and
 action requests carry their own tools.
 
