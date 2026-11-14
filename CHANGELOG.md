@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Bare `openminion replay`, with no subcommand, now exits 2 with a usage line naming
+  `replay_command` instead of raising `AttributeError: 'Namespace' object has no attribute
+  'task_db'` from the group handler; the group requires one of `checkpoints`, `replay`,
+  `compare`, `rewind` or `branch`, and every existing subcommand invocation is unchanged.
+  (Refs #752)
+
 - `resolve_database_path` now treats a literal empty `storage.path` (`""`) like an
   omitted value (`<data_root>/state/openminion.db`) instead of resolving to the
   `data_root` directory and failing SQLite bootstrap, while keeping filenames
