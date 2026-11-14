@@ -7,6 +7,9 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Upstream header request IDs (`X-Request-ID`) in shared provider error facts are now bounded
+  to 128 characters, matching body request ID normalization across HTTP and SSE error paths (Refs #740).
+
 - The turn's tool-result projection now records a security event only for a real policy decision:
   it keeps the producer's `blocked_kind`/`denial_source`, recognises the concrete legacy decision
   codes (`require_approval`, `confirm_required`, `approval_denied`, `policy_denied`,
