@@ -604,9 +604,7 @@ def test_runner_reenters_after_direct_tool_judge_continuation(
         patch.object(
             runner, "_evaluate_turn_closure", side_effect=judgments
         ) as evaluate_closure,
-        patch.object(
-            runner.llm_api, "call", wraps=runner.llm_api.call
-        ) as llm_call,
+        patch.object(runner.llm_api, "call", wraps=runner.llm_api.call) as llm_call,
     ):
         output = runner.run(
             session_id=f"direct-tool-{next_action}",

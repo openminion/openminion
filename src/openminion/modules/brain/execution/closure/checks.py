@@ -115,9 +115,11 @@ def _closure_tool_result_can_render_completely(item: Any) -> bool:
         "tool_execution_count": 1,
         "tool_name_sequence": [tool_name] if tool_name else [],
     }
-    return snapshot.get("data") == evidence and len(
-        json.dumps(closure_outputs, ensure_ascii=True, sort_keys=False)
-    ) <= JUDGE_ACTION_OUTPUTS_MAX_CHARS
+    return (
+        snapshot.get("data") == evidence
+        and len(json.dumps(closure_outputs, ensure_ascii=True, sort_keys=False))
+        <= JUDGE_ACTION_OUTPUTS_MAX_CHARS
+    )
 
 
 def _closure_action_outputs(action_result: ActionResult | None) -> dict[str, Any]:

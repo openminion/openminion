@@ -60,7 +60,7 @@ def _loop_context() -> SimpleNamespace:
             delegation_task_id=None,
             delegation_target_agent_id=None,
             delegation_goal="",
-        )
+        ),
     )
 
 
@@ -84,9 +84,7 @@ def test_consumed_direct_tool_closure_does_not_force_again() -> None:
 
 
 def test_complete_read_only_result_can_use_closure_judge_answer() -> None:
-    state = _state_with_complete_read_result(
-        runtime_binding_id="runtime.file.read"
-    )
+    state = _state_with_complete_read_result(runtime_binding_id="runtime.file.read")
 
     assert _can_compose_direct_tool_answer_with_judge(
         loop_ctx=_loop_context(),
@@ -144,7 +142,9 @@ def test_active_task_plan_keeps_answer_only_closure() -> None:
     )
 
 
-def test_result_that_would_truncate_in_judge_context_keeps_answer_only_closure() -> None:
+def test_result_that_would_truncate_in_judge_context_keeps_answer_only_closure() -> (
+    None
+):
     state = _state_with_complete_read_result(content="🌍" * 250 + "FINAL_FACT")
 
     assert not _can_compose_direct_tool_answer_with_judge(
