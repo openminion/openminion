@@ -237,7 +237,9 @@ def _readme_lookup_order():
         or (isinstance(node, ast.FunctionDef) and node.name == "lookup_order")
     ]
     namespace: dict[str, object] = {}
-    exec(compile(ast.Module(body=kept, type_ignores=[]), "README.md", "exec"), namespace)
+    exec(
+        compile(ast.Module(body=kept, type_ignores=[]), "README.md", "exec"), namespace
+    )
     return namespace["lookup_order"]
 
 
