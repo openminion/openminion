@@ -6,6 +6,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from .budget import _debit_llm_usage
+from .cache import _READ_CACHEABLE_TOOLS
+from .contracts import semantic_batch_signature
 
 
 class CorrectionPlan(BaseModel, extra="forbid"):
@@ -179,6 +181,12 @@ def dispatch_correction_plan(
     history.append(record.model_dump())
 
     if plan.correction_type == "retry_same":
+        if (
+            last_tool_call is not None
+            and last_tool_call.name in _READ_CACHEABLE_TOOLS
+        ):
+            counts = loop_state.scratchpad.get("duplicate_read_redispatch_counts", {})
+            counts.pop(semantic_batch_signature([last_tool_call]), None)
         return None
 
     if plan.correction_type == "retry_different":

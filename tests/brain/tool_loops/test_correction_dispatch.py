@@ -14,6 +14,7 @@ from openminion.modules.brain.loop.tools.contracts import (
     ADAPTIVE_TERM_NEEDS_USER,
     AdaptiveToolLoopProfile,
     AdaptiveToolLoopState,
+    semantic_batch_signature,
 )
 from openminion.modules.brain.loop.tools.correction import (
     CorrectionPlan,
@@ -398,6 +399,38 @@ class TestDispatchCorrectionPlan:
 
         assert result is None
         assert len(messages) == 0
+
+    def test_retry_same_reopens_only_safe_read_redispatch(self):
+        plan = CorrectionPlan(
+            diagnosis="transient read failure",
+            correction_type="retry_same",
+            confidence=0.9,
+        )
+        read_call = SimpleNamespace(name="file.read", arguments={"path": "a.txt"})
+        exec_call = SimpleNamespace(name="exec.run", arguments={"cmd": "echo ok"})
+        read_signature = semantic_batch_signature([read_call])
+        exec_signature = semantic_batch_signature([exec_call])
+        loop_state = _state(
+            scratchpad={
+                "duplicate_read_redispatch_counts": {
+                    read_signature: 1,
+                    exec_signature: 1,
+                }
+            }
+        )
+
+        dispatch_correction_plan(
+            plan=plan,
+            loop_ctx=MagicMock(),
+            loop_state=loop_state,
+            messages=[],
+            last_tool_call=read_call,
+            profile=_profile(),
+        )
+
+        counts = loop_state.scratchpad["duplicate_read_redispatch_counts"]
+        assert read_signature not in counts
+        assert counts[exec_signature] == 1
 
     def test_dispatch_retry_different(self):
         plan = CorrectionPlan(
