@@ -237,7 +237,31 @@ def _mcp_import(args: argparse.Namespace) -> int:
     from openminion.base.config.io import save_config
 
     source_path = Path(str(getattr(args, "source", "") or "")).expanduser()
-    payload = json.loads(source_path.read_text(encoding="utf-8"))
+    try:
+        content = source_path.read_text(encoding="utf-8")
+        payload = json.loads(content)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        code = (
+            "SOURCE_NOT_FOUND"
+            if isinstance(exc, FileNotFoundError)
+            else (
+                "SOURCE_READ_ERROR"
+                if isinstance(exc, (OSError, UnicodeDecodeError))
+                else "INVALID_SOURCE"
+            )
+        )
+        print_json_payload(
+            {
+                "ok": False,
+                "error": {
+                    "code": code,
+                    "message": str(exc),
+                    "details": {"path": str(source_path)},
+                },
+            }
+        )
+        return 1
+
     imported = _servers_from_external_payload(payload)
     write = bool(getattr(args, "write", False))
     written_path: Path | None = None

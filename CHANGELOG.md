@@ -7,6 +7,11 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `openminion mcp import --from <path>` now returns structured JSON error responses
+  (`SOURCE_NOT_FOUND`, `SOURCE_READ_ERROR`, `INVALID_SOURCE`) when the source file is
+  missing, unreadable, or malformed JSON, preventing internal errors at the CLI boundary
+  (Refs #754).
+
 - The README's Python `Agent` snippet now declares `lookup_order` as
   `@tool(min_scope="READ_ONLY", idempotent=True)`, matching
   `examples/sdk/tool_agent.py`: the bare `@tool` was classified as a write with
