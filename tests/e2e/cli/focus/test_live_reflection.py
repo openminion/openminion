@@ -25,9 +25,7 @@ def _current_turn_evidence(probe: FocusProbe, previous_ids: set[str]):
     config = json.loads(probe.config_path.read_text(encoding="utf-8"))
     assert config["runtime"]["session_context_token_budget"] <= 32_000
     phase_timings = [
-        event.data
-        for event in events
-        if event.event_type == "chat.phase_timing"
+        event.data for event in events if event.event_type == "chat.phase_timing"
     ]
     assert len(phase_timings) == 1
     assert int(phase_timings[0]["provider_calls_total"]) <= 24
@@ -196,16 +194,16 @@ def test_live_focus_reflection_coding_repair(
         "from pathlib import Path\n\n"
         "from slug import slug\n\n\n"
         "def test_slug_spaces() -> None:\n"
-        "    result = slug(\"A B\")\n"
-        "    if result != \"a-b\":\n"
-        "        Path(\".initial-failure-observed\").write_text(result)\n"
-        "    assert result == \"a-b\"\n"
+        '    result = slug("A B")\n'
+        '    if result != "a-b":\n'
+        '        Path(".initial-failure-observed").write_text(result)\n'
+        '    assert result == "a-b"\n'
     )
     test_path.write_text(original_test, encoding="utf-8")
     scenario = FocusScenario(
         scenario_id=case_id,
         prompt=(
-            'Run the unchanged tests first and retain the failure. Then fix slug.py '
+            "Run the unchanged tests first and retain the failure. Then fix slug.py "
             'so slug("A B") returns "a-b". Rerun the tests, keep tests unchanged, '
             "and report the result."
         ),
