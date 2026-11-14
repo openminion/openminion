@@ -18,6 +18,7 @@ _KIND_FLOAT = "float"
 _KIND_BOOL = "bool"
 _KIND_DICT_STR = "dict_str"
 _KIND_INT_LIST = "int_list"
+_KIND_RAW = "raw"
 
 _PROVIDER_SPECS: dict[str, tuple[type[Any], dict[str, tuple[str, Any]]]] = {
     "openai": (
@@ -103,6 +104,7 @@ _PROVIDER_SPECS: dict[str, tuple[type[Any], dict[str, tuple[str, Any]]]] = {
             "api_key": (_KIND_STR, ""),
             "api_key_env": (_KIND_STR, "OLLAMA_API_KEY"),
             "tool_call_strategy": (_KIND_STR, "fallback"),
+            "num_ctx": (_KIND_RAW, 0),
         },
     ),
     "cortensor": (
@@ -164,6 +166,8 @@ def _coerce_value(raw_value: Any, kind: str, default: Any) -> Any:
         }
     if kind == _KIND_INT_LIST:
         return _as_int_list(raw_value)
+    if kind == _KIND_RAW:
+        return default if raw_value is None else raw_value
     raise ValueError(f"unknown provider field kind: {kind}")
 
 

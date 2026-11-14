@@ -203,6 +203,28 @@ def _resolve_ollama_schema_format(request: LLMRequest) -> dict[str, Any] | str |
     return dict(schema) if isinstance(schema, dict) else "json"
 
 
+def _ollama_options(request: LLMRequest, config: dict[str, Any]) -> dict[str, Any]:
+    options: dict[str, Any] = {}
+    if request.temperature is not None:
+        options["temperature"] = request.temperature
+    if request.top_p is not None:
+        options["top_p"] = request.top_p
+    if request.max_output_tokens is not None:
+        options["num_predict"] = request.max_output_tokens
+    if request.stop:
+        options["stop"] = request.stop
+    num_ctx = config.get("num_ctx", 0)
+    if isinstance(num_ctx, bool) or not isinstance(num_ctx, int) or num_ctx < 0:
+        raise LLMCtlError(
+            "INVALID_ARGUMENT",
+            "providers.ollama.num_ctx must be a non-negative integer; "
+            "0 keeps the Ollama server default.",
+        )
+    if num_ctx:
+        options["num_ctx"] = num_ctx
+    return options
+
+
 def _resolve_ollama_think(request: LLMRequest) -> bool | None:
     metadata = request.metadata
     raw_profile = (
@@ -262,7 +284,7 @@ class OllamaProvider:
             "model": model,
             "messages": messages,
             "stream": False,
-            "options": {},
+            "options": _ollama_options(request, config),
         }
         if schema_only_submit_output:
             payload["format"] = schema_format
@@ -271,15 +293,6 @@ class OllamaProvider:
         think_value = _resolve_ollama_think(request)
         if think_value is not None:
             payload["think"] = think_value
-
-        if request.temperature is not None:
-            payload["options"]["temperature"] = request.temperature
-        if request.top_p is not None:
-            payload["options"]["top_p"] = request.top_p
-        if request.max_output_tokens is not None:
-            payload["options"]["num_predict"] = request.max_output_tokens
-        if request.stop:
-            payload["options"]["stop"] = request.stop
 
         headers = {"Content-Type": "application/json"}
         if api_key:

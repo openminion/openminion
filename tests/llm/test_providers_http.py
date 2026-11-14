@@ -2701,6 +2701,68 @@ class ProviderHTTPTests(unittest.TestCase):
         self.assertTrue(response.ok)
         self.assertEqual(captured["body"]["think"], False)
 
+    def test_ollama_sends_configured_num_ctx_with_request_options(self) -> None:
+        provider = OllamaProvider()
+        request = LLMRequest.model_validate(
+            {
+                "messages": [{"role": "user", "content": "hello"}],
+                "temperature": 0.1,
+                "top_p": 0.9,
+                "max_output_tokens": 64,
+                "stop": ["END"],
+            }
+        )
+        payload = {
+            "model": "qwen2.5:7b",
+            "message": {"role": "assistant", "content": "hello"},
+            "prompt_eval_count": 5,
+            "eval_count": 2,
+        }
+        bodies: list[dict[str, Any]] = []
+
+        def _fake_urlopen(http_request, timeout=None):
+            del timeout
+            bodies.append(json.loads(http_request.data.decode("utf-8")))
+            return _FakeHTTPResponse(payload)
+
+        base = {"base_url": "http://127.0.0.1:11434"}
+        with patch(
+            "openminion.modules.llm.providers.adapters.urllib_request.urlopen",
+            side_effect=_fake_urlopen,
+        ):
+            for config in ({**base, "num_ctx": 16384}, {**base, "num_ctx": 0}, base):
+                self.assertTrue(provider.complete(request, config).ok)
+
+        request_options = {
+            "temperature": 0.1,
+            "top_p": 0.9,
+            "num_predict": 64,
+            "stop": ["END"],
+        }
+        self.assertEqual(bodies[0]["options"], {**request_options, "num_ctx": 16384})
+        self.assertEqual(bodies[1]["options"], request_options)
+        self.assertEqual(bodies[2]["options"], request_options)
+
+    def test_ollama_rejects_invalid_num_ctx_before_sending(self) -> None:
+        provider = OllamaProvider()
+        request = LLMRequest.model_validate(
+            {"messages": [{"role": "user", "content": "hello"}]}
+        )
+        for value in (True, False, -1, 4096.0, "4096", None):
+            with (
+                self.subTest(value=value),
+                patch(
+                    "openminion.modules.llm.providers.adapters.urllib_request.urlopen"
+                ) as urlopen,
+                self.assertRaises(LLMCtlError) as error,
+            ):
+                provider.complete(
+                    request, {"base_url": "http://127.0.0.1:11434", "num_ctx": value}
+                )
+            self.assertEqual(error.exception.code, "INVALID_ARGUMENT")
+            self.assertIn("num_ctx", str(error.exception))
+            urlopen.assert_not_called()
+
     def test_ollama_hides_think_blocks_from_visible_output(self) -> None:
         provider = OllamaProvider()
         request = LLMRequest.model_validate(
