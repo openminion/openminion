@@ -123,7 +123,9 @@ def trigger_macro_correction(
                 "Return a JSON object with: diagnosis (string), correction_type "
                 "(one of: retry_same, retry_different, replan, ask_user, accept_partial), "
                 "corrected_args (dict, required if retry_different), "
-                "replan_hint (string, required if replan), confidence (float 0-1)."
+                "replan_hint (string, required if replan), confidence (float 0-1). "
+                "Use retry_same for a transient read-only failure when the original "
+                "arguments remain correct."
             ),
         ),
     ]

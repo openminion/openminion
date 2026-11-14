@@ -120,6 +120,9 @@ class TestTriggerMacroCorrection:
         assert plan is not None
         assert isinstance(plan, CorrectionPlan)
         assert plan.correction_type == "retry_same"
+        assert all(
+            isinstance(message, Message) for message in runtime.calls[0]["messages"]
+        )
         assert loop_state.scratchpad["macro_correction_count"] == 1
         assert loop_state.scratchpad["last_macro_iteration"] == 5
         assert loop_state.scratchpad["reflection_attempted_calls"] == 1
