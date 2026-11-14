@@ -189,13 +189,6 @@ def apply_closure_judgment(
         llm_api=runner.llm_api,
         structural_tool_results=runner.profile.structural_tool_results,
     )
-    write_post_completion_critique_memory(
-        runner,
-        state=state,
-        judgment=judgment,
-        logger=closure_logger,
-    )
-
     mission = getattr(state, "mission", None)
     mission_judgment = (
         getattr(mission, "latest_judgment", None) if mission is not None else None
@@ -217,6 +210,12 @@ def apply_closure_judgment(
             if mission_disposition is not None:
                 return mission_disposition
         transition(state, "task_completed")
+        write_post_completion_critique_memory(
+            runner,
+            state=state,
+            judgment=judgment,
+            logger=closure_logger,
+        )
         return BRAIN_DISPOSITION_CLOSE
     if (
         judgment.next_action == BRAIN_DISPOSITION_REPLAN

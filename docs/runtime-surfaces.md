@@ -1,7 +1,7 @@
 # OpenMinion Runtime Surfaces
 
 Status: active
-Last updated: 2026-10-06
+Last updated: 2026-11-14
 
 Purpose: give developers one package-local map of the public `openminion`
 surfaces and when to use each one.
@@ -83,6 +83,28 @@ When event facts are unavailable, legacy action totals and inference counts
 remain a fallback, with counts labeled `unknown` rather than a guessed phase.
 This reporting does not settle child execution budgets or aggregate child tool
 results; those are separate from LLM usage observations.
+
+#### Reflection lifecycle
+
+OpenMinion uses existing stage owners rather than a separate reflection mode:
+
+1. execution reflection may suggest a bounded retry, argument revision, replan,
+   user question, or truthful partial result after a structural failure;
+2. completion reflection decides whether verified work may close, continue, or
+   replan;
+3. learning reflection may persist a bounded critique only after the close is
+   accepted.
+
+Correction model calls use the same call and token budgets as normal work.
+Suggestions still pass through the normal tool schema, permission, and effect
+checks; they do not execute corrected arguments directly. An operator-denied
+effect is not replayed. Completion critiques are keyed to the completed turn
+and intent so replay does not create another active record.
+
+There is currently no public `adaptive_reflection_policy` agent-profile field.
+The standalone Brain `ReflectionConfig`, internal adaptive mode policy, and
+coding correction profile keep their existing meanings and defaults; runtime
+configuration does not invent or serialize an additional reflection setting.
 
 Action-policy confirmations reach `approval_callback` before tool execution.
 Returning true grants that invocation once; false or a callback failure prevents

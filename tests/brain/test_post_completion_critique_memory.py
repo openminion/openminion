@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import patch
 
+import pytest
+
+from openminion.modules.brain.execution.closure import apply_closure_judgment
 from openminion.modules.brain.execution.memory import (
     write_post_completion_critique_memory,
 )
@@ -9,6 +13,7 @@ from openminion.modules.brain.schemas import (
     BudgetCounters,
     ClosureJudgment,
     IntentExecutionState,
+    MissionState,
     PostCompletionCritique,
     WorkingState,
 )
@@ -17,10 +22,50 @@ from openminion.modules.brain.schemas import (
 class _MemoryAPI:
     def __init__(self) -> None:
         self.records: list[dict[str, object]] = []
+        self.record_ids_by_key: dict[str, str] = {}
+
+    def write_record(self, **kwargs):
+        key = str(kwargs.get("key", ""))
+        if key in self.record_ids_by_key:
+            return self.record_ids_by_key[key]
+        record_id = f"critique-{len(self.records) + 1}"
+        self.records.append(dict(kwargs))
+        self.record_ids_by_key[key] = record_id
+        return record_id
 
     def put_record(self, **kwargs):
         self.records.append(dict(kwargs))
         return f"critique-{len(self.records)}"
+
+
+class _SessionAPI:
+    def append_event(self, *args, **kwargs) -> str:
+        return "event-1"
+
+
+def _runner(memory: _MemoryAPI) -> SimpleNamespace:
+    return SimpleNamespace(
+        memory_api=memory,
+        session_api=_SessionAPI(),
+        llm_api=None,
+        profile=SimpleNamespace(
+            agent_id="agent-pccm",
+            structural_tool_results=False,
+        ),
+        options=SimpleNamespace(max_replans=2),
+    )
+
+
+def _critique_judgment(*, satisfied: bool, next_action: str) -> ClosureJudgment:
+    return ClosureJudgment(
+        satisfied=satisfied,
+        reason="reviewed",
+        next_action=next_action,
+        post_completion_critique=PostCompletionCritique(
+            intent_id="intent-weather",
+            summary="Use the verified result next time.",
+        ),
+    )
 
 
 class _Logger:
@@ -84,6 +129,7 @@ def test_write_post_completion_critique_memory_persists_verbatim() -> None:
     assert record_ids == ["critique-1"]
     stored = memory.records[0]
     assert stored["record_type"] == "post_completion_critique"
+    assert stored["key"] == "trace-pccm:intent-weather"
     assert stored["content"]["intent_id"] == "intent-weather"
     assert stored["content"]["summary"] == (
         "I should validate the location before searching."
@@ -151,3 +197,94 @@ def test_write_post_completion_critique_memory_is_backward_compatible_when_absen
     assert record_ids == []
     assert memory.records == []
     assert logger.events == []
+
+
+def test_closure_writes_critique_only_after_accepted_transition() -> None:
+    memory = _MemoryAPI()
+    state = _state()
+
+    disposition = apply_closure_judgment(
+        _runner(memory),
+        state=state,
+        judgment=_critique_judgment(satisfied=True, next_action="close"),
+    )
+
+    assert disposition == "close"
+    assert state.status == "done"
+    assert len(memory.records) == 1
+
+
+def test_replayed_accepted_close_keeps_one_completion_critique() -> None:
+    memory = _MemoryAPI()
+    runner = _runner(memory)
+    state = _state()
+    judgment = _critique_judgment(satisfied=True, next_action="close")
+
+    apply_closure_judgment(runner, state=state, judgment=judgment)
+    apply_closure_judgment(runner, state=state, judgment=judgment)
+
+    assert len(memory.records) == 1
+
+
+def test_non_close_judgment_does_not_write_completion_critique() -> None:
+    memory = _MemoryAPI()
+
+    disposition = apply_closure_judgment(
+        _runner(memory),
+        state=_state(),
+        judgment=_critique_judgment(satisfied=False, next_action="continue"),
+    )
+
+    assert disposition == "continue"
+    assert memory.records == []
+
+
+def test_failed_terminal_transition_does_not_write_completion_critique() -> None:
+    memory = _MemoryAPI()
+    state = _state()
+    state.status = "error"
+
+    with pytest.raises(RuntimeError):
+        apply_closure_judgment(
+            _runner(memory),
+            state=state,
+            judgment=_critique_judgment(satisfied=True, next_action="close"),
+        )
+
+    assert memory.records == []
+
+
+def test_mission_veto_does_not_write_completion_critique() -> None:
+    memory = _MemoryAPI()
+    state = _state()
+    state.mission = MissionState.model_validate(
+        {
+            "mission_id": "mission-1",
+            "objective": "finish the mission",
+            "status": "active",
+            "budget": {
+                "total_remaining": state.budgets_remaining.model_dump(),
+                "per_turn_max": state.budgets_remaining.model_dump(),
+            },
+            "latest_judgment": {"outcome": "continue", "reason": "not done"},
+        }
+    )
+
+    with (
+        patch(
+            "openminion.modules.brain.execution.closure.base.mission_is_active",
+            return_value=True,
+        ),
+        patch(
+            "openminion.modules.brain.execution.closure.base._apply_mission_closure_judgment",
+            return_value="ask_user",
+        ),
+    ):
+        disposition = apply_closure_judgment(
+            _runner(memory),
+            state=state,
+            judgment=_critique_judgment(satisfied=True, next_action="close"),
+        )
+
+    assert disposition == "ask_user"
+    assert memory.records == []

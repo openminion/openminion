@@ -3,11 +3,13 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
 from openminion.modules.brain.bootstrap.resolve import (
     build_internal_decision,
     build_internal_dispatch,
 )
+from openminion.modules.brain.config import ModeProfileConfig, ReflectionConfig
 from openminion.modules.brain.loop.adaptive import ActLoopMode
 from openminion.modules.brain.schemas import (
     ActDecision,
@@ -114,3 +116,29 @@ def test_act_mode_routes_general_profile_to_internal_loop_handler() -> None:
     assert isinstance(handler, ActLoopMode)
     assert not hasattr(internal, "mode")
     assert getattr(internal, "act_profile") == "general"
+
+
+@pytest.mark.parametrize("policy", ["never", "always", "anomaly"])
+def test_legacy_internal_reflection_policy_remains_mode_local(policy: str) -> None:
+    mode = ActLoopMode()
+
+    mode.apply_mode_config(
+        config={"adaptive_reflection_policy": policy},
+        runner=SimpleNamespace(options=SimpleNamespace()),
+        profile=None,
+    )
+
+    assert mode._reflection_policy == policy
+
+
+def test_public_mode_profile_does_not_invent_reflection_policy() -> None:
+    assert "adaptive_reflection_policy" not in ModeProfileConfig().model_dump()
+    with pytest.raises(ValidationError):
+        ModeProfileConfig.model_validate({"adaptive_reflection_policy": "always"})
+
+
+def test_brain_reflection_defaults_remain_unchanged() -> None:
+    config = ReflectionConfig()
+
+    assert config.enabled is True
+    assert config.reserved_llm_calls == 1

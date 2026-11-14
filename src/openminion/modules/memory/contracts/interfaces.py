@@ -37,10 +37,12 @@ class MemoryWriteClient(Protocol):
         *,
         scope: str,
         record_type: str,
+        key: str | None = None,
         title: str,
         content: dict[str, Any] | str,
         tags: list[str] | None = None,
         evidence_refs: list[str] | None = None,
+        confidence: float | None = None,
     ) -> str: ...
 
 

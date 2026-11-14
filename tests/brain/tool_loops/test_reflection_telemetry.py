@@ -154,6 +154,11 @@ class TestLoopReflectionPayload:
         result = loop_reflection_payload({})
         assert result["loop.reflection_calls"] == 0
         assert result["loop.reflection_triggers"] == []
+        assert result["loop.reflection_trigger_matches"] == 0
+        assert result["loop.reflection_attempted_calls"] == 0
+        assert result["loop.reflection_suggestions"] == 0
+        assert result["loop.reflection_applied_actions"] == 0
+        assert result["loop.reflection_failed_calls"] == 0
 
     def test_reflection_calls_propagated(self):
         result = loop_reflection_payload({"reflection_calls": 3})
@@ -276,8 +281,13 @@ class TestEngineAnomalyRecording:
         assert entry["tool_name"] == "file.read"
         assert entry["triggered"] is False
         assert entry["anomaly_score"] == 0.0
-        # reflection_calls should NOT be incremented for non-triggering result
         assert outcome.state.scratchpad.get("reflection_calls", 0) == 0
+        iteration_events = [
+            status["payload"]
+            for status in loop_ctx.statuses
+            if status.get("source_event") == "adaptive_loop_iteration"
+        ]
+        assert iteration_events[0]["reflection_triggered"] is False
 
     def test_anomaly_policy_error_result_records_trigger(self):
         runtime = _FakeRuntime(responses=_llm_tool_then_done())
@@ -306,6 +316,8 @@ class TestEngineAnomalyRecording:
         assert entry["triggered"] is True
         assert entry["anomaly_score"] >= 0.6
         assert outcome.state.scratchpad.get("reflection_calls", 0) == 1
+        payload = loop_reflection_payload(outcome.state.scratchpad)
+        assert payload["loop.reflection_trigger_matches"] == 1
 
     def test_always_policy_no_anomaly_detection_in_scratchpad(self):
         runtime = _FakeRuntime(responses=_llm_tool_then_done())

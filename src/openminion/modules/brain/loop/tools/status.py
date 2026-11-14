@@ -22,6 +22,23 @@ def loop_reflection_payload(scratchpad: dict) -> dict:
     return {
         "loop.reflection_calls": scratchpad.get("reflection_calls", 0),
         "loop.reflection_triggers": scratchpad.get("reflection_triggers", []),
+        "loop.reflection_trigger_matches": sum(
+            trigger.get("triggered") is True
+            for trigger in scratchpad.get("reflection_triggers", [])
+            if isinstance(trigger, dict)
+        ),
+        "loop.reflection_attempted_calls": scratchpad.get(
+            "reflection_attempted_calls", 0
+        ),
+        "loop.reflection_suggestions": scratchpad.get("reflection_suggestions", 0),
+        "loop.reflection_applied_actions": sum(
+            bool(record.get("applied"))
+            for record in scratchpad.get("correction_history", [])
+            if isinstance(record, dict)
+        ),
+        "loop.reflection_failed_calls": scratchpad.get(
+            "reflection_failed_calls", 0
+        ),
     }
 
 

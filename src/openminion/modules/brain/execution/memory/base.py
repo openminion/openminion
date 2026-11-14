@@ -195,7 +195,14 @@ def write_post_completion_critique_memory(
             ],
         }
         if callable(write_record):
-            record_id = write_record(**kwargs, confidence=0.7)
+            completion_id = str(
+                state.root_turn_id or state.trace_id or state.session_id
+            ).strip()
+            record_id = write_record(
+                **kwargs,
+                key=f"{completion_id}:{critique.intent_id}",
+                confidence=0.7,
+            )
         else:
             record_id = put_record(**kwargs)
     except Exception as exc:  # noqa: BLE001 - best-effort memory write

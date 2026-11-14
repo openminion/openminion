@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
+import pytest
+
+from openminion.modules.brain.schemas import BudgetCounters, WorkingState
 from openminion.modules.brain.loop.tools.contracts import (
     ADAPTIVE_TERM_FINAL_TEXT,
     ADAPTIVE_TERM_NEEDS_USER,
@@ -49,13 +53,41 @@ def _state(
 @dataclass
 class _FakeRuntime:
     response_content: str = "{}"
+    input_tokens: int = 0
+    output_tokens: int = 0
     calls: list[dict] = field(default_factory=list)
 
     def complete(self, *, messages, tools, model, **kwargs):
         from types import SimpleNamespace
 
         self.calls.append({"messages": messages, "tools": tools, "model": model})
-        return SimpleNamespace(content=self.response_content)
+        return SimpleNamespace(
+            content=self.response_content,
+            usage=SimpleNamespace(
+                input_tokens=self.input_tokens,
+                output_tokens=self.output_tokens,
+            ),
+        )
+
+
+def _loop_ctx(
+    *, tokens: int = 50_000, llm_calls_used: int = 0, llm_calls_max: int = 10
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        state=WorkingState(
+            session_id="correction-test",
+            agent_id="correction-test",
+            budgets_remaining=BudgetCounters(
+                ticks=10,
+                tool_calls=10,
+                a2a_calls=0,
+                tokens=tokens,
+                time_ms=120_000,
+            ),
+            llm_calls_used=llm_calls_used,
+            llm_calls_max=llm_calls_max,
+        )
+    )
 
 
 def _valid_plan_json(**overrides: Any) -> str:
@@ -75,7 +107,7 @@ class TestTriggerMacroCorrection:
         runtime = _FakeRuntime(response_content=_valid_plan_json())
 
         plan = trigger_macro_correction(
-            loop_ctx=MagicMock(),
+            loop_ctx=_loop_ctx(),
             profile=profile,
             loop_state=loop_state,
             failure_context="tool failed",
@@ -89,6 +121,9 @@ class TestTriggerMacroCorrection:
         assert plan.correction_type == "retry_same"
         assert loop_state.scratchpad["macro_correction_count"] == 1
         assert loop_state.scratchpad["last_macro_iteration"] == 5
+        assert loop_state.scratchpad["reflection_attempted_calls"] == 1
+        assert loop_state.scratchpad["reflection_suggestions"] == 1
+        assert loop_state.llm_calls == 1
 
     def test_budget_exhausted_returns_none(self):
         profile = _profile(max_macro_corrections=0)
@@ -96,7 +131,7 @@ class TestTriggerMacroCorrection:
         runtime = _FakeRuntime()
 
         plan = trigger_macro_correction(
-            loop_ctx=MagicMock(),
+            loop_ctx=_loop_ctx(),
             profile=profile,
             loop_state=loop_state,
             failure_context="failed",
@@ -117,7 +152,7 @@ class TestTriggerMacroCorrection:
         runtime = _FakeRuntime()
 
         plan = trigger_macro_correction(
-            loop_ctx=MagicMock(),
+            loop_ctx=_loop_ctx(),
             profile=profile,
             loop_state=loop_state,
             failure_context="failed",
@@ -135,7 +170,7 @@ class TestTriggerMacroCorrection:
         runtime = _FakeRuntime(response_content="THIS IS NOT JSON {{{")
 
         plan = trigger_macro_correction(
-            loop_ctx=MagicMock(),
+            loop_ctx=_loop_ctx(),
             profile=profile,
             loop_state=loop_state,
             failure_context="tool failed",
@@ -145,6 +180,9 @@ class TestTriggerMacroCorrection:
         )
 
         assert plan is None
+        assert loop_state.scratchpad["reflection_attempted_calls"] == 1
+        assert loop_state.scratchpad["reflection_failed_calls"] == 1
+        assert loop_state.llm_calls == 1
 
     def test_uses_reflection_model_when_set(self):
         profile = _profile(
@@ -156,7 +194,7 @@ class TestTriggerMacroCorrection:
         runtime = _FakeRuntime(response_content=_valid_plan_json())
 
         trigger_macro_correction(
-            loop_ctx=MagicMock(),
+            loop_ctx=_loop_ctx(),
             profile=profile,
             loop_state=loop_state,
             failure_context="failed",
@@ -177,7 +215,7 @@ class TestTriggerMacroCorrection:
         runtime = _FakeRuntime(response_content=_valid_plan_json())
 
         trigger_macro_correction(
-            loop_ctx=MagicMock(),
+            loop_ctx=_loop_ctx(),
             profile=profile,
             loop_state=loop_state,
             failure_context="failed",
@@ -197,7 +235,7 @@ class TestTriggerMacroCorrection:
         runtime = _FakeRuntime(response_content=_valid_plan_json())
 
         plan = trigger_macro_correction(
-            loop_ctx=MagicMock(),
+            loop_ctx=_loop_ctx(),
             profile=profile,
             loop_state=loop_state,
             failure_context="failed",
@@ -217,7 +255,7 @@ class TestTriggerMacroCorrection:
         runtime = _FakeRuntime()
 
         plan = trigger_macro_correction(
-            loop_ctx=MagicMock(),
+            loop_ctx=_loop_ctx(),
             profile=profile,
             loop_state=loop_state,
             failure_context="failed",
@@ -227,6 +265,112 @@ class TestTriggerMacroCorrection:
         )
 
         assert plan is None
+
+    def test_global_call_cap_prevents_dispatch(self):
+        profile = _profile(max_macro_corrections=2)
+        loop_state = _state()
+        runtime = _FakeRuntime(response_content=_valid_plan_json())
+
+        plan = trigger_macro_correction(
+            loop_ctx=_loop_ctx(llm_calls_used=2, llm_calls_max=2),
+            profile=profile,
+            loop_state=loop_state,
+            failure_context="failed",
+            model="m",
+            runtime=runtime,
+            messages=[],
+        )
+
+        assert plan is None
+        assert runtime.calls == []
+        assert loop_state.scratchpad.get("macro_correction_count", 0) == 0
+
+    def test_profile_call_cap_prevents_dispatch(self):
+        profile = _profile(max_macro_corrections=2)
+        profile = replace(profile, max_llm_calls_per_loop=1)
+        loop_state = _state()
+        loop_state.llm_calls = 1
+        runtime = _FakeRuntime(response_content=_valid_plan_json())
+
+        plan = trigger_macro_correction(
+            loop_ctx=_loop_ctx(),
+            profile=profile,
+            loop_state=loop_state,
+            failure_context="failed",
+            model="m",
+            runtime=runtime,
+            messages=[],
+        )
+
+        assert plan is None
+        assert runtime.calls == []
+
+    def test_provider_failure_is_counted_once(self):
+        class _FailingRuntime:
+            def complete(self, **kwargs):
+                raise RuntimeError("provider unavailable")
+
+        loop_ctx = _loop_ctx()
+        loop_state = _state()
+
+        plan = trigger_macro_correction(
+            loop_ctx=loop_ctx,
+            profile=_profile(macro_correction_cooldown=1),
+            loop_state=loop_state,
+            failure_context="failed",
+            model="m",
+            runtime=_FailingRuntime(),
+            messages=[],
+        )
+
+        assert plan is None
+        assert loop_ctx.state.llm_calls_used == 1
+        assert loop_state.llm_calls == 1
+        assert loop_state.scratchpad["macro_correction_count"] == 1
+        assert loop_state.scratchpad["reflection_failed_calls"] == 1
+
+    def test_provider_reported_tokens_use_shared_budget(self):
+        runtime = _FakeRuntime(
+            response_content=_valid_plan_json(),
+            input_tokens=120,
+            output_tokens=30,
+        )
+        loop_ctx = _loop_ctx(tokens=1_000)
+
+        trigger_macro_correction(
+            loop_ctx=loop_ctx,
+            profile=_profile(macro_correction_cooldown=1),
+            loop_state=_state(),
+            failure_context="failed",
+            model="m",
+            runtime=runtime,
+            messages=[],
+        )
+
+        assert loop_ctx.state.budgets_remaining.tokens == 850
+
+    def test_cancellation_after_dispatch_is_counted_and_propagated(self):
+        class _CancelledRuntime:
+            def complete(self, **kwargs):
+                raise KeyboardInterrupt
+
+        loop_ctx = _loop_ctx()
+        loop_state = _state()
+
+        with pytest.raises(KeyboardInterrupt):
+            trigger_macro_correction(
+                loop_ctx=loop_ctx,
+                profile=_profile(macro_correction_cooldown=1),
+                loop_state=loop_state,
+                failure_context="failed",
+                model="m",
+                runtime=_CancelledRuntime(),
+                messages=[],
+            )
+
+        assert loop_ctx.state.llm_calls_used == 1
+        assert loop_state.llm_calls == 1
+        assert loop_state.scratchpad["macro_correction_count"] == 1
 
 
 class TestDispatchCorrectionPlan:
@@ -275,7 +419,7 @@ class TestDispatchCorrectionPlan:
 
         assert result is None
         assert len(messages) == 1
-        assert "Correction applied" in messages[0].content
+        assert "Correction suggestion" in messages[0].content
         assert "/new/path" in messages[0].content
 
     def test_dispatch_replan(self):
@@ -297,7 +441,7 @@ class TestDispatchCorrectionPlan:
         )
 
         assert result is None
-        assert loop_state.iteration == 0
+        assert loop_state.iteration == 5
         assert len(messages) == 1
         assert "use grep instead" in messages[0].content
 
@@ -358,7 +502,7 @@ class TestDispatchCorrectionPlan:
         record = history[0]
         assert record["correction_type"] == "retry_same"
         assert record["iteration_index"] == 7
-        assert record["applied"] is True
+        assert record["applied"] is False
         assert "Something went wrong" in record["diagnosis_summary"]
 
     def test_dispatch_records_history_on_multiple_calls(self):
