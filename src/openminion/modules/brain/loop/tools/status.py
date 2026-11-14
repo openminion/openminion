@@ -36,9 +36,7 @@ def loop_reflection_payload(scratchpad: dict) -> dict:
             for record in scratchpad.get("correction_history", [])
             if isinstance(record, dict)
         ),
-        "loop.reflection_failed_calls": scratchpad.get(
-            "reflection_failed_calls", 0
-        ),
+        "loop.reflection_failed_calls": scratchpad.get("reflection_failed_calls", 0),
     }
 
 

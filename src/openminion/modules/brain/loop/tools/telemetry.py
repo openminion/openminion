@@ -74,8 +74,7 @@ def _emit_iteration_event(
     _reflection_triggered = bool(
         loop_state.scratchpad.get("reflection_triggers")
         and any(
-            t.get("iteration") == loop_state.iteration
-            and t.get("triggered") is True
+            t.get("iteration") == loop_state.iteration and t.get("triggered") is True
             for t in loop_state.scratchpad["reflection_triggers"]
             if isinstance(t, dict)
         )

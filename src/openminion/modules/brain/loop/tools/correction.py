@@ -192,6 +192,7 @@ def dispatch_correction_plan(
 ) -> str | None:
     """Act on a CorrectionPlan. Returns termination reason or None to continue."""
     from .contracts import ADAPTIVE_TERM_FINAL_TEXT, ADAPTIVE_TERM_NEEDS_USER
+
     record = CorrectionRecord(
         iteration_index=loop_state.iteration,
         correction_type=plan.correction_type,
@@ -202,10 +203,7 @@ def dispatch_correction_plan(
     history.append(record.model_dump())
 
     if plan.correction_type == "retry_same":
-        if (
-            last_tool_call is not None
-            and last_tool_call.name in _READ_CACHEABLE_TOOLS
-        ):
+        if last_tool_call is not None and last_tool_call.name in _READ_CACHEABLE_TOOLS:
             counts = loop_state.scratchpad.get("duplicate_read_redispatch_counts", {})
             counts.pop(semantic_batch_signature([last_tool_call]), None)
         return None
