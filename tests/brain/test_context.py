@@ -459,6 +459,7 @@ def test_context_packer_surfaces_post_completion_critique_overlay() -> None:
         call.get("record_types") == ["post_completion_critique"]
         for call in memctl.calls
     )
+    assert all(call.get("agent_id") == "agent-1" for call in memctl.calls)
 
 
 def test_context_packer_surfaces_low_progress_and_learning_metrics() -> None:

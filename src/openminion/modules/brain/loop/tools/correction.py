@@ -206,6 +206,15 @@ def dispatch_correction_plan(
         if last_tool_call is not None and last_tool_call.name in _READ_CACHEABLE_TOOLS:
             counts = loop_state.scratchpad.get("duplicate_read_redispatch_counts", {})
             counts.pop(semantic_batch_signature([last_tool_call]), None)
+            messages.append(
+                Message(
+                    role="system",
+                    content=(
+                        "The correction suggests retrying the same safe read with "
+                        "the original arguments. Choose the next tool call yourself."
+                    ),
+                )
+            )
         return None
 
     if plan.correction_type == "retry_different":

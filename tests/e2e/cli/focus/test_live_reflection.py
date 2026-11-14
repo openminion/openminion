@@ -102,14 +102,25 @@ def test_live_focus_reflection_recovery(
         f"target = Path({str(scratch_dir / 'input.txt')!r}).resolve()\n"
         f"counter = Path({str(scratch_dir / '.read-attempts')!r})\n"
         "original_read = LocalStorageBackend.read\n\n"
+        "original_read_range = LocalStorageBackend.read_range\n\n"
+        "def fail_transiently(path):\n"
+        "    if Path(path).resolve() != target:\n"
+        "        return\n"
+        "    attempt = int(counter.read_text() if counter.exists() else '0') + 1\n"
+        "    counter.write_text(str(attempt))\n"
+        f"    if attempt <= {failures}:\n"
+        "        raise ToolRuntimeError('TIMEOUT', 'transient test read timeout')\n\n"
         "def read(self, path, *, max_chars=12000, offset=0):\n"
-        "    if Path(path).resolve() == target:\n"
-        "        attempt = int(counter.read_text() if counter.exists() else '0') + 1\n"
-        "        counter.write_text(str(attempt))\n"
-        f"        if attempt <= {failures}:\n"
-        "            raise ToolRuntimeError('TIMEOUT', 'transient test read timeout')\n"
+        "    fail_transiently(path)\n"
         "    return original_read(self, path, max_chars=max_chars, offset=offset)\n\n"
-        "LocalStorageBackend.read = read\n",
+        "def read_range(self, path, *, start_line, end_line, max_chars):\n"
+        "    fail_transiently(path)\n"
+        "    return original_read_range(\n"
+        "        self, path, start_line=start_line, end_line=end_line, "
+        "max_chars=max_chars\n"
+        "    )\n\n"
+        "LocalStorageBackend.read = read\n"
+        "LocalStorageBackend.read_range = read_range\n",
         encoding="utf-8",
     )
     scenario = FocusScenario(

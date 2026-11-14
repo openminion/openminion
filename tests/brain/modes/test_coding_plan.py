@@ -169,6 +169,9 @@ def test_coding_plan_keeps_cohesive_workspace_changes_in_one_loop() -> None:
 
     assert "Keep subtasks empty for one cohesive workspace change." in prompt
     assert "completed and verified in sequence" in prompt
+    assert "use only implement -> verify" in prompt
+    assert "do not create a second plan with the plan tool" in prompt
+    assert "not a success criterion or deliverable" in prompt
 
 
 def test_coding_plan_from_payload_rejects_invalid_payload() -> None:
