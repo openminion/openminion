@@ -269,7 +269,7 @@ Embed an isolated agent session from Python:
 ```python
 from openminion import Agent, ProviderError, tool
 
-@tool
+@tool(min_scope="READ_ONLY", idempotent=True)
 def lookup_order(order_id: str) -> str:
     return f"order {order_id}: ready"
 
@@ -284,6 +284,11 @@ try:
 except ProviderError as exc:
     print(f"provider failed: {exc}")
 ```
+
+`lookup_order` declares itself read-only, so the default action policy runs it
+without a confirmation. Under the same policy a bare `@tool` is treated as a
+write and is confirmed first; see [Runtime surfaces](docs/runtime-surfaces.md) for how the `@tool`
+options map to approval.
 
 Pass `config_path="path/to/agents.json"` to use a project-owned config and
 `agent_id="reviewer"` to select one configured profile. For advanced runtime
