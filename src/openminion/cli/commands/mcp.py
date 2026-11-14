@@ -236,9 +236,93 @@ def _mcp_set_trusted(args: argparse.Namespace, *, trusted: bool) -> int:
 def _mcp_import(args: argparse.Namespace) -> int:
     from openminion.base.config.io import save_config
 
-    source_path = Path(str(getattr(args, "source", "") or "")).expanduser()
-    payload = json.loads(source_path.read_text(encoding="utf-8"))
-    imported = _servers_from_external_payload(payload)
+    source_raw = str(getattr(args, "source", "") or "").strip()
+    source_path = Path(source_raw).expanduser() if source_raw else None
+
+    if not source_path or not source_path.exists():
+        print_json_payload(
+            {
+                "ok": False,
+                "error": {
+                    "code": "SOURCE_NOT_FOUND",
+                    "message": "Source file does not exist",
+                    "details": {"path": str(source_path or "")},
+                },
+            }
+        )
+        return 1
+
+    if not source_path.is_file():
+        print_json_payload(
+            {
+                "ok": False,
+                "error": {
+                    "code": "INVALID_SOURCE",
+                    "message": "Source path is not a file",
+                    "details": {"path": str(source_path)},
+                },
+            }
+        )
+        return 1
+
+    try:
+        content = source_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        print_json_payload(
+            {
+                "ok": False,
+                "error": {
+                    "code": "SOURCE_READ_ERROR",
+                    "message": str(exc),
+                    "details": {"path": str(source_path)},
+                },
+            }
+        )
+        return 1
+
+    try:
+        payload = json.loads(content)
+    except (json.JSONDecodeError, ValueError) as exc:
+        print_json_payload(
+            {
+                "ok": False,
+                "error": {
+                    "code": "INVALID_SOURCE",
+                    "message": f"Malformed JSON: {exc}",
+                    "details": {"path": str(source_path)},
+                },
+            }
+        )
+        return 1
+
+    if not isinstance(payload, dict):
+        print_json_payload(
+            {
+                "ok": False,
+                "error": {
+                    "code": "INVALID_SOURCE",
+                    "message": "MCP import payload must be a JSON object",
+                    "details": {"path": str(source_path)},
+                },
+            }
+        )
+        return 1
+
+    try:
+        imported = _servers_from_external_payload(payload)
+    except Exception as exc:
+        print_json_payload(
+            {
+                "ok": False,
+                "error": {
+                    "code": "INVALID_SOURCE",
+                    "message": str(exc),
+                    "details": {"path": str(source_path)},
+                },
+            }
+        )
+        return 1
+
     write = bool(getattr(args, "write", False))
     written_path: Path | None = None
     if write:

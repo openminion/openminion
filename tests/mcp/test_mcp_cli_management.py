@@ -87,6 +87,100 @@ def test_mcp_import_redacts_secret_stdout(tmp_path: Path, capsys) -> None:
     assert load_config(str(config)).runtime.mcp_servers[0].trusted is False
 
 
+def test_mcp_import_missing_source_fails_with_structured_error(
+    tmp_path: Path, capsys
+) -> None:
+    missing = tmp_path / "nonexistent.json"
+    config = tmp_path / "openminion.json"
+
+    assert (
+        run_mcp(_args("import", config=str(config), source=str(missing), write=True))
+        == 1
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "SOURCE_NOT_FOUND"
+    assert "does not exist" in payload["error"]["message"]
+    assert payload["error"]["details"]["path"] == str(missing)
+    assert not config.exists()
+
+
+def test_mcp_import_directory_source_fails_with_structured_error(
+    tmp_path: Path, capsys
+) -> None:
+    directory = tmp_path / "somedir"
+    directory.mkdir()
+    config = tmp_path / "openminion.json"
+
+    assert (
+        run_mcp(_args("import", config=str(config), source=str(directory), write=True))
+        == 1
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "INVALID_SOURCE"
+    assert "not a file" in payload["error"]["message"]
+    assert payload["error"]["details"]["path"] == str(directory)
+    assert not config.exists()
+
+
+def test_mcp_import_malformed_json_fails_with_structured_error(
+    tmp_path: Path, capsys
+) -> None:
+    broken = tmp_path / "broken.json"
+    broken.write_text('{"mcpServers": {', encoding="utf-8")
+    config = tmp_path / "openminion.json"
+
+    assert (
+        run_mcp(_args("import", config=str(config), source=str(broken), write=True))
+        == 1
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "INVALID_SOURCE"
+    assert "Malformed JSON" in payload["error"]["message"]
+    assert payload["error"]["details"]["path"] == str(broken)
+    assert not config.exists()
+
+
+def test_mcp_import_non_object_json_fails_with_structured_error(
+    tmp_path: Path, capsys
+) -> None:
+    source = tmp_path / "array.json"
+    source.write_text("[1, 2, 3]", encoding="utf-8")
+    config = tmp_path / "openminion.json"
+
+    assert (
+        run_mcp(_args("import", config=str(config), source=str(source), write=True))
+        == 1
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "INVALID_SOURCE"
+    assert "JSON object" in payload["error"]["message"]
+    assert payload["error"]["details"]["path"] == str(source)
+    assert not config.exists()
+
+
+def test_mcp_import_invalid_servers_map_fails_with_structured_error(
+    tmp_path: Path, capsys
+) -> None:
+    source = tmp_path / "bad_map.json"
+    source.write_text('{"mcpServers": "not-a-map"}', encoding="utf-8")
+    config = tmp_path / "openminion.json"
+
+    assert (
+        run_mcp(_args("import", config=str(config), source=str(source), write=True))
+        == 1
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "INVALID_SOURCE"
+    assert "mcpServers map" in payload["error"]["message"]
+    assert payload["error"]["details"]["path"] == str(source)
+    assert not config.exists()
+
+
 def test_mcp_list_and_validate_config(tmp_path: Path, capsys) -> None:
     config = _write_json(
         tmp_path / "openminion.json",
