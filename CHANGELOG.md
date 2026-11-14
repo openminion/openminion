@@ -168,6 +168,15 @@ This file tracks package-facing release notes for `openminion`.
   dependency imports across supported static import forms and run policy,
   closure, replay and steering contracts in the fast regression suite.
 
+- Fix provider HTTP calls failing before any request is sent on hosts whose
+  `no_proxy` contains a bracketed IPv6 literal without a port (e.g. `[::1]`).
+  Client construction now sits inside the transport's error normalization,
+  and on that failure the client is rebuilt with a locally corrected proxy
+  configuration for that instance only; the process environment is never
+  modified, bypass entries keep their meaning, and the environment's TLS
+  trust configuration (`SSL_CERT_FILE` / `SSL_CERT_DIR`) is preserved for
+  direct requests (Refs #686).
+
 - Pass current-turn steering to the closure judge in the order it was applied,
   preserving the rest of the user's request when the judge revises the final
   answer (Refs #661).
