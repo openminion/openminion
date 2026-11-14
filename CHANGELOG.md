@@ -7,6 +7,11 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `_tool_result_from_payload` now normalizes Pydantic `BaseModel` values across direct
+  results, nested collections, and `error.details` payloads with `model_dump(mode="json")`
+  so `ToolExecutionBatch.to_metadata_payload()` and tool-result summaries emit JSON
+  without altering tool-envelope fields or ordinary mapping-key serialization.
+
 - The README's Python `Agent` snippet now declares `lookup_order` as
   `@tool(min_scope="READ_ONLY", idempotent=True)`, matching
   `examples/sdk/tool_agent.py`: the bare `@tool` was classified as a write with
