@@ -35,6 +35,8 @@ package source and release surface.
   review-before-apply, SQLite rollback, and audit evidence for memory changes.
 - [`graph-viewer.md`](graph-viewer.md): second-brain memory and third-brain
   provider graph inspection through GraphFakos.
+- [`turn-budgets.md`](turn-budgets.md): turn limits, context-pack targets,
+  token cost, and the automatic fact-extraction call.
 - [`provider-capabilities.md`](provider-capabilities.md): explicit provider
   capability facts, request requirements, and deterministic pre-call routing.
 - [`security-scanning.md`](security-scanning.md): bounded local Semgrep and
