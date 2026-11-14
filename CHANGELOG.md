@@ -7,6 +7,9 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Upstream header request IDs (`X-Request-ID`) in shared provider error facts are now bounded
+  to 128 characters, matching body request ID normalization across HTTP and SSE error paths (Refs #740).
+
 - The README's Python `Agent` snippet now declares `lookup_order` as
   `@tool(min_scope="READ_ONLY", idempotent=True)`, matching
   `examples/sdk/tool_agent.py`: the bare `@tool` was classified as a write with

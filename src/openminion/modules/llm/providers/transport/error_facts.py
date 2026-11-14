@@ -38,7 +38,9 @@ def openai_error_facts(
         value = _bounded(error.get(source), limit)
         if value:
             facts[target] = value
-    response_request_id = request_id or _bounded(
+    response_request_id = _bounded(
+        request_id, UPSTREAM_ERROR_FIELD_MAX_CHARS
+    ) or _bounded(
         payload.get("request_id") or payload.get("requestId"),
         UPSTREAM_ERROR_FIELD_MAX_CHARS,
     )
