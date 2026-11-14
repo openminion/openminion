@@ -141,6 +141,11 @@ def _build_postprocess_response_metadata(
         termination_reason=termination_reason,
     )
     metadata["respond_kind"] = str(getattr(step_out, "kind", "") or "assistant")
+    confirmation_outcome = getattr(step_out, "confirmation_outcome", None)
+    if isinstance(confirmation_outcome, dict) and confirmation_outcome:
+        metadata["confirmation_outcome"] = json.dumps(
+            confirmation_outcome, sort_keys=True
+        )
     metadata.update(self._identity_metadata())
     memory_policy_metadata = self._extract_memory_policy_metadata(
         response_text=response_text

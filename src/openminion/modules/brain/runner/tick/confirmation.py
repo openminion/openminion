@@ -215,6 +215,22 @@ def _prepare_confirmation_replay_commands(
     return prepared_commands
 
 
+def _denied_command_for_cursor(state: Any) -> Any:
+    """The command the denial is about, from the plan cursor or the pending slot."""
+    if state.plan is not None and 0 <= state.cursor < len(state.plan.steps):
+        return state.plan.steps[state.cursor]
+    return state.pending_confirmation_command
+
+
+def _denied_confirmation_outcome(denied_command: Any, cursor: int) -> dict[str, str]:
+    """Typed current-turn denial fact, taken from the same command the event names."""
+    return {
+        "result": "denied",
+        "command_id": denied_command.command_id if denied_command else "",
+        "cursor": str(cursor),
+    }
+
+
 def process(*, runner, state, logger, tick_ctx: TickRunContext):
     if (
         state.pending_confirmation_command is not None
@@ -330,12 +346,8 @@ def process(*, runner, state, logger, tick_ctx: TickRunContext):
                 trace_id=state.trace_id,
             )
         elif confirmation_reply == "deny":
-            denied_command = None
             denied_cursor = state.cursor
-            if state.plan is not None and 0 <= state.cursor < len(state.plan.steps):
-                denied_command = state.plan.steps[state.cursor]
-            elif state.pending_confirmation_command is not None:
-                denied_command = state.pending_confirmation_command
+            denied_command = _denied_command_for_cursor(state)
             _deny_pending_confirmation(runner, state=state)
             state.pending_confirmation_command = None
             _clear_pending_confirmation_metadata(state)
@@ -359,6 +371,9 @@ def process(*, runner, state, logger, tick_ctx: TickRunContext):
                 logger=logger,
                 message="Confirmation denied. The action was not run.",
                 status=BRAIN_STATE_WAITING_USER,
+                confirmation_outcome=_denied_confirmation_outcome(
+                    denied_command, denied_cursor
+                ),
             )
         else:
             state.pending_confirmation_command = None

@@ -268,3 +268,60 @@ def test_pending_call_approved_later_stages_once_after_it_runs(
     signature = json.loads(content["args_signature"])
     assert {key: signature[key] for key in ARGS} == ARGS
     assert meta["source_args_signature"] == content["args_signature"]
+
+
+def _persisted_turn_meta(data_root: Path) -> list[dict[str, Any]]:
+    found = sorted(data_root.rglob("sessions.db"))
+    assert found, f"session store not written under {data_root}"
+    database = found[-1]
+    with sqlite3.connect(database) as connection:
+        rows = connection.execute(
+            "SELECT meta_json FROM turns WHERE role = 'assistant' ORDER BY ts"
+        ).fetchall()
+    return [json.loads(meta) for (meta,) in rows]
+
+
+def test_denied_confirmation_persists_and_does_not_leak_into_the_next_turn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    provider: _ArgsProvider,
+) -> None:
+    """The confirmation owner's denial is typed on the returned and stored turn only."""
+    runtime = _runtime(tmp_path, monkeypatch, provider, constraint=NEUTRAL_CONSTRAINT)
+    try:
+        handled = _record_handler(runtime, monkeypatch, fail=False)
+        pending = _run(runtime, MESSAGE, "call")
+        denied = runtime.run_turn(
+            payload={
+                "message": "deny",
+                "session_id": "call",
+                "deliver": False,
+                "forced_tools": ["memory.write"],
+                "inbound_metadata": {
+                    CALLER_HANDLES_DELIVERY_METADATA_KEY: "true",
+                    "thread_id": pending.metadata["thread_id"],
+                },
+            }
+        )
+        persisted = _persisted_turn_meta(tmp_path / ".openminion")
+        later = _run(runtime, MESSAGE, "later")
+        later_persisted = _persisted_turn_meta(tmp_path / ".openminion")
+    finally:
+        runtime.close()
+
+    # Returned turn: the denial fact is typed, not parsed out of the answer text.
+    returned = denied["metadata"]["confirmation_outcome"]
+    if isinstance(returned, str):
+        returned = json.loads(returned)
+    assert returned["result"] == "denied"
+    assert returned["command_id"], "the denied command is identified on the turn"
+    assert returned["cursor"], "the denial names the step it belongs to"
+    # Persisted turn: the same fact survives the store, as a JSON string.
+    stored = [meta for meta in persisted if "confirmation_outcome" in meta]
+    assert stored, "the denial was not persisted with the turn"
+    assert json.loads(stored[-1]["confirmation_outcome"])["result"] == "denied"
+    # A later independent turn does not inherit it.
+    assert "confirmation_outcome" not in later.metadata
+    assert not [meta for meta in later_persisted[-1:] if "confirmation_outcome" in meta]
+    # The denied call never ran.
+    assert handled == []

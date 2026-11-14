@@ -356,6 +356,7 @@ def respond_with_meta(
     status: str,
     action_result: ActionResult | None = None,
     kind: RespondKindLiteral = RESPOND_KIND_ASSISTANT,
+    confirmation_outcome: dict[str, str] | None = None,
 ) -> StepOutput:
     final_message = message
     final_status = status
@@ -409,6 +410,7 @@ def respond_with_meta(
         status=final_status,
         action_result=action_result,
         kind=kind,
+        confirmation_outcome=confirmation_outcome,
     )
 
 
