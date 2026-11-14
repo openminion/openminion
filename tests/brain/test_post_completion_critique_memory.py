@@ -9,6 +9,7 @@ from openminion.modules.brain.execution.closure import apply_closure_judgment
 from openminion.modules.brain.execution.memory import (
     write_post_completion_critique_memory,
 )
+from openminion.modules.brain.adapters.context.bridges.memory import BridgeMemoryClient
 from openminion.modules.brain.schemas import (
     BudgetCounters,
     ClosureJudgment,
@@ -17,6 +18,8 @@ from openminion.modules.brain.schemas import (
     PostCompletionCritique,
     WorkingState,
 )
+from openminion.modules.memory.service import MemoryService
+from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
 
 
 class _MemoryAPI:
@@ -224,6 +227,40 @@ def test_replayed_accepted_close_keeps_one_completion_critique() -> None:
     apply_closure_judgment(runner, state=state, judgment=judgment)
 
     assert len(memory.records) == 1
+
+
+def test_completion_critique_survives_restart_and_stays_agent_scoped(tmp_path) -> None:
+    memory_path = tmp_path / "memory.db"
+    service = MemoryService(
+        store=SQLiteMemoryStore(memory_path),
+        owns_store=True,
+    )
+    runner = _runner(service)
+
+    apply_closure_judgment(
+        runner,
+        state=_state(),
+        judgment=_critique_judgment(satisfied=True, next_action="close"),
+    )
+    service.close()
+
+    restarted = BridgeMemoryClient(SimpleNamespace(_path=tmp_path / "session.db"))
+    try:
+        matching = restarted.list_cross_session_memory_cards_by_type(
+            agent_id="agent-pccm",
+            record_types=["post_completion_critique"],
+            limit=5,
+        )
+        foreign = restarted.list_cross_session_memory_cards_by_type(
+            agent_id="agent-other",
+            record_types=["post_completion_critique"],
+            limit=5,
+        )
+    finally:
+        restarted.close()
+
+    assert [card.meta["intent_id"] for card in matching] == ["intent-weather"]
+    assert foreign == []
 
 
 def test_non_close_judgment_does_not_write_completion_critique() -> None:
