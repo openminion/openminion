@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+from openminion.modules.llm.constants import UPSTREAM_ERROR_FIELD_MAX_CHARS
 from openminion.modules.llm.errors import LLMCtlError
 from openminion.modules.llm.providers.transport.curl import curl_json_post
 from openminion.modules.llm.providers.transport.error_facts import openai_error_facts
@@ -309,3 +310,130 @@ def test_curl_malformed_responses_do_not_leak(raw_body: str) -> None:
     evidence = json.dumps([debug_events, response_traces])
     assert "abcdefghijklmnop" not in evidence
     assert "response_bytes" in evidence
+
+
+def test_openai_error_facts_header_request_id_precedence_and_bounding() -> None:
+    facts = openai_error_facts(
+        json.dumps({"request_id": "req-body-only"}),
+        status_code=400,
+        request_id="req-header-10",
+    )
+    assert facts["request_id"] == "req-header-10"
+
+    long_header_id = "h" * 8192
+    facts = openai_error_facts(
+        json.dumps({"request_id": "req-body-fallback"}),
+        status_code=400,
+        request_id=long_header_id,
+    )
+    assert facts["request_id"] == "h" * UPSTREAM_ERROR_FIELD_MAX_CHARS
+    assert len(facts["request_id"]) == UPSTREAM_ERROR_FIELD_MAX_CHARS
+
+    facts_whitespace = openai_error_facts(
+        json.dumps({"request_id": "body-req-fallback"}),
+        status_code=400,
+        request_id="   ",
+    )
+    assert facts_whitespace["request_id"] == "body-req-fallback"
+
+    facts_empty = openai_error_facts(
+        json.dumps({"requestId": "body-req-camel"}),
+        status_code=400,
+        request_id="",
+    )
+    assert facts_empty["request_id"] == "body-req-camel"
+
+    long_body_id = "b" * 8192
+    facts_long_body = openai_error_facts(
+        json.dumps({"request_id": long_body_id}),
+        status_code=400,
+        request_id="  \t  ",
+    )
+    assert facts_long_body["request_id"] == "b" * UPSTREAM_ERROR_FIELD_MAX_CHARS
+    assert len(facts_long_body["request_id"]) == UPSTREAM_ERROR_FIELD_MAX_CHARS
+
+
+@pytest.mark.parametrize(
+    ("header_request_id", "body_request_id", "expected_request_id"),
+    [
+        ("req-123456", "req-body-ignored", "req-123456"),
+        ("x" * 8192, "req-body-ignored", "x" * UPSTREAM_ERROR_FIELD_MAX_CHARS),
+        ("", "y" * 8192, "y" * UPSTREAM_ERROR_FIELD_MAX_CHARS),
+    ],
+)
+def test_http_json_post_error_request_id_bounding(
+    header_request_id: str,
+    body_request_id: str,
+    expected_request_id: str,
+) -> None:
+    debug_events: list[dict] = []
+    response_metadata: dict[str, str] = {}
+    headers = {"X-Request-ID": header_request_id} if header_request_id else {}
+    body = json.dumps(
+        {
+            "error": {"message": "upstream failed"},
+            "request_id": body_request_id,
+        }
+    )
+    http_error = HTTPError(
+        "https://api.cortensor.app/v1/chat/completions",
+        400,
+        "Bad Request",
+        headers,
+        io.BytesIO(body.encode()),
+    )
+    with (
+        patch(
+            "openminion.modules.llm.providers.transport.http.urllib_request.urlopen",
+            side_effect=http_error,
+        ),
+        patch(
+            "openminion.modules.llm.providers.transport.http.write_llm_debug_event",
+            side_effect=lambda event, **_kwargs: debug_events.append(event),
+        ),
+        pytest.raises(LLMCtlError) as exc_info,
+    ):
+        http_json_post(
+            url="https://api.cortensor.app/v1/chat/completions",
+            payload={"model": "oss-20b"},
+            headers={},
+            timeout_seconds=480,
+            provider_name="openai",
+            response_metadata=response_metadata,
+        )
+
+    assert exc_info.value.code == "PROVIDER_ERROR"
+    assert exc_info.value.details["request_id"] == expected_request_id
+    assert response_metadata.get("request_id") == expected_request_id
+    error_event = next(event for event in debug_events if event["event"] == "error")
+    assert error_event["request_id"] == expected_request_id
+
+
+def test_sse_error_bounds_long_header_request_id() -> None:
+    long_header_id = "s" * 8192
+    http_error = HTTPError(
+        "https://api.cortensor.app/v1/chat/completions",
+        400,
+        "Bad Request",
+        {"X-Request-ID": long_header_id},
+        io.BytesIO(json.dumps({"error": {"message": "sse upstream failed"}}).encode()),
+    )
+    with (
+        patch(
+            "openminion.modules.llm.providers.transport.sse.urllib_request.urlopen",
+            side_effect=http_error,
+        ),
+        pytest.raises(LLMCtlError) as exc_info,
+    ):
+        list(
+            iter_sse_post_lines(
+                url="https://api.cortensor.app/v1/chat/completions",
+                payload={"model": "oss-20b", "stream": True},
+                headers={},
+                timeout_seconds=480,
+                provider_name="openai",
+            )
+        )
+
+    assert exc_info.value.code == "PROVIDER_ERROR"
+    assert exc_info.value.details["request_id"] == "s" * UPSTREAM_ERROR_FIELD_MAX_CHARS

@@ -7,6 +7,25 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Upstream header request IDs (`X-Request-ID`) in shared provider error facts are now bounded
+  to 128 characters, matching body request ID normalization across HTTP and SSE error paths (Refs #740).
+
+- The README's Python `Agent` snippet now declares `lookup_order` as
+  `@tool(min_scope="READ_ONLY", idempotent=True)`, matching
+  `examples/sdk/tool_agent.py`: the bare `@tool` was classified as a write with
+  unknown reversibility, so under the default action policy the snippet ended at
+  a confirmation prompt instead of the answer. The `tool()` docstring and
+  `docs/runtime-surfaces.md` now describe how `min_scope`, `idempotent` and
+  `dangerous` map to approval; `tags` and `capabilities` do not declare risk.
+  Policy behavior is unchanged (Refs #745).
+
+- `docs/turn-budgets.md` now documents automatic fact extraction: the supported
+  top-level `brain.auto_fact_extraction` switch and its six defaults, model
+  selection from the effective agent profile, the auxiliary structured call it
+  adds when it runs, and the conditions that skip it. It also notes that an
+  `auto_fact_extraction` key under `agents.<id>` currently has no effect.
+  Behavior is unchanged (Refs #746).
+
 ## Current package line - 2026-11-13
 
 - `examples/sdk/delegation.py --mode handoff --approval deny` now reports a denial only
