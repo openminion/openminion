@@ -207,6 +207,39 @@ class TestTriggerMacroCorrection:
         assert len(runtime.calls) == 1
         assert runtime.calls[0]["model"] == "reflect-model"
 
+    def test_accepts_forced_structured_correction_tool(self):
+        class _StructuredRuntime:
+            def complete(self, **kwargs):
+                tool = kwargs["tools"][0]
+                assert tool.name == "submit_correction"
+                assert kwargs["tool_choice"]["function"]["name"] == tool.name
+                return SimpleNamespace(
+                    tool_calls=[
+                        SimpleNamespace(
+                            name=tool.name,
+                            arguments={
+                                "diagnosis": "transient read timeout",
+                                "correction_type": "retry_same",
+                                "confidence": 0.9,
+                            },
+                        )
+                    ],
+                    usage=None,
+                )
+
+        plan = trigger_macro_correction(
+            loop_ctx=_loop_ctx(),
+            profile=_profile(macro_correction_cooldown=1),
+            loop_state=_state(),
+            failure_context="failed",
+            model="m",
+            runtime=_StructuredRuntime(),
+            messages=[],
+        )
+
+        assert plan is not None
+        assert plan.correction_type == "retry_same"
+
     def test_increments_macro_correction_count(self):
         profile = _profile(max_macro_corrections=5, macro_correction_cooldown=1)
         loop_state = _state(
