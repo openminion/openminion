@@ -162,6 +162,20 @@ class ActLoopSeededMixin:
             "entry_tool_call",
         }
 
+    def _prepare_judge_continuation(
+        self,
+        ctx: ExecutionContext,
+        *,
+        loop_outcome: AdaptiveToolLoopOutcome,
+    ) -> None:
+        if loop_outcome.state.scratchpad.get("direct_tool_judge_composition"):
+            ctx.state.post_action_user_message = (
+                self._seeded_autonomous_continuation_guidance(
+                    ctx=ctx,
+                    loop_outcome=loop_outcome,
+                )
+            )
+
     def _seeded_replay_initial_state(
         self, ctx: ExecutionContext
     ) -> AdaptiveToolLoopState:

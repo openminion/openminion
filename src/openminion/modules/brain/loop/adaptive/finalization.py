@@ -357,6 +357,58 @@ class ActLoopFinalizationMixin:
         if result.audit_payload:
             telemetry_payload["self_compaction.audit"] = dict(result.audit_payload)
 
+    @staticmethod
+    def _judge_composed_direct_tool_error(
+        ctx: ExecutionContext,
+        *,
+        loop_outcome: AdaptiveToolLoopOutcome,
+        disposition: str,
+        final_answer: str,
+    ) -> ExecutionResult | None:
+        if (
+            not loop_outcome.state.scratchpad.get("direct_tool_judge_composition")
+            or disposition in {BRAIN_DISPOSITION_CONTINUE, BRAIN_DISPOSITION_REPLAN}
+            or final_answer
+        ):
+            return None
+        message = "Closure did not return the required final answer."
+        return ExecutionResult(
+            status=BRAIN_STATE_ERROR,
+            working_state=ctx.state,
+            message=message,
+            action_result=_build_error_result(
+                message,
+                "act_closure_final_answer_missing",
+            ),
+        )
+
+    def _evaluate_success_closure(
+        self: Any,
+        ctx: ExecutionContext,
+        loop_outcome: AdaptiveToolLoopOutcome,
+        final_action: ActionResult,
+        completion_reason: str,
+    ) -> tuple[Any, str, str, ExecutionResult | None]:
+        judgment = None
+        disposition = ""
+        try:
+            judgment = ctx.evaluate_turn_closure(
+                action_result=final_action,
+                completion_reason=completion_reason,
+            )
+            disposition = ctx.apply_closure_judgment(judgment=judgment)
+        except Exception:  # noqa: BLE001
+            judgment = None
+            disposition = ""
+        closure_final_answer = _closure_final_answer(judgment, disposition)
+        error_result = self._judge_composed_direct_tool_error(
+            ctx,
+            loop_outcome=loop_outcome,
+            disposition=disposition,
+            final_answer=closure_final_answer,
+        )
+        return judgment, disposition, closure_final_answer, error_result
+
     def _finalize_success(
         self: Any,
         ctx: ExecutionContext,
@@ -586,18 +638,13 @@ class ActLoopFinalizationMixin:
             if loop_outcome.termination_reason == ADAPTIVE_TERM_CONFIDENT_COMPLETE
             else "act_adaptive_final_text"
         )
-        judgment = None
-        disposition = ""
-        try:
-            judgment = ctx.evaluate_turn_closure(
-                action_result=final_action,
-                completion_reason=completion_reason,
+        judgment, disposition, closure_final_answer, error_result = (
+            self._evaluate_success_closure(
+                ctx, loop_outcome, final_action, completion_reason
             )
-            disposition = ctx.apply_closure_judgment(judgment=judgment)
-        except Exception:  # noqa: BLE001
-            judgment = None
-            disposition = ""
-        closure_final_answer = _closure_final_answer(judgment, disposition)
+        )
+        if error_result:
+            return error_result
         if (
             requires_typed_finalization
             and not isinstance(loop_outcome.finalization_status, dict)
@@ -620,6 +667,7 @@ class ActLoopFinalizationMixin:
             BRAIN_DISPOSITION_CONTINUE,
             BRAIN_DISPOSITION_REPLAN,
         }:
+            self._prepare_judge_continuation(ctx, loop_outcome=loop_outcome)
             return cast(
                 ExecutionResult,
                 self._autonomous_seeded_result(ctx, action_result=final_action),

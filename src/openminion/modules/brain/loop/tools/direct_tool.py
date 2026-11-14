@@ -6,7 +6,13 @@ from types import SimpleNamespace
 from typing import Any
 
 from openminion.modules.brain.tools.parser import normalize_tool_name_for_brain
-from openminion.modules.brain.loop.constants import EMPTY_FINALIZATION_RETRY_PROMPT
+from openminion.modules.brain.execution.closure.checks import (
+    _closure_tool_result_can_render_completely,
+)
+from openminion.modules.brain.loop.constants import (
+    EMPTY_FINALIZATION_RETRY_PROMPT,
+    WORKFLOW_OBSERVATION_ENABLED_KEY,
+)
 from openminion.modules.brain.loop.failures import _raise_provider_failure
 from openminion.modules.llm import ProviderError
 from openminion.modules.llm.schemas import Message
@@ -494,6 +500,56 @@ def _should_force_direct_tool_closure(
         and loop_state.direct_tool_requested_batch_satisfied
         and len(requested_calls) <= 1
         and not loop_state.direct_tool_closure_consumed
+    )
+
+
+def _can_compose_direct_tool_answer_with_judge(
+    *,
+    loop_ctx: AdaptiveToolLoopContext,
+    profile: AdaptiveToolLoopProfile,
+    loop_state: AdaptiveToolLoopState,
+    active_task_plan: bool,
+) -> bool:
+    if (
+        profile.profile_name != "general_adaptive_v1"
+        or loop_ctx.decision_reason_code != "entry_tool_call"
+        or active_task_plan
+        or not _should_force_direct_tool_closure(loop_state)
+        or len(_direct_tool_turn_requested_tool_names(loop_state)) != 1
+        or loop_state.scratchpad.get(WORKFLOW_OBSERVATION_ENABLED_KEY, False)
+    ):
+        return False
+    state = loop_ctx.state
+    if any(
+        (
+            state.plan is not None,
+            state.mission is not None,
+            bool(state.pending_jobs),
+            bool(state.child_tasks),
+            state.pending_confirmation_command is not None,
+            bool(state.delegation_job_id),
+            bool(state.delegation_task_id),
+            bool(state.delegation_target_agent_id),
+            bool(state.delegation_goal),
+        )
+    ):
+        return False
+    results = [
+        item
+        for item in list(loop_state.scratchpad.get("adaptive.tool_results", []) or [])
+        if isinstance(item, dict)
+    ]
+    if len(results) != 1:
+        return False
+    result = results[0]
+    data = result.get("data")
+    return bool(
+        result.get("ok")
+        and result.get("verified")
+        and result.get("job_pending") is False
+        and isinstance(data, dict)
+        and data.get("tool_blast_radius") == "read_only"
+        and _closure_tool_result_can_render_completely(result)
     )
 
 

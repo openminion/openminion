@@ -460,13 +460,11 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
                 break
             if outcome is not None:
                 return outcome
-
             action, outcome = self._handle_seeded_and_budget()
             if action == "continue":
                 continue
             if outcome is not None:
                 return outcome
-
             circular_outcome = self._handle_circular_pattern()
             if circular_outcome is not None:
                 return circular_outcome
@@ -675,6 +673,8 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
                 direct_tool_batch_completed_successfully=_direct_tool_batch_completed_successfully,
                 iteration_tool_sequences=self.iteration_tool_sequences,
             )
+            if outcome := self._maybe_compose_direct_tool_answer():
+                return outcome
 
         return finalize_iteration_cap_exit(
             self.loop_ctx,
