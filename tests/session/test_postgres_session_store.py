@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote_plus
 import uuid
@@ -184,3 +185,106 @@ def test_build_module_session_store_returns_postgres_store(tmp_path: Path) -> No
                 sqlalchemy.text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE')
             )
         admin_engine.dispose()
+
+
+@pytest.mark.postgres
+def test_postgres_cron_due_time_compares_microseconds_and_offsets(
+    tmp_path: Path,
+) -> None:
+    sqlalchemy, admin_engine, engine, schema_name, store = _open_postgres_session_store(
+        tmp_path
+    )
+    poll = datetime(2030, 11, 7, 12, 0, 0, 100000, tzinfo=timezone.utc)
+    try:
+        job_id = store.add_cron_job(
+            name="pg-microsecond",
+            schedule={"kind": "at", "at": "2036-01-01T00:00:00+00:00"},
+            payload={"kind": "systemEvent", "event_text": "pg-microsecond"},
+        )
+        store._record_store.execute_count(
+            "UPDATE cron_jobs SET next_due_at = ? WHERE job_id = ?",
+            ("2030-11-07T12:00:00.100001+00:00", job_id),
+        )
+
+        assert (
+            store.enqueue_due_cron_runs(
+                "daemon-pg", now_iso=poll.isoformat(), max_jobs=10
+            )
+            == []
+        )
+        stored = store.get_cron_job(job_id)
+        assert stored is not None
+        assert stored["next_due_at"] == "2030-11-07T12:00:00.100001+00:00"
+
+        # The same instant written in another offset is due at that instant only.
+        store._record_store.execute_count(
+            "UPDATE cron_jobs SET next_due_at = ? WHERE job_id = ?",
+            ("2030-11-08T02:00:00.100000+14:00", job_id),
+        )
+        queued = store.enqueue_due_cron_runs(
+            "daemon-pg", now_iso=poll.isoformat(), max_jobs=10
+        )
+        assert [run["job_id"] for run in queued] == [job_id]
+        assert queued[0]["due_at"] == "2030-11-07T12:00:00.100000+00:00"
+    finally:
+        try:
+            store.close()
+        finally:
+            engine.dispose()
+            with admin_engine.begin() as conn:
+                conn.execute(
+                    sqlalchemy.text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE')
+                )
+            admin_engine.dispose()
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    "stored_due",
+    [
+        "2030-11-07",
+        "2030-11-07T00:00",
+        "2030-11-07T00",
+        "2030-11-07T00Z",
+        "2030-11-07T02+02:00",
+        "2030-11-07T00:00Z",
+        "2030-11-07T02:00+02:00",
+        "2030-11-07 00:00:00",
+        "2030-11-07T00:00:00Z",
+        "2030-11-07T02:00:00+02:00",
+    ],
+)
+def test_postgres_cron_due_time_accepts_every_supported_spelling(
+    tmp_path: Path, stored_due: str
+) -> None:
+    # `parse_iso_datetime` accepts these forms, so PostgreSQL must compare them as
+    # instants too rather than treating a date-only or minute-only value as unreadable.
+    sqlalchemy, admin_engine, engine, schema_name, store = _open_postgres_session_store(
+        tmp_path
+    )
+    poll = datetime(2030, 11, 7, 0, 5, 0, tzinfo=timezone.utc)
+    try:
+        job_id = store.add_cron_job(
+            name="pg-spelling",
+            schedule={"kind": "at", "at": "2036-01-01T00:00:00+00:00"},
+            payload={"kind": "systemEvent", "event_text": "pg-spelling"},
+        )
+        store._record_store.execute_count(
+            "UPDATE cron_jobs SET next_due_at = ? WHERE job_id = ?",
+            (stored_due, job_id),
+        )
+        queued = store.enqueue_due_cron_runs(
+            "daemon-pg", now_iso=poll.isoformat(), max_jobs=10
+        )
+        assert [run["job_id"] for run in queued] == [job_id]
+        assert queued[0]["due_at"] == "2030-11-07T00:00:00+00:00"
+    finally:
+        try:
+            store.close()
+        finally:
+            engine.dispose()
+            with admin_engine.begin() as conn:
+                conn.execute(
+                    sqlalchemy.text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE')
+                )
+            admin_engine.dispose()
