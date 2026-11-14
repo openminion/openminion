@@ -31,8 +31,11 @@ def _current_turn_evidence(probe: FocusProbe, previous_ids: set[str]):
     ]
     assert len(phase_timings) == 1
     assert int(phase_timings[0]["provider_calls_total"]) <= 24
-    assert int(phase_timings[0]["provider_input_tokens"]) > 0
-    assert int(phase_timings[0]["provider_output_tokens"]) > 0
+    input_tokens = int(phase_timings[0]["provider_input_tokens"])
+    output_tokens = int(phase_timings[0]["provider_output_tokens"])
+    assert input_tokens > 0
+    assert output_tokens > 0
+    assert input_tokens + output_tokens <= 32_000
     assert sum(event.event_type == "tool.call.requested" for event in events) <= 32
     return events
 
