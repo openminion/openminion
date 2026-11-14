@@ -2,6 +2,7 @@ import json
 from typing import Any
 
 from openminion.base.redaction import redact_sensitive_text
+from openminion.modules.context.constants import JUDGE_ACTION_OUTPUTS_MAX_CHARS
 
 from ...constants import CLOSURE_TOOL_RESULT_PAYLOAD_MAX_CHARS
 from ...schemas.decisions import FinalizationStatus
@@ -11,10 +12,18 @@ _CLOSURE_TOOL_RESULT_DATA_KEYS = frozenset(
     {
         "artifact_ref",
         "artifact_refs",
+        "ok",
         "path",
         "mode",
         "bytes_written",
         "source",
+        "truncated",
+        "total_length",
+        "returned_length",
+        "version",
+        "content_sha256",
+        "next_offset",
+        "hint",
         "argv",
         "exit_code",
         "status",
@@ -22,6 +31,19 @@ _CLOSURE_TOOL_RESULT_DATA_KEYS = frozenset(
         "reason_code",
         "query_time",
         "url",
+        "tool_blast_radius",
+        "tool_min_scope",
+    }
+)
+_TOOL_EXECUTION_METADATA_KEYS = frozenset(
+    {
+        "model_tool_name",
+        "runtime_binding_id",
+        "runtime_tool_name",
+        "runtime_fallback_chain",
+        "runtime_fallback_used",
+        "runtime_resolution_source",
+        "tool_exposure",
     }
 )
 
@@ -74,6 +96,28 @@ def _closure_tool_result_snapshot(item: Any) -> dict[str, Any] | None:
         if filtered_data:
             normalized["data"] = filtered_data
     return normalized or None
+
+
+def _closure_tool_result_can_render_completely(item: Any) -> bool:
+    if not isinstance(item, dict) or not isinstance(item.get("data"), dict):
+        return False
+    snapshot = _closure_tool_result_snapshot(item)
+    evidence = {
+        key: value
+        for key, value in item["data"].items()
+        if key not in _TOOL_EXECUTION_METADATA_KEYS
+    }
+    if snapshot is None:
+        return False
+    tool_name = str(snapshot.get("tool_name", "") or "").strip()
+    closure_outputs = {
+        "tool_results": [snapshot],
+        "tool_execution_count": 1,
+        "tool_name_sequence": [tool_name] if tool_name else [],
+    }
+    return snapshot.get("data") == evidence and len(
+        json.dumps(closure_outputs, ensure_ascii=True, sort_keys=False)
+    ) <= JUDGE_ACTION_OUTPUTS_MAX_CHARS
 
 
 def _closure_action_outputs(action_result: ActionResult | None) -> dict[str, Any]:

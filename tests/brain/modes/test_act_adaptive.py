@@ -1791,6 +1791,144 @@ def test_act_adaptive_forces_answer_only_closure_for_direct_tool_turn() -> None:
     )
 
 
+@pytest.mark.parametrize("case", ["close", "continue", "replan", "repair_exhausted"])
+def test_act_adaptive_uses_judge_for_complete_read_only_direct_tool(
+    case: str,
+) -> None:
+    closure_disposition = "continue" if case == "repair_exhausted" else case
+    followup_responses = (
+        [
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="call-2",
+                        name="file.read",
+                        arguments={"path": "details.txt"},
+                    )
+                ],
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="README and details are both present.",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "Both requested files were read.",
+                },
+            ),
+        ]
+        if case != "close"
+        else [
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="# OpenMinion",
+            )
+        ]
+    )
+    llm_client = _FakeLLMClient(responses=followup_responses)
+    executor = _FakeCommandExecutor(
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="read README.md",
+                    outputs={
+                        "path": "README.md",
+                        "content": "# OpenMinion",
+                        "tool_blast_radius": "read_only",
+                    },
+                ),
+            ),
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="read details.txt",
+                    outputs={"content": "more details"},
+                ),
+            ),
+        ]
+    )
+    services = _FakeServices(
+        closure_judgment=ClosureJudgment(
+            satisfied=case == "close",
+            next_action=closure_disposition,
+            reason=(
+                "The README answer is complete."
+                if case == "close"
+                else (
+                    "all artifacts complete; closure_missing_final_answer"
+                    if case == "repair_exhausted"
+                    else "Read details.txt before closing."
+                )
+            ),
+            final_answer=("# OpenMinion" if case == "close" else ""),
+        ),
+        closure_disposition=closure_disposition,
+    )
+    ctx, services = _ctx(llm_client, executor, services=services)
+    services.runner = SimpleNamespace(
+        tool_api=None,
+        options=SimpleNamespace(failure_strategy="halt"),
+        _idempotency_key=lambda **_: "idem-direct-tool-judge",
+    )
+    ctx.user_input = 'tool file.read {"path":"README.md"}'
+    ctx.decision.reason_code = "entry_tool_call"
+    ctx.decision._entry_response = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="fake-model",
+        output_text="",
+        tool_calls=[
+            ToolCall(
+                id="call-1",
+                name="file.read",
+                arguments={"path": "README.md"},
+            )
+        ],
+    )
+
+    first_result = ActLoopMode().execute(ctx)
+
+    assert [call.args["path"] for call in executor.calls] == ["README.md"]
+    assert len(llm_client.calls) == 0
+    if case == "close":
+        assert first_result.status == "done"
+        assert first_result.message == "# OpenMinion"
+        return
+    assert first_result.status == "active"
+    assert "Do not restart from scratch" in ctx.state.post_action_user_message
+    services.closure_disposition = "close"
+    services.closure_judgment = ClosureJudgment(
+        satisfied=True,
+        next_action="close",
+        final_answer="README and details are both present.",
+    )
+    ctx.decision.reason_code = "adaptive_tool_work"
+    ctx.decision._entry_response = None
+    ctx.user_input = ""
+
+    final_result = ActLoopMode().execute(ctx)
+
+    assert final_result.status == "done"
+    assert final_result.message == "README and details are both present."
+    assert [call.args["path"] for call in executor.calls] == [
+        "README.md",
+        "details.txt",
+    ]
+    assert len(llm_client.calls) == 2
+
+
 def test_act_adaptive_injects_raw_intent_execution_state_block() -> None:
     llm_client = _FakeLLMClient(
         responses=[

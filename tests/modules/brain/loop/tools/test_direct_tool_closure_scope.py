@@ -8,6 +8,7 @@ from openminion.modules.brain.loop.tools.contracts import (
     DirectToolTurnContext,
 )
 from openminion.modules.brain.loop.tools.direct_tool import (
+    _can_compose_direct_tool_answer_with_judge,
     _direct_tool_batch_completed_successfully,
     _forced_tool_choice_for_direct_tool_turn,
     _should_force_direct_tool_closure,
@@ -24,6 +25,42 @@ def _state_for_requested_tools(*tool_names: str) -> AdaptiveToolLoopState:
             requested_calls=calls,
         ),
         direct_tool_requested_batch_satisfied=True,
+    )
+
+
+def _state_with_complete_read_result(**result_data: object) -> AdaptiveToolLoopState:
+    state = _state_for_requested_tools("file.read")
+    state.scratchpad["adaptive.tool_results"] = [
+        {
+            "tool_name": "file.read",
+            "ok": True,
+            "verified": True,
+            "job_pending": False,
+            "data": {
+                "path": "README.md",
+                "content": "# OpenMinion",
+                "tool_blast_radius": "read_only",
+                **result_data,
+            },
+        }
+    ]
+    return state
+
+
+def _loop_context() -> SimpleNamespace:
+    return SimpleNamespace(
+        decision_reason_code="entry_tool_call",
+        state=SimpleNamespace(
+            plan=None,
+            mission=None,
+            pending_jobs=[],
+            child_tasks={},
+            pending_confirmation_command=None,
+            delegation_job_id=None,
+            delegation_task_id=None,
+            delegation_target_agent_id=None,
+            delegation_goal="",
+        )
     )
 
 
@@ -44,6 +81,89 @@ def test_consumed_direct_tool_closure_does_not_force_again() -> None:
     state.direct_tool_closure_consumed = True
 
     assert _should_force_direct_tool_closure(state) is False
+
+
+def test_complete_read_only_result_can_use_closure_judge_answer() -> None:
+    state = _state_with_complete_read_result(
+        runtime_binding_id="runtime.file.read"
+    )
+
+    assert _can_compose_direct_tool_answer_with_judge(
+        loop_ctx=_loop_context(),
+        profile=SimpleNamespace(profile_name="general_adaptive_v1"),
+        loop_state=state,
+        active_task_plan=False,
+    )
+
+
+def test_unrepresented_result_data_keeps_answer_only_closure() -> None:
+    state = _state_for_requested_tools("file.list_dir")
+    state.scratchpad["adaptive.tool_results"] = [
+        {
+            "tool_name": "file.list_dir",
+            "ok": True,
+            "verified": True,
+            "job_pending": False,
+            "data": {
+                "path": ".",
+                "entries": ["src", "tests"],
+                "tool_blast_radius": "read_only",
+            },
+        }
+    ]
+
+    assert not _can_compose_direct_tool_answer_with_judge(
+        loop_ctx=_loop_context(),
+        profile=SimpleNamespace(profile_name="general_adaptive_v1"),
+        loop_state=state,
+        active_task_plan=False,
+    )
+
+
+def test_non_entry_direct_tool_result_keeps_answer_only_closure() -> None:
+    state = _state_with_complete_read_result()
+    loop_ctx = _loop_context()
+    loop_ctx.decision_reason_code = "adaptive_tool_work"
+
+    assert not _can_compose_direct_tool_answer_with_judge(
+        loop_ctx=loop_ctx,
+        profile=SimpleNamespace(profile_name="general_adaptive_v1"),
+        loop_state=state,
+        active_task_plan=False,
+    )
+
+
+def test_active_task_plan_keeps_answer_only_closure() -> None:
+    state = _state_with_complete_read_result()
+
+    assert not _can_compose_direct_tool_answer_with_judge(
+        loop_ctx=_loop_context(),
+        profile=SimpleNamespace(profile_name="general_adaptive_v1"),
+        loop_state=state,
+        active_task_plan=True,
+    )
+
+
+def test_result_that_would_truncate_in_judge_context_keeps_answer_only_closure() -> None:
+    state = _state_with_complete_read_result(content="🌍" * 250 + "FINAL_FACT")
+
+    assert not _can_compose_direct_tool_answer_with_judge(
+        loop_ctx=_loop_context(),
+        profile=SimpleNamespace(profile_name="general_adaptive_v1"),
+        loop_state=state,
+        active_task_plan=False,
+    )
+
+
+def test_long_rendered_metadata_keeps_answer_only_closure() -> None:
+    state = _state_with_complete_read_result(path="nested/" + "a" * 1900)
+
+    assert not _can_compose_direct_tool_answer_with_judge(
+        loop_ctx=_loop_context(),
+        profile=SimpleNamespace(profile_name="general_adaptive_v1"),
+        loop_state=state,
+        active_task_plan=False,
+    )
 
 
 def test_single_remaining_direct_tool_forces_provider_tool_choice() -> None:
