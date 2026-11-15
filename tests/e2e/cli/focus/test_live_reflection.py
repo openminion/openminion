@@ -194,8 +194,9 @@ def test_live_focus_reflection_coding_repair(
         "from slug import slug\n\n\n"
         "def test_slug_spaces() -> None:\n"
         '    result = slug("A B")\n'
-        '    if result != "a-b":\n'
-        '        Path(".initial-failure-observed").write_text(result)\n'
+        '    marker = Path(".initial-failure-observed")\n'
+        '    if result != "a-b" and not marker.exists():\n'
+        "        marker.write_text(result)\n"
         '    assert result == "a-b"\n'
     )
     test_path.write_text(original_test, encoding="utf-8")

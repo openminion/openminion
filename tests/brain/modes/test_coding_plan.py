@@ -171,6 +171,7 @@ def test_coding_plan_keeps_cohesive_workspace_changes_in_one_loop() -> None:
     assert "completed and verified in sequence" in prompt
     assert "use only implement -> verify" in prompt
     assert "do not create a second plan with the plan tool" in prompt
+    assert "validation command before any edit" in prompt
     assert "not a success criterion or deliverable" in prompt
 
 
