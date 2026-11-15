@@ -645,6 +645,14 @@ class ActLoopFinalizationMixin:
         )
         if error_result:
             return error_result
+        if judgment is None:
+            message = "Completion could not be verified."
+            return ExecutionResult(
+                status=BRAIN_STATE_ERROR,
+                working_state=ctx.state,
+                message=message,
+                action_result=_build_error_result(message, "act_closure_failed"),
+            )
         if (
             requires_typed_finalization
             and not isinstance(loop_outcome.finalization_status, dict)
@@ -671,6 +679,19 @@ class ActLoopFinalizationMixin:
             return cast(
                 ExecutionResult,
                 self._autonomous_seeded_result(ctx, action_result=final_action),
+            )
+        if disposition != BRAIN_DISPOSITION_CLOSE:
+            message = (
+                str(judgment.reason or "").strip() or "Completion needs more work."
+            )
+            return ExecutionResult(
+                status=BRAIN_STATE_WAITING_USER,
+                working_state=ctx.state,
+                message=message,
+                action_result=_build_blocked_result(
+                    message,
+                    "act_closure_not_accepted",
+                ),
             )
         final_text = _finalize_closed_observation(
             ctx,

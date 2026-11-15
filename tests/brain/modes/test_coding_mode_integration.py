@@ -783,6 +783,38 @@ def test_coding_loop_single_tool_then_final_text() -> None:
     assert handler._loop_state.scratchpad["tool_schema_shortlisting.active_count"] == 7
 
 
+def test_coding_final_text_does_not_close_when_closure_fails() -> None:
+    services = _FakeServices()
+    services.evaluate_turn_closure = MagicMock(
+        side_effect=ValueError("invalid closure")
+    )
+    result = CodingMode().execute(
+        _ctx(
+            _FakeLLMClient(
+                responses=[
+                    _read_only_plan_response(),
+                    LLMResponse(
+                        ok=True,
+                        provider="fake",
+                        model="fake-model",
+                        output_text="Inspection complete.",
+                        finish_reason="stop",
+                    ),
+                ]
+            ),
+            _FakeCommandExecutor(),
+            services=services,
+        )
+    )
+
+    assert result.status == "waiting_user"
+    assert result.action_result is not None
+    assert result.action_result.error is not None
+    assert result.action_result.error.code == "coding_closure_failed"
+    assert "coding" in result.working_state.module_state
+    assert not any(status.get("mode_state") == "done" for status in services.statuses)
+
+
 def test_coding_loop_delivers_steering_after_seeded_tool_before_next_call() -> None:
     state = _state().model_copy(update={"trace_id": "trace-steering"})
     queue_ids = iter(("steer-1", "steer-2"))

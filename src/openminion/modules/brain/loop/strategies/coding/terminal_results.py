@@ -128,20 +128,12 @@ def _exit_final_text(
     *,
     build_blocked_result: BuildBlockedResult,
 ) -> ExecutionResult:
-    del build_blocked_result
     telemetry_payload = loop.telemetry_payload(allowed_tools)
     final_action = ActionResult(
         command_id=new_uuid(),
         status=BRAIN_ACTION_STATUS_SUCCESS,
         summary=output_text or "[act:coding] done",
         outputs=telemetry_payload,
-    )
-
-    _emit_loop_status(
-        ctx,
-        detail_text="[act:coding] done",
-        mode_state="done",
-        telemetry_payload=telemetry_payload,
     )
 
     judgment = None
@@ -164,6 +156,36 @@ def _exit_final_text(
         runner._append_phase_instruction(ctx)
         runner._sync_coding_module_state(ctx)
         return _exit_continue(runner, ctx, allowed_tools=allowed_tools)
+
+    if not revision_only and disposition != BRAIN_DISPOSITION_CLOSE:
+        message = "[act:coding] completion could not be verified."
+        if judgment is not None and str(judgment.reason or "").strip():
+            message = f"[act:coding] completion not accepted: {judgment.reason.strip()}"
+        blocked_result = build_blocked_result(message, "coding_closure_failed")
+        blocked_result.outputs = telemetry_payload
+        _emit_loop_status(
+            ctx,
+            detail_text=message,
+            mode_state="blocked",
+            telemetry_payload=telemetry_payload,
+        )
+        runner._sync_coding_module_state(ctx)
+        runner._finalize_checkpoint(ctx, terminal=False, cursor=loop.iteration)
+        return ExecutionResult.from_step_output(
+            ctx.respond(
+                message=message,
+                status=BRAIN_STATE_WAITING_USER,
+                action_result=blocked_result,
+            ),
+            judgment=judgment,
+        )
+
+    _emit_loop_status(
+        ctx,
+        detail_text="[act:coding] done",
+        mode_state="done",
+        telemetry_payload=telemetry_payload,
+    )
 
     runner._clear_coding_module_state(ctx)
     step_output = ctx.respond(

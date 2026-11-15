@@ -37,6 +37,18 @@ def _current_turn_evidence(probe: FocusProbe, previous_ids: set[str]):
     return events
 
 
+def _assert_accepted_closure(events) -> None:
+    closures = [
+        event
+        for event in events
+        if event.event_type
+        in {"brain.closure_gate.completed", "brain.closure_gate.failed"}
+    ]
+    assert closures and closures[-1].event_type == "brain.closure_gate.completed"
+    assert closures[-1].data.get("satisfied") is True
+    assert closures[-1].data.get("next_action") == "close"
+
+
 @pytest.mark.parametrize("run_number", (1, 2))
 def test_live_focus_reflection_clean_turn(
     focus_probe: FocusProbe,
@@ -238,4 +250,5 @@ def test_live_focus_reflection_coding_repair(
         transcript=transcript,
         python_bin=focus_probe.python_bin,
     )
-    _current_turn_evidence(probe, previous_ids)
+    events = _current_turn_evidence(probe, previous_ids)
+    _assert_accepted_closure(events)
