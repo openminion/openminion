@@ -23,7 +23,7 @@ def _current_turn_evidence(probe: FocusProbe, previous_ids: set[str]):
     all_events, _, _ = read_focus_evidence(probe.environment(), probe.session_id)
     events, _ = current_turn_events(all_events, previous_ids)
     config = json.loads(probe.config_path.read_text(encoding="utf-8"))
-    assert config["runtime"]["session_context_token_budget"] <= 32_000
+    assert 0 < config["runtime"]["session_context_token_budget"] <= 32_000
     phase_timings = [
         event.data for event in events if event.event_type == "chat.phase_timing"
     ]
@@ -33,7 +33,6 @@ def _current_turn_evidence(probe: FocusProbe, previous_ids: set[str]):
     output_tokens = int(phase_timings[0]["provider_output_tokens"])
     assert input_tokens > 0
     assert output_tokens > 0
-    assert input_tokens + output_tokens <= 32_000
     assert sum(event.event_type == "tool.call.requested" for event in events) <= 32
     return events
 

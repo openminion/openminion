@@ -10060,6 +10060,26 @@ def test_general_loop_clears_policy_denied_exec_after_suggested_tool_succeeds() 
     assert not outcome.state.scratchpad.get("unresolved_exec_failure_retry_used", False)
 
 
+def test_general_loop_accepts_range_read_after_policy_denied_file_read() -> None:
+    denied = _policy_denied_exec_result()
+    assert denied.error is not None
+    denied.error.details["suggested_tool"] = "file.read"
+    outcome = _run_general_loop_with_tool_results(
+        [
+            ("exec.run", {"command": "cat README.md"}, denied),
+            (
+                "file.read_range",
+                {"path": "README.md", "start_line": 1, "end_line": 5},
+                _tool_result(status="success", summary="file content"),
+            ),
+        ]
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "Workspace inspected."
+    assert not outcome.state.scratchpad.get("unresolved_exec_failure_retry_used", False)
+
+
 def test_general_loop_does_not_clear_policy_denial_with_different_tool() -> None:
     outcome = _run_general_loop_with_tool_results(
         [

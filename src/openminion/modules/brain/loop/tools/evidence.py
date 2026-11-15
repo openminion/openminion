@@ -94,8 +94,13 @@ def _has_unresolved_tool_failure(
     suggested_tool = _normalized_tool_name(error_details.get("suggested_tool"))
     if not suggested_tool:
         return True
+    accepted_tools = (
+        {"file.read", "file.read_range"}
+        if suggested_tool == "file.read"
+        else {suggested_tool}
+    )
     return not any(
-        _normalized_tool_name(item.get("tool_name")) == suggested_tool
+        _normalized_tool_name(item.get("tool_name")) in accepted_tools
         and bool(item.get("ok"))
         for item in tool_results[latest_index + 1 :]
     )

@@ -1356,9 +1356,11 @@ def test_coding_plan_skips_repo_context_when_user_says_not_to_inspect_first() ->
                   "completed_steps": [],
                   "open_issues": [],
                   "requires_file_change": true,
+                  "verifier_goal": %s,
                   "subtasks": []
                 }
                 """
+                % json.dumps(_coding_verifier_goal().model_dump(mode="json"))
             ),
             LLMResponse(
                 ok=True,
@@ -2171,7 +2173,7 @@ def test_coding_verify_gate_blocks_when_bound_verification_is_missing() -> None:
     )
 
 
-def test_coding_verify_phase_blocks_when_verifier_goal_is_unbound() -> None:
+def test_coding_planner_rejects_file_change_without_verifier_goal() -> None:
     executor = _FakeCommandExecutor(
         outcomes=[
             CommandExecutionOutcome(
@@ -2262,15 +2264,11 @@ def test_coding_verify_phase_blocks_when_verifier_goal_is_unbound() -> None:
 
     result = CodingMode().execute(_ctx(llm_client, executor, services=services))
 
-    assert result.status == "waiting_user"
-    assert result.action_result.outputs["coding.verifier_verdict"] == (
-        "verification_unbound"
-    )
-    assert any(
-        status.get("payload", {}).get("coding.verify_gate_reason")
-        == "verification_unbound"
-        for status in services.statuses
-    )
+    assert result.status == "error"
+    assert result.action_result is not None
+    assert result.action_result.error is not None
+    assert result.action_result.error.code == "coding_plan_invalid"
+    assert executor.calls == []
 
 
 def test_coding_verify_phase_uses_typed_verifier_before_done() -> None:

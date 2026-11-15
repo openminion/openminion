@@ -27,6 +27,10 @@ from .plan import CodingPlan
 from .runtime import _build_error_result
 
 
+def _plan_has_required_verifier(plan: CodingPlan) -> bool:
+    return not plan.requires_file_change or plan.verifier_goal is not None
+
+
 class CodingPlanningMixin:
     def _initialize_plan(
         self: Any,
@@ -47,7 +51,7 @@ class CodingPlanningMixin:
             purpose="plan",
             max_tokens=2000,
         )
-        if isinstance(plan, CodingPlan):
+        if isinstance(plan, CodingPlan) and _plan_has_required_verifier(plan):
             self._apply_plan_to_scratchpad(plan)
             return plan
         response = runtime.complete(
@@ -61,7 +65,7 @@ class CodingPlanningMixin:
             metadata=build_loop_thinking_metadata(ctx, purpose="plan"),
         )
         fallback_plan = self._plan_from_response(response=response)
-        if fallback_plan is not None:
+        if fallback_plan is not None and _plan_has_required_verifier(fallback_plan):
             self._apply_plan_to_scratchpad(fallback_plan)
             return fallback_plan
         return self._invalid_plan_result(ctx)
