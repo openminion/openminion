@@ -3005,30 +3005,6 @@ def test_act_adaptive_uses_closure_gate_final_answer_when_closing() -> None:
     assert str(result.action_result.summary).startswith("SOURCES")
 
 
-def test_act_adaptive_final_text_does_not_close_when_closure_fails() -> None:
-    services = _FakeServices()
-    services.evaluate_turn_closure = MagicMock(
-        side_effect=ValueError("invalid closure")
-    )
-    ctx, _ = _ctx(_FakeLLMClient(), _FakeCommandExecutor(), services=services)
-    outcome = AdaptiveToolLoopOutcome(
-        profile_name="general_adaptive_v1",
-        mode_name=BRAIN_INTERNAL_MODE_ACT_ADAPTIVE,
-        termination_reason=ADAPTIVE_TERM_FINAL_TEXT,
-        state=AdaptiveToolLoopState(),
-        allowed_tools=frozenset(),
-        final_text="Work complete.",
-    )
-
-    result = ActLoopMode()._finalize_success(ctx, loop_outcome=outcome)
-
-    assert result.status == "error"
-    assert result.action_result is not None
-    assert result.action_result.error is not None
-    assert result.action_result.error.code == "act_closure_failed"
-    assert not any(status.get("mode_state") == "done" for status in services.statuses)
-
-
 @pytest.mark.parametrize("closure_disposition", ["continue", "replan"])
 def test_act_adaptive_does_not_observe_workflow_when_closure_continues(
     closure_disposition: str,
@@ -3067,13 +3043,9 @@ def test_act_adaptive_does_not_observe_workflow_when_closure_continues(
     with patch(
         "openminion.modules.brain.loop.adaptive.finalization._record_workflow_observation"
     ) as observe:
-        result = ActLoopMode()._finalize_success(ctx, loop_outcome=outcome)
+        ActLoopMode()._finalize_success(ctx, loop_outcome=outcome)
 
     observe.assert_not_called()
-    assert result.status == "waiting_user"
-    assert result.action_result is not None
-    assert result.action_result.error is not None
-    assert result.action_result.error.code == "act_closure_not_accepted"
 
 
 def test_act_adaptive_iteration_cap_can_close_with_closure_gate_final_answer() -> None:

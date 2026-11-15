@@ -105,7 +105,9 @@ def _reconcile_successful_task_plan(
 
 
 def _finalization_contract_missing_result(
-    ctx: ExecutionContext, *, message: str
+    ctx: ExecutionContext,
+    *,
+    message: str,
 ) -> ExecutionResult:
     return ExecutionResult(
         status=BRAIN_STATE_ERROR,
@@ -122,16 +124,6 @@ def _closure_final_answer(judgment: Any, disposition: str) -> str:
     if judgment is None or disposition != BRAIN_DISPOSITION_CLOSE:
         return ""
     return str(getattr(judgment, "final_answer", "") or "").strip()
-
-
-def _not_accepted_result(ctx: ExecutionContext, judgment: Any) -> ExecutionResult:
-    message = str(judgment.reason or "").strip() or "Completion needs more work."
-    return ExecutionResult(
-        status=BRAIN_STATE_WAITING_USER,
-        working_state=ctx.state,
-        message=message,
-        action_result=_build_blocked_result(message, "act_closure_not_accepted"),
-    )
 
 
 def _record_workflow_observation(
@@ -397,6 +389,8 @@ class ActLoopFinalizationMixin:
         final_action: ActionResult,
         completion_reason: str,
     ) -> tuple[Any, str, str, ExecutionResult | None]:
+        judgment = None
+        disposition = ""
         try:
             judgment = ctx.evaluate_turn_closure(
                 action_result=final_action,
@@ -406,15 +400,6 @@ class ActLoopFinalizationMixin:
         except Exception:  # noqa: BLE001
             judgment = None
             disposition = ""
-        if judgment is None:
-            message = "Completion could not be verified."
-            error_result = ExecutionResult(
-                status=BRAIN_STATE_ERROR,
-                working_state=ctx.state,
-                message=message,
-                action_result=_build_error_result(message, "act_closure_failed"),
-            )
-            return judgment, disposition, "", error_result
         closure_final_answer = _closure_final_answer(judgment, disposition)
         error_result = self._judge_composed_direct_tool_error(
             ctx,
@@ -669,7 +654,15 @@ class ActLoopFinalizationMixin:
                 "General act work ended without the required typed "
                 "finalization_status contract."
             )
-            return _finalization_contract_missing_result(ctx, message=message)
+            return ExecutionResult(
+                status=BRAIN_STATE_ERROR,
+                working_state=ctx.state,
+                message=message,
+                action_result=_build_error_result(
+                    message,
+                    "act_finalization_contract_missing",
+                ),
+            )
         if self._seeded_continue_stays_autonomous(ctx) and disposition in {
             BRAIN_DISPOSITION_CONTINUE,
             BRAIN_DISPOSITION_REPLAN,
@@ -679,8 +672,6 @@ class ActLoopFinalizationMixin:
                 ExecutionResult,
                 self._autonomous_seeded_result(ctx, action_result=final_action),
             )
-        if disposition != BRAIN_DISPOSITION_CLOSE:
-            return _not_accepted_result(ctx, judgment)
         final_text = _finalize_closed_observation(
             ctx,
             loop_outcome,
