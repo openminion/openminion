@@ -58,6 +58,7 @@ from openminion.modules.brain.schemas import (
     ToolCommand,
     WorkingState,
 )
+from openminion.modules.brain.schemas.closure import ClosureJudgment
 from openminion.modules.llm.schemas import LLMResponse, Message, ToolCall, ToolSpec
 
 
@@ -3166,8 +3167,11 @@ class TestCodingVerificationReserve:
         ctx = SimpleNamespace(
             state=SimpleNamespace(task_backed_checkpoint_id=None),
             emit_status=lambda **kwargs: None,
-            evaluate_turn_closure=lambda **kwargs: None,
-            apply_closure_judgment=lambda **kwargs: None,
+            evaluate_turn_closure=lambda **kwargs: ClosureJudgment(
+                satisfied=True,
+                next_action="close",
+            ),
+            apply_closure_judgment=lambda **kwargs: "close",
             respond=lambda **kwargs: SimpleNamespace(
                 kind="assistant",
                 working_state=ctx.state,
