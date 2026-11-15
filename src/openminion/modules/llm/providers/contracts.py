@@ -90,6 +90,7 @@ class ProviderResponse:
     finish_reason: str = ""
     normalization: dict[str, Any] = field(default_factory=dict)
     thinking: list[ThinkingBlock] = field(default_factory=list)
+    assistant_meta: dict[str, Any] = field(default_factory=dict)
     cost_usd: float | None = None
     cost_source: Literal["provider", "estimated"] | None = None
 
@@ -103,6 +104,21 @@ class ProviderResponse:
     def raise_for_recovered_empty(self, message: str) -> None:
         if self.empty_payload_recovered:
             raise ProviderError(message, code="EMPTY_PROVIDER_RESPONSE")
+
+
+def assistant_message_meta(response: Any) -> dict[str, Any]:
+    messages = list(getattr(response, "assistant_messages", []) or [])
+    return dict(getattr(messages[-1], "meta", {}) or {}) if messages else {}
+
+
+def response_contract_metadata(response: Any) -> dict[str, Any]:
+    return {
+        "llm_response_contract_version": str(
+            getattr(response, "contract_version", "v1")
+        ),
+        "empty_payload_recovered": getattr(response, "empty_payload_recovered", False)
+        is True,
+    }
 
 
 @runtime_checkable

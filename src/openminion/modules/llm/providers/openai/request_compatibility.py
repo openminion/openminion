@@ -19,6 +19,9 @@ from openminion.modules.llm.providers.behavior.constants import (
 )
 
 from ...constants import LLM_TOOL_CHOICE_REQUIRED
+from ...reasoning.constants import MINIMAX_REASONING_EFFORT_MODELS
+from ...schemas import LLMRequest
+from ..tool_calling import normalize_tool_choice
 
 
 @dataclass(frozen=True)
@@ -30,12 +33,69 @@ class OpenAIRequestCompatProfile:
     include_stream_tool_contract: bool = False
     disable_adapter_retries: bool = False
     preserve_tool_arguments: bool = False
+    preserve_reasoning_content: bool = False
     native_tool_only_instruction: str = ""
     enable_structured_tool_envelope_parse: bool = False
     retry_empty_payload_once: bool = False
     retry_tool_transcript_error_once: bool = False
     empty_payload_retry_instruction: str = ""
     force_single_required_tool: bool = False
+
+
+def apply_openai_reasoning_effort(
+    payload: dict[str, Any], request: LLMRequest, profile: OpenAIRequestCompatProfile
+) -> None:
+    if profile.profile_id != "minimax_openai_compat":
+        return
+    if str(payload.get("model") or "").strip().lower() not in (
+        MINIMAX_REASONING_EFFORT_MODELS
+    ):
+        return
+    effort = {"minimal": "low", "detailed": "high"}.get(
+        str(request.metadata.get("thinking_provider_effort") or "").strip().lower()
+    )
+    if effort:
+        payload["reasoning_effort"] = effort
+
+
+def apply_openai_completion_options(
+    payload: dict[str, Any], request: LLMRequest, profile: OpenAIRequestCompatProfile
+) -> None:
+    if request.temperature is not None:
+        payload["temperature"] = request.temperature
+    if request.top_p is not None:
+        payload["top_p"] = request.top_p
+    if request.max_output_tokens is not None:
+        payload["max_tokens"] = request.max_output_tokens
+    if request.stop:
+        payload["stop"] = request.stop
+    apply_openai_reasoning_effort(payload, request, profile)
+
+
+def openai_tool_choice(
+    request: LLMRequest,
+    *,
+    profile: OpenAIRequestCompatProfile,
+    tool_name_map: Any,
+) -> Any:
+    canonical_to_external = (
+        tool_name_map.canonical_to_external if tool_name_map else None
+    )
+    normalized = normalize_tool_choice(
+        request.tool_choice,
+        canonical_to_external=canonical_to_external,
+    )
+    if (
+        normalized == LLM_TOOL_CHOICE_REQUIRED
+        and profile.force_single_required_tool
+        and request.tools
+        and len(request.tools) == 1
+    ):
+        return normalize_tool_choice(
+            {"name": request.tools[0].name},
+            canonical_to_external=canonical_to_external,
+        )
+    return normalized
 
 
 def resolve_openai_request_compat(
@@ -61,6 +121,7 @@ def resolve_openai_request_compat(
             profile_id="minimax_openai_compat",
             collapse_system_messages=True,
             disable_fallback_instruction=True,
+            preserve_reasoning_content=True,
             include_stream_tool_contract=False,
             enable_structured_tool_envelope_parse=True,
             retry_empty_payload_once=True,

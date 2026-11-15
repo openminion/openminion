@@ -281,7 +281,7 @@ def test_different_openai_compatible_service_does_not_reuse_global_model(
         existing_config=existing,
     )
 
-    assert result.model_choice.selected_model == "MiniMax-M2.7"
+    assert result.model_choice.selected_model == "MiniMax-M3.1-Flash"
     assert result.model_choice.source == "recommended"
 
 

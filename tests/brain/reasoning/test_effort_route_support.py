@@ -13,9 +13,7 @@ from openminion.modules.llm.providers.adapters import (
 )
 from openminion.modules.llm.schemas import LLMRequest, Message
 
-# Payload keys that would indicate a provider effort was transmitted to the
-# upstream provider. None of the direct OpenAI/Anthropic/Groq/Cerebras/
-# OpenRouter adapters emit these; only ollama maps the effort to `think`.
+# Payload keys that would indicate a provider effort was transmitted upstream.
 _EFFORT_PAYLOAD_KEYS = (
     "thinking",
     "reasoning",
@@ -40,13 +38,19 @@ _OLLAMA_RESPONSE = {
 }
 
 
-def _resolve(*, provider: str, route: str | None, profile: str = "detailed"):
+def _resolve(
+    *,
+    provider: str,
+    route: str | None,
+    profile: str = "detailed",
+    model: str = "example-model",
+):
     return resolve_thinking(
         request=ThinkingRequest(
             purpose="unit_test",
             requested_profile=profile,
             provider=provider,
-            model="example-model",
+            model=model,
             route=route,
         ),
         layers=ThinkingResolutionInput(code_default_profile="minimal"),
@@ -60,6 +64,22 @@ def test_direct_openai_route_degrades_provider_effort() -> None:
     assert resolved.supported is False
     assert resolved.provider_effort is None
     assert resolved.degraded_reason == "provider_effort_unsupported"
+
+
+def test_direct_minimax_route_keeps_provider_effort_supported() -> None:
+    resolved = _resolve(provider="openai", route="direct", model="MiniMax-M3.1-Flash")
+
+    assert resolved.supported is True
+    assert resolved.provider_effort == "detailed"
+    assert resolved.degraded_reason is None
+
+
+def test_direct_other_minimax_models_do_not_claim_effort_support() -> None:
+    for model in ("MiniMax-M3", "MiniMax-M2.7"):
+        resolved = _resolve(provider="openai", route="direct", model=model)
+
+        assert resolved.supported is False
+        assert resolved.provider_effort is None
 
 
 def test_bridge_openai_route_keeps_provider_effort_supported() -> None:
@@ -129,7 +149,14 @@ def test_direct_openai_adapter_does_not_transmit_effort() -> None:
     request = LLMRequest(
         provider="openai",
         model="gpt-4.1-mini",
-        messages=[Message(role="user", content="hello")],
+        messages=[
+            Message(role="user", content="hello"),
+            Message(
+                role="assistant",
+                content="prior answer",
+                meta={"reasoning_content": "private MiniMax state"},
+            ),
+        ],
         metadata={"thinking_provider_effort": "detailed", "thinking": "detailed"},
     )
 
@@ -146,6 +173,36 @@ def test_direct_openai_adapter_does_not_transmit_effort() -> None:
     assert isinstance(payload, dict)
     for key in _EFFORT_PAYLOAD_KEYS:
         assert key not in payload
+    assert "reasoning_content" not in payload["messages"][-1]
+
+
+def test_direct_minimax_adapter_transmits_reasoning_effort() -> None:
+    provider = OpenAIProvider()
+    captured: dict[str, object] = {}
+
+    def fake_post(**kwargs):
+        captured.update(kwargs)
+        return {**_OPENAI_RESPONSE, "model": "MiniMax-M3.1-Flash"}
+
+    request = LLMRequest(
+        provider="openai",
+        model="MiniMax-M3.1-Flash",
+        messages=[Message(role="user", content="hello")],
+        metadata={"thinking_provider_effort": "detailed"},
+    )
+
+    with patch(
+        "openminion.modules.llm.providers.openai.adapter._http_json_post",
+        side_effect=fake_post,
+    ):
+        provider.complete(
+            request,
+            {"api_key": "test-key", "base_url": "https://api.minimax.io/v1"},
+        )
+
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["reasoning_effort"] == "high"
 
 
 def test_ollama_adapter_transmits_effort_as_think_flag() -> None:

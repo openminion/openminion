@@ -29,6 +29,8 @@ from openminion.modules.llm.providers.base import (
     ProviderResponse,
     ProviderToolCall,
     ProviderToolSpec,
+    assistant_message_meta,
+    response_contract_metadata,
 )
 from openminion.modules.llm.providers.envelope_v2 import CONTRACT_VERSION_V2
 from openminion.modules.llm.providers.normalization import normalize_provider_response
@@ -715,12 +717,9 @@ class AgentService(AgentTurnFlowMixin):
                 )
             )
 
-        contract_version = str(getattr(response, "contract_version", "v1"))
-        recovered_empty = getattr(response, "empty_payload_recovered", False) is True
         normalization = {
             "adapter": "llm_runtime_client",
-            "llm_response_contract_version": contract_version,
-            "empty_payload_recovered": recovered_empty,
+            **response_contract_metadata(response),
         }
         if retry_override_id:
             normalization["provider_retry_override"] = retry_override_id
@@ -733,6 +732,7 @@ class AgentService(AgentTurnFlowMixin):
             finish_reason=str(getattr(response, "finish_reason", "") or ""),
             normalization=normalization,
             thinking=list(getattr(response, "thinking", []) or []),
+            assistant_meta=assistant_message_meta(response),
             cost_usd=getattr(response, "cost_usd", None),
             cost_source=getattr(response, "cost_source", None),
         )
