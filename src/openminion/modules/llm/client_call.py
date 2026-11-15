@@ -504,6 +504,7 @@ def llm_response_kwargs(
                 role="assistant",
                 content=str(resp.text or ""),
                 tool_calls=tool_calls,
+                meta=dict(resp.assistant_meta),
             )
         )
     return {

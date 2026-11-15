@@ -186,6 +186,99 @@ class ProviderHTTPTests(unittest.TestCase):
             == "I should inspect the weather tool first."
         )
 
+    def test_minimax_preserves_and_replays_reasoning_content(self) -> None:
+        provider = OpenAIProvider()
+        request = LLMRequest.model_validate(
+            {
+                "model": "MiniMax-M3.1-Flash",
+                "messages": [{"role": "user", "content": "use the weather tool"}],
+                "tools": [
+                    {
+                        "name": "weather",
+                        "description": "Read the weather",
+                        "input_schema": {"type": "object"},
+                    }
+                ],
+            }
+        )
+        payload = {
+            "model": "MiniMax-M3.1-Flash",
+            "choices": [
+                {
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "content": "",
+                        "reasoning_content": "I should inspect the weather.",
+                        "tool_calls": [
+                            {
+                                "id": "call-1",
+                                "type": "function",
+                                "function": {
+                                    "name": "weather",
+                                    "arguments": "{}",
+                                },
+                            }
+                        ],
+                    },
+                }
+            ],
+        }
+
+        with patch(
+            "openminion.modules.llm.providers.adapters.urllib_request.urlopen",
+            return_value=_FakeHTTPResponse(payload),
+        ):
+            response = provider.complete(
+                request,
+                {"api_key": "test-key", "base_url": "https://api.minimax.io/v1"},
+            )
+
+        assert response.thinking[0]["content"] == "I should inspect the weather."
+        assistant = response.assistant_messages[0]
+        assert assistant.meta["reasoning_content"] == "I should inspect the weather."
+
+        replay_request = request.model_copy(
+            update={
+                "messages": [
+                    *request.messages,
+                    assistant,
+                    Message(
+                        role="tool",
+                        content='{"temperature": 72}',
+                        tool_call_id="call-1",
+                        tool_status="success",
+                    ),
+                ]
+            }
+        )
+        captured: dict[str, object] = {}
+
+        def fake_post(**kwargs):
+            captured.update(kwargs)
+            return {
+                "model": "MiniMax-M3.1-Flash",
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"content": "Done"},
+                    }
+                ],
+            }
+
+        with patch(
+            "openminion.modules.llm.providers.openai.adapter._http_json_post",
+            side_effect=fake_post,
+        ):
+            provider.complete(
+                replay_request,
+                {"api_key": "test-key", "base_url": "https://api.minimax.io/v1"},
+            )
+
+        sent_assistant = captured["payload"]["messages"][-2]
+        assert sent_assistant["reasoning_content"] == "I should inspect the weather."
+        assert sent_assistant["tool_calls"][0]["id"] == "call-1"
+        assert captured["payload"]["messages"][-1]["tool_call_id"] == "call-1"
+
     def test_openai_preserves_inline_think_blocks_from_openai_compatible_content(
         self,
     ) -> None:

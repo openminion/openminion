@@ -27,6 +27,8 @@ THINKING_ROUTE_DIRECT = "direct"
 THINKING_ROUTE_BRIDGE = "bridge"
 THINKING_ROUTE_OLLAMA = "ollama"
 
+MINIMAX_REASONING_EFFORT_MODELS = frozenset({"minimax-m3.1-flash"})
+
 THINKING_DEGRADE_UNKNOWN_PROFILE = "unknown_reasoning_profile_normalized"
 THINKING_DEGRADE_PROVIDER_UNSUPPORTED = "provider_effort_unsupported"
 THINKING_DEGRADE_MODE_CLAMP = "mode_policy_clamp"

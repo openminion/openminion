@@ -41,10 +41,7 @@ def test_setup_catalog_covers_required_provider_matrix() -> None:
     assert preset_by_id["minimax"].runtime_adapter == "openai"
     assert preset_by_id["minimax"].api_format_id == "openai-compatible"
     assert preset_by_id["minimax"].credential_env == "MINIMAX_API_KEY"
-    assert preset_by_id["minimax"].recommended_models == (
-        "MiniMax-M2.7",
-        "MiniMax-M2.7-highspeed",
-    )
+    assert preset_by_id["minimax"].recommended_models == ("MiniMax-M3.1-Flash",)
     assert preset_by_id["anthropic"].recommended_models == ("claude-sonnet-5",)
     assert preset_by_id["kimi"].default_base_url == "https://api.moonshot.ai/v1"
     assert preset_by_id["anthropic"].api_format_id == "anthropic-messages"
@@ -164,11 +161,11 @@ def test_catalog_recommendation_keeps_recommended_source_when_selected() -> None
 
     result = resolve_model_choice(
         preset=preset,
-        manual_model="MiniMax-M2.7-highspeed",
+        manual_model="MiniMax-M3.1-Flash",
     )
 
     assert result.source == "recommended"
-    assert result.models == ("MiniMax-M2.7-highspeed",)
+    assert result.models == ("MiniMax-M3.1-Flash",)
 
 
 def test_primary_provider_defaults_match_setup_recommendations() -> None:

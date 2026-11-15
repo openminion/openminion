@@ -159,7 +159,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         api_format_id="openai-compatible",
         default_base_url="https://api.minimax.io/v1",
         credential_env="MINIMAX_API_KEY",
-        recommended_models=("MiniMax-M2.7", "MiniMax-M2.7-highspeed"),
+        recommended_models=("MiniMax-M3.1-Flash",),
         discovery_posture="live_optional",
         setup_help_url="https://platform.minimax.io/docs/api-reference/text-openai-api",
     ),

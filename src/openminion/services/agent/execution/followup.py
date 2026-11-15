@@ -66,8 +66,7 @@ def recover_text_tool_calls(
     )
     if not parsed_calls:
         return response
-    normalization = dict(getattr(response, "normalization", {}) or {})
-    normalization.update(dict(metadata or {}))
+    normalization = {**response.normalization, **metadata}
     return ProviderResponse(
         text="",
         model=str(getattr(response, "model", "") or ""),
@@ -76,4 +75,5 @@ def recover_text_tool_calls(
         finish_reason="tool_calls",
         normalization=normalization,
         thinking=list(getattr(response, "thinking", []) or []),
+        assistant_meta=dict(response.assistant_meta),
     )
