@@ -1,11 +1,46 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-11-13
+Last updated: 2026-11-15
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
+
+## Current package line - 2026-11-15
+
+- MiniMax's OpenAI-compatible profile now targets MiniMax-M3.1-Flash and preserves
+  `reasoning_content` across provider normalization, tool rounds, and recovered tool
+  calls without changing reasoning behavior for other providers.
+
+- OpenAI-compatible providers now honor the configured maximum output-token cap while
+  preserving explicit per-request limits, so deployments can bound generated output
+  without overriding a caller's narrower request.
+
+- Brain finalization continues through the existing answer and quality-ratchet owners.
+  The experimental terminal read-result shortcut was removed after its frozen live
+  candidate failed the exact-output acceptance check.
+
+- `_tool_result_from_payload` now normalizes Pydantic `BaseModel` values across direct
+  results, nested collections, and `error.details` payloads with `model_dump(mode="json")`
+  so `ToolExecutionBatch.to_metadata_payload()` and tool-result summaries emit JSON
+  without altering tool-envelope fields or ordinary mapping-key serialization.
+
+- The README's Python `Agent` snippet now declares `lookup_order` as
+  `@tool(min_scope="READ_ONLY", idempotent=True)`, matching
+  `examples/sdk/tool_agent.py`: the bare `@tool` was classified as a write with
+  unknown reversibility, so under the default action policy the snippet ended at
+  a confirmation prompt instead of the answer. The `tool()` docstring and
+  `docs/runtime-surfaces.md` now describe how `min_scope`, `idempotent` and
+  `dangerous` map to approval; `tags` and `capabilities` do not declare risk.
+  Policy behavior is unchanged (Refs #745).
+
+- `docs/turn-budgets.md` now documents automatic fact extraction: the supported
+  top-level `brain.auto_fact_extraction` switch and its six defaults, model
+  selection from the effective agent profile, the auxiliary structured call it
+  adds when it runs, and the conditions that skip it. It also notes that an
+  `auto_fact_extraction` key under `agents.<id>` currently has no effect.
+  Behavior is unchanged (Refs #746).
 
 ## Current package line - 2026-11-13
 

@@ -89,6 +89,7 @@ def build_follow_up_request(
     assistant_call = ProviderHistoryMessage(
         role="assistant",
         content=str(getattr(response, "text", "") or ""),
+        meta=dict(getattr(response, "assistant_meta", {}) or {}),
         tool_calls=calls,
     )
     tool_results_by_id = {

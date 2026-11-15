@@ -11,6 +11,7 @@ class OpenAIProviderConfig:
     timeout_seconds: int = 60
     http_connection_reuse_enabled: bool = True
     temperature: float = 0.2
+    max_tokens: int = 0
     tool_call_strategy: str = "hybrid"
 
 

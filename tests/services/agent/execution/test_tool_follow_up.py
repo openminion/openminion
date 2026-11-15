@@ -61,7 +61,8 @@ def test_recover_text_tool_calls_parses_follow_up_json_without_internal_reach() 
     )
     response = ProviderResponse(
         text='{"tool":"file.read","path":"/tmp/demo.txt"}',
-        model="MiniMax-M2.7",
+        model="MiniMax-M3.1-Flash",
+        assistant_meta={"reasoning_content": "Read the file first."},
     )
     tools = SimpleNamespace(model_provider_specs=lambda: [spec])
 
@@ -73,6 +74,7 @@ def test_recover_text_tool_calls_parses_follow_up_json_without_internal_reach() 
     assert recovered.tool_calls[0].name == "file.read"
     assert recovered.tool_calls[0].arguments == {"path": "/tmp/demo.txt"}
     assert recovered.normalization["fallback_parse_mode"] == "json_payload"
+    assert recovered.assistant_meta == response.assistant_meta
 
 
 def test_follow_up_history_preserves_calls_and_linked_tool_results() -> None:
@@ -81,7 +83,12 @@ def test_follow_up_history_preserves_calls_and_linked_tool_results() -> None:
         name="file.read",
         arguments={"path": "/tmp/demo.txt"},
     )
-    response = ProviderResponse(text="", model="model", tool_calls=[call])
+    response = ProviderResponse(
+        text="",
+        model="model",
+        tool_calls=[call],
+        assistant_meta={"reasoning_content": "Read the file first."},
+    )
     batch = ToolExecutionBatch(
         results=[
             ToolExecutionResult(
@@ -110,6 +117,7 @@ def test_follow_up_history_preserves_calls_and_linked_tool_results() -> None:
 
     assert request.history[0].role == "assistant"
     assert request.history[0].tool_calls == [call]
+    assert request.history[0].meta == {"reasoning_content": "Read the file first."}
     assert request.history[1].role == "tool"
     assert request.history[1].tool_call_id == "call-1"
     assert request.history[1].tool_status == "success"

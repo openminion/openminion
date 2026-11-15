@@ -677,16 +677,14 @@ class ConfigCommandTests(unittest.TestCase):
             self.assertNotIn("Cloud (openai)", buf.getvalue())
             self.assertNotIn("Demo Mode", buf.getvalue())
 
-    def test_setup_wizard_shows_multiple_recommended_models(self) -> None:
-        with mock.patch("builtins.input", side_effect=["2"]):
+    def test_setup_wizard_uses_current_minimax_model(self) -> None:
+        with mock.patch("builtins.input", return_value="") as prompt:
             buf = io.StringIO()
             with redirect_stdout(buf):
                 model = setup_command._prompt_model(get_setup_preset("minimax"))
 
-        self.assertEqual(model, "MiniMax-M2.7-highspeed")
-        output = buf.getvalue()
-        self.assertIn("MiniMax-M2.7 (recommended)", output)
-        self.assertIn("MiniMax-M2.7-highspeed (recommended)", output)
+        self.assertEqual(model, "MiniMax-M3.1-Flash")
+        self.assertIn("Model [MiniMax-M3.1-Flash]", prompt.call_args.args[0])
 
     def test_setup_wizard_secondary_provider_menu_has_back_and_cancel(self) -> None:
         with mock.patch("builtins.input", side_effect=["6", "b", "6", "c"]):
@@ -886,7 +884,7 @@ class ConfigCommandTests(unittest.TestCase):
         )
         self.assertEqual(
             minimax["recommended_models"],
-            ["MiniMax-M2.7", "MiniMax-M2.7-highspeed"],
+            ["MiniMax-M3.1-Flash"],
         )
         ollama = next(
             provider for provider in payload["providers"] if provider["id"] == "ollama"
@@ -1303,6 +1301,7 @@ def test_portable_export_preserves_settings_and_redacts_header_credentials():
     config.providers.anthropic.max_tokens = 777
     config.providers.openai.api_key_env = "MY_CUSTOM_OPENAI_KEY"
     config.providers.openai.api_key = "synthetic-provider-secret"
+    config.providers.openai.max_tokens = 2000
     config.runtime.ipc_token = "synthetic-ipc-secret"
     config.runtime.telemetry_exporter.headers = {
         "Authorization": "Bearer synthetic-header-secret",
@@ -1316,6 +1315,7 @@ def test_portable_export_preserves_settings_and_redacts_header_credentials():
     assert restored.runtime.session_context_token_budget == 12345
     assert restored.providers.anthropic.max_tokens == 777
     assert restored.providers.openai.api_key_env == "MY_CUSTOM_OPENAI_KEY"
+    assert restored.providers.openai.max_tokens == 2000
     assert restored.runtime.telemetry_exporter.headers == {"Accept": "application/json"}
     assert restored.runtime.env == {"SAFE_VAR": "kept"}
     assert "synthetic-provider-secret" in json.dumps(

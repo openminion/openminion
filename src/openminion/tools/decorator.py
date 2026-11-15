@@ -310,7 +310,32 @@ def tool(
     tags: tuple[str, ...] = (),
     capabilities: tuple[str, ...] = (),
 ) -> Any:
-    """Decorate a Python function as an OpenMinion tool."""
+    """Decorate a Python function as an OpenMinion tool.
+
+    The action policy classifies a decorated tool from ``min_scope``,
+    ``dangerous`` and ``idempotent``:
+
+    - Without ``min_scope`` the tool is ``WRITE_SAFE``: a local write. With
+      ``idempotent=False`` (the default) its reversibility is unknown, so the
+      default action policy asks for confirmation before it runs.
+    - ``min_scope="READ_ONLY"`` classifies it as a read with no side effects.
+      The default policy then runs it without confirmation. Explicit denials,
+      sensitive-target handling and operator policy still apply.
+    - ``idempotent=True`` only marks a write as reversible. On its own it does
+      not make the tool a read, so the default policy still confirms it.
+    - ``dangerous=True`` classifies the tool as destructive and irreversible,
+      which requires confirmation under a fresh default configuration. A
+      matching grant or an explicit policy rule can still resolve it first.
+    - ``"POWER_USER"`` and ``"UI_AUTOMATION"`` scopes are classified as
+      execution with unknown reversibility and are confirmed.
+
+    ``tags`` and ``capabilities`` do not declare risk: a ``"read_only"`` tag
+    does not change the classification.
+
+    Confirmations go to the turn's ``approval_callback`` when one is given.
+    For a read-only lookup, declare ``@tool(min_scope="READ_ONLY",
+    idempotent=True)``.
+    """
 
     def _wrap(actual: Callable[..., Any]) -> Callable[..., Any]:
         return _decorate(
