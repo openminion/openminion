@@ -16,7 +16,6 @@ from .contracts import (
     ADAPTIVE_TERM_FINAL_TEXT,
     AdaptiveToolLoopOutcome,
 )
-from .direct_tool import _can_compose_direct_tool_answer_with_judge
 from .duplicate_batch import (
     _consume_duplicate_redispatch,
     _build_duplicate_batch_answer_only_closure_message,
@@ -37,30 +36,6 @@ from .telemetry import _emit_iteration_event
 
 
 class AdaptiveLoopRunnerClosureMixin:
-    def _maybe_compose_direct_tool_answer(self) -> AdaptiveToolLoopOutcome | None:
-        if self.finalizer is None or not _can_compose_direct_tool_answer_with_judge(
-            loop_ctx=self.loop_ctx,
-            profile=self.profile,
-            loop_state=self.loop_state,
-            active_task_plan=bool(
-                unresolved_active_plan_step_ids(self.loop_ctx)
-                or completable_active_plan_id(self.loop_ctx)
-            ),
-        ):
-            return None
-        self.loop_state.direct_tool_closure_consumed = True
-        self.loop_state.scratchpad["direct_tool_judge_composition"] = True
-        self.loop_state.termination_reason = ADAPTIVE_TERM_FINAL_TEXT
-        outcome = AdaptiveToolLoopOutcome(
-            profile_name=self.profile.profile_name,
-            mode_name=self.profile.mode_name,
-            termination_reason=ADAPTIVE_TERM_FINAL_TEXT,
-            state=self.loop_state,
-            allowed_tools=self.allowed_tools,
-        )
-        outcome.mode_result = self.finalizer(outcome)
-        return outcome
-
     def _finalize_answer_only_closure_outcome(
         self,
         *,

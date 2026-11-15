@@ -31,6 +31,7 @@ _PROVIDER_SPECS: dict[str, tuple[type[Any], dict[str, tuple[str, Any]]]] = {
             "timeout_seconds": (_KIND_INT, 60),
             "http_connection_reuse_enabled": (_KIND_BOOL, True),
             "temperature": (_KIND_FLOAT, 0.2),
+            "max_tokens": (_KIND_INT, 0),
             "tool_call_strategy": (_KIND_STR, "hybrid"),
         },
     ),
@@ -109,10 +110,7 @@ _PROVIDER_SPECS: dict[str, tuple[type[Any], dict[str, tuple[str, Any]]]] = {
         CortensorProviderConfig,
         {
             "model": (_KIND_STR, "gpt-oss-20b"),
-            "base_url": (
-                _KIND_STR,
-                "http://127.0.0.1:8080/api/v2/completions",
-            ),
+            "base_url": (_KIND_STR, "http://127.0.0.1:8080/api/v2/completions"),
             "timeout_seconds": (_KIND_INT, 420),
             "http_connection_reuse_enabled": (_KIND_BOOL, True),
             "transport_timeout_buffer_seconds": (_KIND_INT, 30),

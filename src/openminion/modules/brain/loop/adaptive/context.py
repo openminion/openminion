@@ -138,9 +138,6 @@ class _AdaptiveLoopContextAdapter:
     def __init__(self, ctx: ExecutionContext) -> None:
         self.state = ctx.state
         self._ctx = ctx
-        self.decision_reason_code = str(
-            getattr(ctx.decision, "reason_code", "") or ""
-        ).strip()
         self._runner = runner_from_context(ctx) or SimpleNamespace(
             options=SimpleNamespace(failure_strategy="halt"),
             turn_input_queue=None,

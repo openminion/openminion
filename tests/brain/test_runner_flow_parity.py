@@ -27,10 +27,8 @@ from openminion.modules.storage.runtime.session_store import SessionStore
 from openminion.modules.brain.schemas import (
     AgentBudgets,
     AgentDefaults,
-    ActDecision,
     BudgetCounters,
     AgentProfile,
-    ClosureJudgment,
     LLMProfiles,
     StepOutput,
     ToolCommand,
@@ -191,30 +189,6 @@ class _StorageShapeSessionAPI:
             }
         )
         return "evt-storage"
-
-
-class _ReadOnlyToolAdapter(LocalToolAdapter):
-    def __init__(self) -> None:
-        self.paths: list[str] = []
-
-    def list_tools(self) -> list[dict[str, Any]]:
-        return [{"name": "file.read"}]
-
-    def execute(
-        self, *, command: dict[str, Any], session_id: str, trace_id: str
-    ) -> dict[str, Any]:
-        del session_id, trace_id
-        path = str(dict(command.get("args") or {}).get("path") or "")
-        self.paths.append(path)
-        return {
-            "status": "success",
-            "summary": f"read {path}",
-            "outputs": {
-                "path": path,
-                "content": f"contents of {path}",
-                "tool_blast_radius": "read_only",
-            },
-        }
 
 
 def test_emit_turn_outcome_counts_storage_shaped_events() -> None:
@@ -551,71 +525,6 @@ def test_seeded_act_flow_emits_public_act_outcome() -> None:
         assert payload["workflow_kind"] is None
         assert payload["tool_request_count"] == 1
         assert payload["tool_completed_count"] == 1
-
-
-@pytest.mark.parametrize("next_action", ["continue", "replan"])
-def test_runner_reenters_after_direct_tool_judge_continuation(
-    tmp_path: Path, next_action: str
-) -> None:
-    tool_api = _ReadOnlyToolAdapter()
-    runner, _session = _build_runner_with_tool(tmp_path, tool_api=tool_api)
-    first = ActDecision(
-        confidence=1.0,
-        reason_code="entry_tool_call",
-        act_profile="general",
-        execution_target={"kind": "local"},
-    )
-    first._entry_response = LLMResponse(
-        ok=True,
-        provider="test",
-        model="test",
-        tool_calls=[
-            ToolCall(
-                id="read-readme",
-                name="file.read",
-                arguments={"path": "README.md"},
-            )
-        ],
-    )
-    second = build_seeded_act_decision(
-        reason_code="adaptive_tool_work",
-        command=_tool_command(
-            tool_name="file.read",
-            args={"path": "details.txt"},
-            idempotency_key="read-details",
-        ),
-    )
-    judgments = [
-        ClosureJudgment(
-            satisfied=False,
-            reason="more evidence needed",
-            next_action=next_action,
-        ),
-        ClosureJudgment(
-            satisfied=True,
-            reason="complete",
-            next_action="close",
-            final_answer="Both files were read.",
-        ),
-    ]
-
-    with (
-        patch.object(runner, "_decide", side_effect=[first, second]),
-        patch.object(
-            runner, "_evaluate_turn_closure", side_effect=judgments
-        ) as evaluate_closure,
-        patch.object(runner.llm_api, "call", wraps=runner.llm_api.call) as llm_call,
-    ):
-        output = runner.run(
-            session_id=f"direct-tool-{next_action}",
-            user_input='tool file.read {"path":"README.md"}',
-        )
-
-    assert output.status == "done", (output.message, output.action_result)
-    assert output.message == "Both files were read."
-    assert tool_api.paths == ["README.md", "details.txt"]
-    assert evaluate_closure.call_count == 2
-    assert llm_call.call_count == 0
 
 
 def test_seeded_multi_command_flow_emits_public_act_outcome() -> None:

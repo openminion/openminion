@@ -1301,6 +1301,7 @@ def test_portable_export_preserves_settings_and_redacts_header_credentials():
     config.providers.anthropic.max_tokens = 777
     config.providers.openai.api_key_env = "MY_CUSTOM_OPENAI_KEY"
     config.providers.openai.api_key = "synthetic-provider-secret"
+    config.providers.openai.max_tokens = 2000
     config.runtime.ipc_token = "synthetic-ipc-secret"
     config.runtime.telemetry_exporter.headers = {
         "Authorization": "Bearer synthetic-header-secret",
@@ -1314,6 +1315,7 @@ def test_portable_export_preserves_settings_and_redacts_header_credentials():
     assert restored.runtime.session_context_token_budget == 12345
     assert restored.providers.anthropic.max_tokens == 777
     assert restored.providers.openai.api_key_env == "MY_CUSTOM_OPENAI_KEY"
+    assert restored.providers.openai.max_tokens == 2000
     assert restored.runtime.telemetry_exporter.headers == {"Accept": "application/json"}
     assert restored.runtime.env == {"SAFE_VAR": "kept"}
     assert "synthetic-provider-secret" in json.dumps(

@@ -191,7 +191,6 @@ class AdaptiveToolLoopLLMRuntime(Protocol):
 class AdaptiveToolLoopContext(Protocol):
     state: WorkingState
     session_api: Any | None
-    decision_reason_code: str
     provider_retry_max_attempts: int
     structural_tool_results: bool
 

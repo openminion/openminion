@@ -435,6 +435,12 @@ def _decode_openai_stream_chunk(
     return chunk
 
 
+def _apply_default_max_tokens(payload: dict[str, Any], config: dict[str, Any]) -> None:
+    configured = int(config.get("max_tokens") or 0)
+    if "max_tokens" not in payload and configured > 0:
+        payload["max_tokens"] = configured
+
+
 def _iter_openai_stream_events(
     lines: Iterable[str],
     *,
@@ -620,7 +626,7 @@ class OpenAIProvider:
         }
 
         apply_openai_completion_options(payload, request, request_compat)
-
+        _apply_default_max_tokens(payload, config)
         if (
             request.tools
             and request_compat.include_native_tool_contract
@@ -910,6 +916,7 @@ class OpenAIProvider:
             tool_name_map=tool_name_map,
             include_tool_contract=stream_contract_enabled,
         )
+        _apply_default_max_tokens(payload, config)
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
