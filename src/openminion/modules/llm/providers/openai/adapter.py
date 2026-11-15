@@ -620,6 +620,8 @@ class OpenAIProvider:
         }
 
         apply_openai_completion_options(payload, request, request_compat)
+        if "max_tokens" not in payload and int(config.get("max_tokens") or 0) > 0:
+            payload["max_tokens"] = int(config["max_tokens"])
 
         if (
             request.tools
@@ -910,6 +912,8 @@ class OpenAIProvider:
             tool_name_map=tool_name_map,
             include_tool_contract=stream_contract_enabled,
         )
+        if "max_tokens" not in payload and int(config.get("max_tokens") or 0) > 0:
+            payload["max_tokens"] = int(config["max_tokens"])
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",

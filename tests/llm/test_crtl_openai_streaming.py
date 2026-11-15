@@ -84,6 +84,18 @@ def test_stream_terminates_with_done_even_when_provider_yields_no_deltas():
     assert any(e.type == "done" for e in events)
 
 
+def test_stream_uses_configured_max_tokens_when_request_omits_limit():
+    provider = OpenAIProvider()
+    config = {**_config_for_provider(), "max_tokens": 2000}
+    with mock.patch(
+        "openminion.modules.llm.providers.openai.adapter.iter_sse_post_lines",
+        return_value=iter(["data: [DONE]"]),
+    ) as stream:
+        list(provider.stream(_make_request(), config))
+
+    assert stream.call_args.kwargs["payload"]["max_tokens"] == 2000
+
+
 # Discipline 2: non-streaming fallback degrades cleanly to final-only
 
 

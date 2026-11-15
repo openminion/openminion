@@ -88,6 +88,27 @@ class ProviderHTTPTests(unittest.TestCase):
         self.assertTrue(response.ok)
         self.assertIn("hi", response.output_text)
 
+    def test_openai_uses_configured_max_tokens_when_request_omits_limit(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def fake_post(**kwargs):
+            captured.update(kwargs)
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+        request = LLMRequest(
+            messages=[Message(role="user", content="hello")],
+        )
+        with patch(
+            "openminion.modules.llm.providers.openai.adapter._http_json_post",
+            side_effect=fake_post,
+        ):
+            OpenAIProvider().complete(
+                request,
+                {"api_key": "test-key", "max_tokens": 2000},
+            )
+
+        self.assertEqual(captured["payload"]["max_tokens"], 2000)
+
     def test_openai_parses_native_tool_calls(self) -> None:
         provider = OpenAIProvider()
         request = LLMRequest.model_validate(
