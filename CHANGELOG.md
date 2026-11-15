@@ -1,11 +1,25 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-11-13
+Last updated: 2026-11-15
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
+
+## Current package line - 2026-11-15
+
+- MiniMax's OpenAI-compatible profile now targets MiniMax-M3.1-Flash and preserves
+  `reasoning_content` across provider normalization, tool rounds, and recovered tool
+  calls without changing reasoning behavior for other providers.
+
+- OpenAI-compatible providers now honor the configured maximum output-token cap while
+  preserving explicit per-request limits, so deployments can bound generated output
+  without overriding a caller's narrower request.
+
+- Brain finalization continues through the existing answer and quality-ratchet owners.
+  The experimental terminal read-result shortcut was removed after its frozen live
+  candidate failed the exact-output acceptance check.
 
 - `_tool_result_from_payload` now normalizes Pydantic `BaseModel` values across direct
   results, nested collections, and `error.details` payloads with `model_dump(mode="json")`
