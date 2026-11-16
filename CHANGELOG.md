@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `resolve_database_path` now treats a literal empty `storage.path` (`""`) like an
+  omitted value (`<data_root>/state/openminion.db`) instead of resolving to the
+  `data_root` directory and failing SQLite bootstrap, while keeping filenames
+  containing whitespace, explicit relative/absolute/`Path` values, and data-root
+  containment unchanged (Refs #766).
+
 ## Current package line - 2026-11-15
 
 - MiniMax's OpenAI-compatible profile now targets MiniMax-M3.1-Flash and preserves
