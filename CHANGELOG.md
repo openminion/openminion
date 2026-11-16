@@ -7,11 +7,13 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
-- `TurnResponse.telemetry.tokens_in` / `tokens_out` now come from the turn's `RunStats`,
-  the same totals reported in `TurnResponse.stats`, instead of the
-  `usage_prompt_tokens` / `usage_completion_tokens` metadata keys that no turn producer
-  writes, so successful turns no longer report 0 tokens; turns without stats still
-  report 0. (Refs #773)
+- `TurnResponse.telemetry.tokens_in` / `tokens_out` now read from the turn's `RunStats`,
+  the same authoritative totals projected into `TurnResponse.stats`, instead of
+  `usage_prompt_tokens` / `usage_completion_tokens` metadata keys that have no in-tree
+  turn producer and yielded 0 when absent (though explicitly supplied metadata keys could
+  produce nonzero totals). `RunStats` takes precedence over legacy metadata keys, turn
+  metadata is preserved unchanged, and empty or absent `RunStats` report 0 without
+  falling back to metadata. (Refs #773)
 
 - Bare `openminion replay`, with no subcommand, now exits 2 with a usage line naming
   `replay_command` instead of raising `AttributeError: 'Namespace' object has no attribute

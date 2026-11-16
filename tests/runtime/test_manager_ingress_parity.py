@@ -58,14 +58,41 @@ def test_execute_turn_enters_shared_runtime_ingress() -> None:
 
 
 @pytest.mark.parametrize(
-    ("stats", "expected_tokens"),
+    ("stats", "metadata", "expected_tokens", "expected_stats"),
     [
-        (RunStats(input_tokens=11841, output_tokens=430, llm_calls=1), (11841, 430)),
-        (None, (0, 0)),
+        (
+            RunStats(input_tokens=11841, output_tokens=430, llm_calls=1),
+            {},
+            (11841, 430),
+            RunStats(input_tokens=11841, output_tokens=430, llm_calls=1).as_payload(),
+        ),
+        (
+            RunStats(input_tokens=12, output_tokens=3, llm_calls=1),
+            {"usage_prompt_tokens": 99, "usage_completion_tokens": 88},
+            (12, 3),
+            RunStats(input_tokens=12, output_tokens=3, llm_calls=1).as_payload(),
+        ),
+        (RunStats(), {}, (0, 0), {}),
+        (
+            RunStats(),
+            {"usage_prompt_tokens": 99, "usage_completion_tokens": 88},
+            (0, 0),
+            {},
+        ),
+        (None, {}, (0, 0), {}),
+        (
+            None,
+            {"usage_prompt_tokens": 99, "usage_completion_tokens": 88},
+            (0, 0),
+            {},
+        ),
     ],
 )
 def test_execute_turn_telemetry_tokens_match_run_stats(
-    stats: RunStats | None, expected_tokens: tuple[int, int]
+    stats: RunStats | None,
+    metadata: dict[str, int],
+    expected_tokens: tuple[int, int],
+    expected_stats: dict[str, int],
 ) -> None:
     request = TurnRequest(
         trace_id="trace-4",
@@ -86,7 +113,7 @@ def test_execute_turn_telemetry_tokens_match_run_stats(
                 channel="console",
                 target="api-user",
                 body="ok",
-                metadata={},
+                metadata=dict(metadata),
                 agent_id="main",
                 stats=stats,
             ),
@@ -103,7 +130,11 @@ def test_execute_turn_telemetry_tokens_match_run_stats(
     assert (response.telemetry.tokens_in, response.telemetry.tokens_out) == (
         expected_tokens
     )
-    assert response.stats == (stats.as_payload() if stats is not None else {})
+    assert response.stats == expected_stats
+    assert response.metadata == metadata
+    assert response.final_text == "ok"
+    assert response.telemetry.duration_ms >= 0
+    assert response.errors == []
 
 
 def test_execute_turn_cancel_before_execution_skips_ingress() -> None:
