@@ -1,6 +1,6 @@
 """Handoff records and transfer tools for developer-facing agents."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from math import ceil
 from typing import TYPE_CHECKING, Any
@@ -17,7 +17,7 @@ from openminion.tools.decorator import _build_args_model
 from sophiagraph.models import MemoryNamespace
 
 if TYPE_CHECKING:  # pragma: no cover
-    from openminion.api.agent import Agent, ToolInput
+    from openminion.api.agent import Agent, ToolInput, _ApprovalCallback
 
 
 @dataclass(frozen=True)
@@ -144,6 +144,8 @@ class Handoff:
     target: "Agent[Any, Any]"
     name: str | None = None
     description: str | None = None
+    timeout_seconds: float | None = field(default=None, kw_only=True)
+    approval_callback: "_ApprovalCallback | None" = field(default=None, kw_only=True)
 
     def resolved_name(self) -> str:
         if self.name:
@@ -166,7 +168,20 @@ def build_delegate_tool(handoff: Handoff) -> ToolDecl:
     description = handoff.resolved_description()
 
     def _handler_fn(message: str) -> dict[str, Any]:
-        result = handoff.target.run(message)
+        timeout_seconds = handoff.timeout_seconds
+        subagent_context = handoff.target.subagent_context
+        if (
+            isinstance(timeout_seconds, (int, float))
+            and timeout_seconds > 0
+            and subagent_context is not None
+            and subagent_context.timeout_seconds is not None
+        ):
+            timeout_seconds = min(timeout_seconds, subagent_context.timeout_seconds)
+        result = handoff.target.run(
+            message,
+            timeout_seconds=timeout_seconds,
+            approval_callback=handoff.approval_callback,
+        )
         raw_output = result.output
         output_value = (
             raw_output.model_dump(mode="json")

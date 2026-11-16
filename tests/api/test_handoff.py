@@ -133,6 +133,114 @@ def test_handoff_explicit_name_and_description_override() -> None:
     assert decl.description == "explicit description here"
 
 
+def test_handoff_positional_construction_and_keyword_only_run_options() -> None:
+    target = Agent(runtime=_FakeRuntime(), name="peer")
+    positional = Handoff(target, "transfer_to_peer_v2", "Positional description.")
+    assert positional.target is target
+    assert positional.name == "transfer_to_peer_v2"
+    assert positional.description == "Positional description."
+    assert positional.timeout_seconds is None
+    assert positional.approval_callback is None
+
+    with pytest.raises(TypeError):
+        Handoff(target, "transfer_to_peer_v2", "Positional description.", 30.0)  # type: ignore[misc]
+
+
+def test_build_delegate_tool_forwards_run_options_and_preserves_handback() -> None:
+    from pydantic import BaseModel
+
+    class _StructuredReply(BaseModel):
+        verdict: str
+        count: int
+
+    class _DetailedRuntime(_FakeRuntime):
+        def run_turn(self, *, payload, progress_callback=None, **kwargs):
+            self.last_run_kwargs = kwargs
+            base = super().run_turn(
+                payload=payload, progress_callback=progress_callback, **kwargs
+            )
+            return {
+                **base,
+                "run_id": "child-run-7",
+                "run_state": "completed",
+            }
+
+    runtime = _DetailedRuntime('{"verdict": "ok", "count": 2}')
+    target = Agent(runtime=runtime, name="specialist", output_type=_StructuredReply)
+
+    def decide(tool_name: str, args: dict[str, Any], approval_id: str) -> bool:
+        return True
+
+    decl = build_delegate_tool(
+        Handoff(target=target, timeout_seconds=120.0, approval_callback=decide)
+    )
+    with patch.object(target, "run", wraps=target.run) as run_spy:
+        payload = decl.handler(decl.args_model(message="verify claim"))
+
+    run_spy.assert_called_once_with(
+        "verify claim",
+        timeout_seconds=120.0,
+        approval_callback=decide,
+    )
+    assert run_spy.call_args.kwargs["approval_callback"] is decide
+    assert runtime.last_payload is not None
+    assert runtime.last_payload["timeout_seconds"] == 120.0
+    assert payload == {
+        "ok": True,
+        "content": '{"verdict": "ok", "count": 2}',
+        "data": {
+            "output": {"verdict": "ok", "count": 2},
+            "run_id": "child-run-7",
+            "run_state": "completed",
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    (
+        "target_kind",
+        "subagent_timeout",
+        "handoff_timeout",
+        "expected_run_arg",
+        "expected_payload",
+    ),
+    [
+        ("agent", None, None, None, None),
+        ("agent", None, 120.0, 120.0, 120.0),
+        ("subagent", None, None, None, None),
+        ("subagent", None, 120.0, 120.0, 120.0),
+        ("subagent", 37, None, None, 37),
+        ("subagent", 37, 120.0, 37, 37),
+        ("subagent", 37, 15.0, 15.0, 15.0),
+    ],
+)
+def test_build_delegate_tool_timeout_precedence_with_subagent_bound(
+    target_kind: str,
+    subagent_timeout: int | None,
+    handoff_timeout: float | None,
+    expected_run_arg: float | None,
+    expected_payload: float | None,
+) -> None:
+    runtime = _FakeRuntime("delegated")
+    if target_kind == "agent":
+        target = Agent(runtime=runtime, name="child")
+    else:
+        parent = Agent(runtime=runtime, name="parent")
+        target = subagent(parent, name="child", timeout_seconds=subagent_timeout)
+
+    decl = build_delegate_tool(Handoff(target=target, timeout_seconds=handoff_timeout))
+    with patch.object(target, "run", wraps=target.run) as run_spy:
+        decl.handler(decl.args_model(message="ping"))
+
+    run_spy.assert_called_once_with(
+        "ping",
+        timeout_seconds=expected_run_arg,
+        approval_callback=None,
+    )
+    assert runtime.last_payload is not None
+    assert runtime.last_payload.get("timeout_seconds") == expected_payload
+
+
 def test_agent_handoffs_param_registers_handoff_tool_names() -> None:
     runtime_a = _FakeRuntime(tools=ToolRegistry())
     runtime_b = _FakeRuntime("from B")

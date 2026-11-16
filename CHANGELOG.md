@@ -7,6 +7,14 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `Handoff` now accepts optional keyword-only `timeout_seconds` and `approval_callback`
+  controls forwarded by `build_delegate_tool` to each delegated `target.run()` call. A
+  positive `timeout_seconds` tightens without widening an existing
+  `target.subagent_context.timeout_seconds` bound while leaving validation in
+  `resolve_timeout_seconds`, and `approval_callback` governs child-turn tool confirmations
+  without altering the `transfer_to_<name>` parent-policy check or inheriting parent
+  callbacks when omitted. (Refs #774)
+
 - Bare `openminion replay`, with no subcommand, now exits 2 with a usage line naming
   `replay_command` instead of raising `AttributeError: 'Namespace' object has no attribute
   'task_db'` from the group handler; the group requires one of `checkpoints`, `replay`,
