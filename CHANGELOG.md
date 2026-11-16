@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `TurnResponse.telemetry.tokens_in` / `tokens_out` now come from the turn's `RunStats`,
+  the same totals reported in `TurnResponse.stats`, instead of the
+  `usage_prompt_tokens` / `usage_completion_tokens` metadata keys that no turn producer
+  writes, so successful turns no longer report 0 tokens; turns without stats still
+  report 0. (Refs #773)
+
 - Bare `openminion replay`, with no subcommand, now exits 2 with a usage line naming
   `replay_command` instead of raising `AttributeError: 'Namespace' object has no attribute
   'task_db'` from the group handler; the group requires one of `checkpoints`, `replay`,
