@@ -44,6 +44,7 @@ class ModeServices(Protocol):
         status: str,
         action_result: ActionResult | None = None,
         kind: RespondKindLiteral = RESPOND_KIND_ASSISTANT,
+        accepted_finish_reason: str = "",
     ) -> StepOutput: ...
 
     def direct_response(
