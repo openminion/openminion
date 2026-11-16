@@ -7,6 +7,13 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- The Playwright browser provider now creates its artifact directories (downloads,
+  screenshots, PDFs, traces) on the first `instance_start` instead of at construction,
+  so unused browser artifact directory creation no longer blocks runtime startup;
+  errors creating the required directories still surface on instance start, before
+  the browser launches, with the existing paths and containment check unchanged.
+  (Refs #769)
+
 - Bare `openminion replay`, with no subcommand, now exits 2 with a usage line naming
   `replay_command` instead of raising `AttributeError: 'Namespace' object has no attribute
   'task_db'` from the group handler; the group requires one of `checkpoints`, `replay`,

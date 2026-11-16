@@ -135,7 +135,7 @@ class PlaywrightProvider:
         port = instance_spec.port
         del port
 
-        # Created on first browser use so runtime bootstrap writes nothing.
+        # Created on first browser use, not when the provider is constructed.
         self._artifact_writer.ensure_dirs()
         browser_type = self._browser_type()
         headless, normalized_mode = normalize_mode(

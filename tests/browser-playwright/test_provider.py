@@ -264,16 +264,6 @@ def test_lifecycle_snapshot_action_and_artifacts(tmp_path: Path) -> None:
     assert stopped["stopped"] is True
 
 
-def _artifact_dirs(provider: PlaywrightProvider) -> tuple[Path, ...]:
-    writer = provider._artifact_writer
-    return (
-        writer.downloads_dir,
-        writer.screenshots_dir,
-        writer.pdf_dir,
-        writer.traces_dir,
-    )
-
-
 def test_construction_and_readiness_write_no_artifact_dirs(tmp_path: Path) -> None:
     provider = _provider(tmp_path)
     assert provider.ensure_ready()["ok"] is True
@@ -288,7 +278,13 @@ def test_first_instance_start_creates_artifact_dirs_in_workspace(
     provider.instance_start(mode="headless")
 
     workspace = tmp_path.resolve()
-    for path in _artifact_dirs(provider):
+    writer = provider._artifact_writer
+    for path in (
+        writer.downloads_dir,
+        writer.screenshots_dir,
+        writer.pdf_dir,
+        writer.traces_dir,
+    ):
         assert path.is_dir()
         assert path.is_relative_to(workspace / ".openminion" / "browser-playwright")
 
