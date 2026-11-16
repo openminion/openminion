@@ -264,6 +264,82 @@ def test_lifecycle_snapshot_action_and_artifacts(tmp_path: Path) -> None:
     assert stopped["stopped"] is True
 
 
+def _artifact_dirs(provider: PlaywrightProvider) -> tuple[Path, ...]:
+    writer = provider._artifact_writer
+    return (
+        writer.downloads_dir,
+        writer.screenshots_dir,
+        writer.pdf_dir,
+        writer.traces_dir,
+    )
+
+
+def test_construction_and_readiness_write_no_artifact_dirs(tmp_path: Path) -> None:
+    provider = _provider(tmp_path)
+    assert provider.ensure_ready()["ok"] is True
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_first_instance_start_creates_artifact_dirs_in_workspace(
+    tmp_path: Path,
+) -> None:
+    provider = _provider(tmp_path)
+    provider.instance_start(mode="headless")
+
+    workspace = tmp_path.resolve()
+    for path in _artifact_dirs(provider):
+        assert path.is_dir()
+        assert path.is_relative_to(workspace / ".openminion" / "browser-playwright")
+
+
+def test_instance_start_reports_artifact_dir_failure_before_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    launches: list[dict] = []
+
+    class _RecordingBrowserType(_FakeBrowserType):
+        def launch(self, **kwargs) -> _FakeBrowser:
+            launches.append(kwargs)
+            return super().launch(**kwargs)
+
+    class _RecordingPlaywright(_FakePlaywright):
+        def __init__(self) -> None:
+            super().__init__()
+            self.chromium = _RecordingBrowserType()
+
+    cfg = provider_config_from_mapping(
+        {
+            "workspace_root": str(tmp_path),
+            "browser": "chromium",
+            "persistent": {"enabled": False},
+            "network": {"mode": "allow_all"},
+        }
+    )
+    provider = PlaywrightProvider(
+        cfg, playwright_factory=lambda: _RecordingPlaywright()
+    )
+    blocked = provider._artifact_writer.screenshots_dir
+    real_mkdir = Path.mkdir
+
+    def _mkdir(self: Path, *args, **kwargs) -> None:
+        if self == blocked:
+            raise OSError(206, "The filename or extension is too long", str(self))
+        real_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", _mkdir)
+    with pytest.raises(OSError) as excinfo:
+        provider.instance_start(mode="headless")
+    assert excinfo.value.filename == str(blocked)
+    assert launches == []
+    assert provider.instance_list()["instances"] == []
+
+    monkeypatch.undo()
+    provider.instance_start(mode="headless")
+    assert len(launches) == 1
+    assert blocked.is_dir()
+
+
 def test_instance_list_and_kill(tmp_path: Path) -> None:
     provider = _provider(tmp_path)
     i1 = provider.instance_start(mode="headed")["instance"]["id"]
