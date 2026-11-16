@@ -211,13 +211,15 @@ def test_build_delegate_tool_forwards_run_options_and_preserves_handback() -> No
         ("subagent", None, 120.0, 120.0, 120.0),
         ("subagent", 37, None, None, 37),
         ("subagent", 37, 120.0, 37, 37),
+        ("subagent", 37, "120", 37, 37),
         ("subagent", 37, 15.0, 15.0, 15.0),
+        ("subagent", 37, "15", 15.0, 15.0),
     ],
 )
 def test_build_delegate_tool_timeout_precedence_with_subagent_bound(
     target_kind: str,
     subagent_timeout: int | None,
-    handoff_timeout: float | None,
+    handoff_timeout: Any,
     expected_run_arg: float | None,
     expected_payload: float | None,
 ) -> None:

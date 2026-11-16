@@ -13,6 +13,7 @@ from openminion.modules.policy.constants import (
 from openminion.modules.policy.models import PolicyGrantInput
 from openminion.modules.tool.exposure import ToolExposureProfile
 from openminion.modules.tool.framework import ToolDecl, ToolFamilySpec
+from openminion.services.runtime.ingress.timeout import resolve_timeout_seconds
 from openminion.tools.decorator import _build_args_model
 from sophiagraph.models import MemoryNamespace
 
@@ -171,12 +172,17 @@ def build_delegate_tool(handoff: Handoff) -> ToolDecl:
         timeout_seconds = handoff.timeout_seconds
         subagent_context = handoff.target.subagent_context
         if (
-            isinstance(timeout_seconds, (int, float))
-            and timeout_seconds > 0
+            timeout_seconds is not None
             and subagent_context is not None
             and subagent_context.timeout_seconds is not None
         ):
-            timeout_seconds = min(timeout_seconds, subagent_context.timeout_seconds)
+            timeout_seconds = min(
+                subagent_context.timeout_seconds,
+                resolve_timeout_seconds(
+                    payload={"timeout_seconds": timeout_seconds},
+                    default_seconds=subagent_context.timeout_seconds,
+                ),
+            )
         result = handoff.target.run(
             message,
             timeout_seconds=timeout_seconds,

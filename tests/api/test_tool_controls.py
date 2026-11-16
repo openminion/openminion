@@ -648,6 +648,77 @@ def test_handoff_invalid_timeout_rejected_by_ingress_owner(
     assert error_details["error_type"] == "TurnRequestError"
 
 
+def test_handoff_timeout_request_boundary_tightens_accepted_resolver_inputs(sdk_tools):
+    from decimal import Decimal
+    from unittest.mock import patch
+
+    import openminion.services.runtime.ingress as ingress_mod
+    from openminion.api.handoff import build_delegate_tool, subagent
+    from openminion.services.runtime.ingress.types import TurnRequestError
+
+    runtime, _requests, _state = sdk_tools
+    runtime.config.action_policy.rules = []
+    captured_requests = []
+    original_builder = ingress_mod.runtime_turn_request_from_payload
+
+    def capture_request(**kwargs):
+        req = original_builder(**kwargs)
+        captured_requests.append(req)
+        return req
+
+    base_parent = Agent(runtime=runtime, name="parent", tools=[])
+    bounded_cases = [
+        (None, 37.0),
+        (120.0, 37.0),
+        ("120", 37.0),
+        (Decimal("120"), 37.0),
+        (15.0, 15.0),
+        ("15", 15.0),
+    ]
+    with patch.object(
+        ingress_mod,
+        "runtime_turn_request_from_payload",
+        side_effect=capture_request,
+    ):
+        for raw_timeout, expected_timeout in bounded_cases:
+            captured_requests.clear()
+            bounded_child = subagent(base_parent, name="child", timeout_seconds=37)
+            decl = build_delegate_tool(
+                Handoff(target=bounded_child, timeout_seconds=raw_timeout)  # type: ignore[arg-type]
+            )
+            decl.handler(decl.args_model(message="Return LOCAL_MARKER."))
+            assert len(captured_requests) == 1
+            assert captured_requests[0].timeout_seconds == expected_timeout
+            assert captured_requests[0].trusted_subagent_context is not None
+            assert captured_requests[0].trusted_subagent_context.timeout_seconds == 37
+
+        for raw_timeout, expected_timeout in [("120", 120.0), (120.0, 120.0)]:
+            captured_requests.clear()
+            unbounded_child = Agent(runtime=runtime, name="plain", tools=[])
+            decl = build_delegate_tool(
+                Handoff(target=unbounded_child, timeout_seconds=raw_timeout)  # type: ignore[arg-type]
+            )
+            decl.handler(decl.args_model(message="Return LOCAL_MARKER."))
+            assert len(captured_requests) == 1
+            assert captured_requests[0].timeout_seconds == expected_timeout
+            assert captured_requests[0].trusted_subagent_context is None
+
+        captured_requests.clear()
+        Agent(runtime=runtime, name="direct", tools=[]).run("Return LOCAL_MARKER.")
+        assert len(captured_requests) == 1
+        assert captured_requests[0].timeout_seconds == float(
+            runtime.config.runtime.chat_turn_timeout_seconds
+        )
+
+    for bad_timeout in (0, -5.0, "bad"):
+        bounded_child = subagent(base_parent, name="child", timeout_seconds=37)
+        decl = build_delegate_tool(
+            Handoff(target=bounded_child, timeout_seconds=bad_timeout)  # type: ignore[arg-type]
+        )
+        with pytest.raises(TurnRequestError, match="greater than zero"):
+            decl.handler(decl.args_model(message="Return LOCAL_MARKER."))
+
+
 class _Window(BaseModel):
     start: int
     end: int
