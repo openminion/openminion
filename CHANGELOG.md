@@ -7,6 +7,13 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- The Playwright browser provider now creates its artifact directories (downloads,
+  screenshots, PDFs, traces) on the first `instance_start` instead of at construction,
+  so unused browser artifact directory creation no longer blocks runtime startup;
+  errors creating the required directories still surface on instance start, before
+  the browser launches, with the existing paths and containment check unchanged.
+  (Refs #769)
+
 - A turn whose accepted answer was truncated or filtered now reports the provider's
   termination (`finish_reason: length`, `content_filter`, …) instead of an unconditional
   `stop`, and keeps `stop` when the answer was replaced (Refs #602).
