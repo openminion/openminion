@@ -14,6 +14,13 @@ This file tracks package-facing release notes for `openminion`.
   the browser launches, with the existing paths and containment check unchanged.
   (Refs #769)
 
+- A turn whose accepted answer was truncated or filtered now reports the provider's
+  termination (`finish_reason: length`, `content_filter`, …) instead of an unconditional
+  `stop`, and keeps `stop` when the answer was replaced (Refs #602).
+
+
+- `openminion config diff <file>` shows what importing that file would change: per-leaf added, removed and changed values for the merge mode (or `--replace` for `config import --force`), with `--json` and exit code 1 when the config would differ, and no write in any case. The comparison is of the config the parser resolves (stored file plus environment overrides); credential values and URL passwords are redacted, so a secret-only change is reported without its value. (Refs #767)
+
 - Bare `openminion replay`, with no subcommand, now exits 2 with a usage line naming
   `replay_command` instead of raising `AttributeError: 'Namespace' object has no attribute
   'task_db'` from the group handler; the group requires one of `checkpoints`, `replay`,
