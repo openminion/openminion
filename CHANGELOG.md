@@ -7,6 +7,13 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Cached reads inside one adaptive loop are now dropped when a tool call could have changed the tree: a known
+  file writer invalidates by path containment (a cached read of `.` or `src` covers the files below it, and a
+  failed or timed-out write still counts, because a write can fail after touching the file), any other tool has
+  unknown reach and clears the cache, and only a pre-dispatch denial (`blocked`, `needs_user`) leaves it intact.
+  Paths are read from the tool schemas' own keys (`path`, `file_path`, `filename`, `destination`, `target`).
+  (Refs #783)
+
 - `prepare_transaction` and `send_transaction` now validate `eth.get_transaction_count(sender, "pending")`
   at the chain-read boundary (`_pending_nonce`) so boolean, floating-point, `null`, negative,
   or non-integer RPC nonce observations fail immediately with structured `RPC_UNAVAILABLE`
