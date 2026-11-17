@@ -1,11 +1,13 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-11-15
+Last updated: 2026-11-17
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
+
+## Current package line - 2026-11-17
 
 - The Playwright browser provider now creates its artifact directories (downloads,
   screenshots, PDFs, traces) on the first `instance_start` instead of at construction,
@@ -32,6 +34,11 @@ This file tracks package-facing release notes for `openminion`.
   `data_root` directory and failing SQLite bootstrap, while keeping filenames
   containing whitespace, explicit relative/absolute/`Path` values, and data-root
   containment unchanged (Refs #766).
+
+- Configuration compatibility guidance now identifies accepted but inert
+  `self_improvement.max_applied_notes` and `self_improvement.min_token_overlap`
+  settings, explains the effective six-note context limit, and recommends leaving
+  both settings unset (Refs #779).
 
 ## Current package line - 2026-11-15
 
