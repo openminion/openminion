@@ -100,6 +100,7 @@ class RunnerExecutionServices:
         status: str,
         action_result: ActionResult | None = None,
         kind: RespondKindLiteral = RESPOND_KIND_ASSISTANT,
+        accepted_finish_reason: str = "",
     ) -> StepOutput:
         if self.suppress_lifecycle_exit_statuses:
             preserve_clarify_phase = (
@@ -119,7 +120,7 @@ class RunnerExecutionServices:
             )
         delegate = self.runner._respond_with_meta
         signature = inspect.signature(delegate)
-        accepts_kind = "kind" in signature.parameters or any(
+        accepts_extra_kwargs = any(
             parameter.kind == inspect.Parameter.VAR_KEYWORD
             for parameter in signature.parameters.values()
         )
@@ -130,8 +131,10 @@ class RunnerExecutionServices:
             "status": status,
             "action_result": action_result,
         }
-        if accepts_kind:
+        if accepts_extra_kwargs or "kind" in signature.parameters:
             kwargs["kind"] = kind
+        if accepts_extra_kwargs or "accepted_finish_reason" in signature.parameters:
+            kwargs["accepted_finish_reason"] = accepted_finish_reason
         return delegate(**kwargs)
 
     def direct_response(

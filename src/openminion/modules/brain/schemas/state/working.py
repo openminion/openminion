@@ -1,7 +1,14 @@
 # ruff: noqa: F403,F405
 from typing import Any, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    field_validator,
+    model_validator,
+)
 
 from openminion.modules.session.capture import TerminalCaptureIntentReceipt
 from openminion.modules.tool.plugin_api import ToolConfirmationPreview
@@ -387,6 +394,10 @@ class WorkingState(BaseModel):
 
 class StepOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    # Transient, non-serialized: the accepted answer's termination. Keeping it a
+    # private attribute leaves the StepOutput schema unchanged.
+    _accepted_finish_reason: str = PrivateAttr(default="")
 
     session_id: str = Field(..., min_length=1)
     status: WorkingStatus
