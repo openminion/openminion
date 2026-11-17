@@ -7,6 +7,11 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- The freshness classifier is skipped only for the explicit `tool <name>` request form. Verb phrasing — including
+  `use the time tool to get now`, which previously took the shortcut — is classified again, because punctuation or a
+  dotted token cannot distinguish a real invocation from prose such as `use file.read documentation to explain its
+  latest behavior`. (Refs #784)
+
 - The agent loop's stall rule now counts consecutive failures: a productive batch clears
   the no-progress counter, so two intermittent failures spread across a turn no longer end it
   while work is still getting done (Refs #679).
