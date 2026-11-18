@@ -193,6 +193,14 @@ def accepted_tool_args(
     return dumped
 
 
+def _model_config_accepts_field_names(model_type: Any) -> bool:
+    config = getattr(model_type, "model_config", {}) or {}
+    validate_by_name = config.get("validate_by_name")
+    if validate_by_name is not None:
+        return bool(validate_by_name)
+    return bool(config.get("populate_by_name"))
+
+
 def _model_dump_accepts_input_keys(
     model: BaseModel, seen: set[int] | None = None
 ) -> bool:
@@ -202,10 +210,7 @@ def _model_dump_accepts_input_keys(
         return True
     visited.add(identity)
 
-    config = getattr(type(model), "model_config", {}) or {}
-    accepts_field_names = bool(
-        config.get("populate_by_name") or config.get("validate_by_name")
-    )
+    accepts_field_names = _model_config_accepts_field_names(type(model))
     for field_name, field_info in type(model).model_fields.items():
         input_alias = getattr(field_info, "validation_alias", None)
         if input_alias is None:
@@ -239,10 +244,11 @@ def _model_alias_map(args_model: Any) -> dict[str, str]:
     fields = getattr(args_model, "model_fields", None)
     if not isinstance(fields, Mapping):
         return {}
-    # Renaming an alias to its field name only helps a model that accepts
-    # field names; an alias-only model would reject the renamed key.
+    # Do not turn a disabled alias input into an accepted field-name input.
     config = getattr(args_model, "model_config", None) or {}
-    if not (config.get("populate_by_name") or config.get("validate_by_name")):
+    if config.get("validate_by_alias") is False:
+        return {}
+    if not _model_config_accepts_field_names(args_model):
         return {}
     alias_map: dict[str, str] = {}
     for field_name, field_info in fields.items():
