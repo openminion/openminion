@@ -9,19 +9,99 @@ from jsonschema import Draft202012Validator
 from openminion.modules.brain.loop.context.task_context import (
     TaskContextBudgetError,
     message_token_estimate,
+    resolve_entry_task_update,
     with_task_update_schema,
 )
+from openminion.modules.brain.loop.context.task_entry import (
+    apply_entry_task_context,
+    entry_task_tool_specs,
+)
+from openminion.modules.brain.loop.entry import clarify_tool_spec, respond_tool_spec
+from openminion.modules.brain.loop.tools.shortlisting import build_tool_request_spec
 from openminion.modules.brain.loop.tools.runtime import (
     DefaultAdaptiveToolLoopLLMRuntime,
 )
 from openminion.modules.brain.schemas.task_context import ResolvedTaskContext
-from openminion.modules.llm.schemas import LLMResponse, Message, ToolSpec
+from openminion.modules.llm.schemas import LLMResponse, Message, ToolCall, ToolSpec
+from tests.brain.runner_test_support import fake_logger
 
 
 def task():
     return ResolvedTaskContext(
         revision=1, task_id="guard-test", objective="Export", consumed_input="0" * 64
     )
+
+
+@pytest.mark.parametrize("patch_index", [0, 1])
+def test_parallel_entry_calls_commit_one_update_and_strip_its_sidecar(patch_index):
+    current = task()
+    state = SimpleNamespace(resolved_task_context=current)
+    specs, error = entry_task_tool_specs(
+        [build_tool_request_spec(), respond_tool_spec(), clarify_tool_spec()],
+        state,
+        has_new_input=True,
+    )
+    assert error is None
+    for spec in specs:
+        assert ("task_update" in spec.input_schema["required"]) == (
+            spec.name in {"respond", "clarify"}
+        )
+    calls = [
+        ToolCall(id=str(index), name="tool.request", arguments={"name": name})
+        for index, name in enumerate(["file.read", "file.list_dir"])
+    ]
+    calls[patch_index].arguments["task_update"] = {
+        "operation": "update",
+        "expected_revision": 1,
+        "user_quote": "Read both files",
+        "objective": "Read both files",
+    }
+    calls[patch_index].raw_arguments = "entry-only sidecar"
+    validator = Draft202012Validator(specs[0].input_schema)
+    for call in calls:
+        validator.validate(call.arguments)
+    response = LLMResponse(ok=True, provider="test", model="test", tool_calls=calls)
+    error = apply_entry_task_context(
+        state,
+        response,
+        user_input="Read both files",
+        clarify=False,
+        logger=fake_logger(),
+    )
+    assert error is None
+    updated = state.resolved_task_context
+    assert updated.revision == 2 and updated.task_id == current.task_id
+    assert updated.objective == "Read both files"
+    assert calls[patch_index].raw_arguments is None
+    assert [call.arguments for call in calls] == [
+        {"name": "file.read"},
+        {"name": "file.list_dir"},
+    ]
+
+
+@pytest.mark.parametrize("patches", [[], ["Read both files"] * 2, ["Read", "files"]])
+def test_parallel_entry_rejects_absent_or_multiple_updates_without_mutation(patches):
+    current = task()
+    state = SimpleNamespace(resolved_task_context=current)
+    calls = [
+        ToolCall(id=str(index), name="tool.request", arguments={"name": name})
+        for index, name in enumerate(["file.read", "file.list_dir"])
+    ]
+    for call, quote in zip(calls, patches):
+        call.arguments["task_update"] = {
+            "operation": "update",
+            "expected_revision": 1,
+            "user_quote": quote,
+            "objective": quote,
+        }
+    response = LLMResponse(ok=True, provider="test", model="test", tool_calls=calls)
+    before = response.model_dump()
+    with pytest.raises(ValueError, match="Missing task_update|Exactly one task_update"):
+        resolve_entry_task_update(
+            state, response, user_input="Read both files", clarify=False
+        )
+    assert state.resolved_task_context is current
+    assert response.model_dump() == before
 
 
 @pytest.mark.parametrize("occupied", [False, True])

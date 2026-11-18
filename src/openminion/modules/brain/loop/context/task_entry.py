@@ -284,7 +284,9 @@ def entry_task_tool_specs(
     try:
         return [
             with_task_update_schema(
-                spec, required=state.resolved_task_context is not None
+                spec,
+                required=state.resolved_task_context is not None
+                and spec.name == "respond",
             )
             for spec in specs
         ], None
