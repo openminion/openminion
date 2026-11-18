@@ -518,6 +518,7 @@ def test_afe_usage_survives_user_input_interpretation(tmp_path, reset_policy) ->
             tick_ctx=TickRunContext(
                 session_id=state.session_id,
                 user_input="Repair the local adapter.",
+                has_new_user_input=True,
                 forced_reset_policy_name=reset_policy,
             ),
         )
