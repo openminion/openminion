@@ -42,6 +42,7 @@ class RuntimeTurnRequest:
     explicit_agent: bool = False
     trusted_task_context: Mapping[str, str] | None = None
     trusted_security_scan_context: Mapping[str, str] | None = None
+    image_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -114,6 +115,7 @@ class TurnContext:
     message: str
     forced_tools: tuple[str, ...]
     inbound_metadata: Mapping[str, str] | None
+    image_refs: tuple[str, ...] = ()
 
 
 def freeze_metadata(metadata: dict[str, str] | None) -> Mapping[str, str] | None:

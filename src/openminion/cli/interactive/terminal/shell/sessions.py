@@ -26,11 +26,14 @@ async def run_room_turn_if_bound(
     transcript: TerminalTranscript,
     handle: Any,
     request_id: str | None = None,
+    image_paths: list[str] | None = None,
 ) -> str | None:
     room_runner = getattr(runtime, "run_room_turn", None)
     room_detector = getattr(runtime, "is_room_session", None)
     if not callable(room_runner) or not callable(room_detector) or not room_detector():
         return None
+    if image_paths:
+        raise ValueError("Images are supported in individual conversations, not rooms")
     cancel_event = Event()
     try:
         messages = room_result_chat_messages(
@@ -71,12 +74,15 @@ def runtime_message_stream(
     approval_callback: Callable[..., Any] | None,
     *,
     request_id: str | None = None,
+    image_paths: list[str] | None = None,
 ) -> Any:
     kwargs: dict[str, Any] = {"progress_callback": progress_callback}
     if approval_callback is not None:
         kwargs["approval_callback"] = approval_callback
     if request_id:
         kwargs["request_id"] = request_id
+    if image_paths:
+        kwargs["image_paths"] = image_paths
     return runtime.send_message(text, **kwargs)
 
 

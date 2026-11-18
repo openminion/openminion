@@ -466,6 +466,9 @@ def test_run_sessions_delete_retry_clears_stale_edge_after_release_failure(
         def __exit__(self, *_exc) -> None:
             return None
 
+        def revoke_session_images(self, _session_id) -> None:
+            pass
+
         def ref_remove_owner(self, _owner_type, _owner_id) -> None:
             raise RuntimeError("edge failure")
 

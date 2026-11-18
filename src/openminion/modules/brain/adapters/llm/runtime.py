@@ -1,3 +1,5 @@
+from openminion.modules.artifact.models import ImageInputContext
+from openminion.modules.llm.schemas import LLMRequest, LLMResponse
 import json
 from collections.abc import Callable
 from typing import Any, cast
@@ -17,7 +19,6 @@ from openminion.modules.brain.retry import (
     STRUCTURED_RETRYABLE_KEY,
 )
 from openminion.modules.llm.errors import ErrorCode, LLMCtlError
-from openminion.modules.llm.schemas import LLMResponse
 from openminion.modules.telemetry.trace.structured import write_structured_trace
 from openminion.modules.telemetry.trace.phase_timing import (
     record_active_chat_provider_call,
@@ -314,6 +315,23 @@ class LlmctlAdapter(LLMAPI):
     def __init__(self, client: Any) -> None:
         self.client = client
         self._last_trace_context: dict[str, Any] | None = None
+
+    def read_images(
+        self,
+        record: ImageInputContext,
+        *,
+        question: str,
+        max_output_tokens: int,
+        on_response: Callable[[LLMResponse], None],
+        before_request: Callable[[LLMRequest], LLMRequest],
+    ) -> LLMResponse:
+        return self.client.read_images(
+            record,
+            question=question,
+            max_output_tokens=max_output_tokens,
+            on_response=on_response,
+            before_request=before_request,
+        )
 
     def get_last_trace_context(self) -> dict[str, Any] | None:
         return dict(self._last_trace_context) if self._last_trace_context else None

@@ -46,6 +46,7 @@ def execute_runtime_turn(
         inbound_metadata.update(request.trusted_security_scan_context)
     context = _build_turn_context(
         message=request.message,
+        image_refs=request.image_refs,
         forced_tools=list(request.forced_tools),
         inbound_metadata=inbound_metadata or None,
     )
@@ -217,6 +218,7 @@ def _execute_routed_turns(
             target=request.target,
             context=_build_turn_context(
                 message=request.message,
+                image_refs=request.image_refs,
                 forced_tools=list(context.forced_tools),
                 inbound_metadata=inbound_metadata or None,
             ),
@@ -318,9 +320,11 @@ def _build_turn_context(
     message: str,
     forced_tools: list[str] | None,
     inbound_metadata: dict[str, str] | None,
+    image_refs: tuple[str, ...] = (),
 ) -> TurnContext:
     return TurnContext(
         message=message,
+        image_refs=image_refs,
         forced_tools=tuple(forced_tools or ()),
         inbound_metadata=freeze_metadata(inbound_metadata),
     )
@@ -357,6 +361,7 @@ def execute_gateway_turn_impl(
                     channel=channel,
                     target=target,
                     message=context.message,
+                    image_refs=context.image_refs,
                     session_id=session_id,
                     idempotency_key=idempotency_key,
                     request_id=request_id,

@@ -30,6 +30,7 @@ dependencies = [
   "httpx>=0.27,<1",
   "jsonschema>=4.23,<5",
   "platformdirs",
+  "Pillow>=11,<13",
   # The public ``openminion`` package imports memory contracts and agent
   # runtime surfaces that depend on the released SophiaGraph package.
   "sophiagraph>=0.0.12",

@@ -32,7 +32,7 @@ from openminion.modules.storage.interfaces import (
 from openminion.modules.storage.migrations import MigrationRunner
 from openminion.modules.storage.models import BlobRef, EventRef, ReindexReport, RowRef
 from .runtime.provider_selection import resolve_storage_provider
-from openminion.modules.storage.runtime.session_store import SessionRecord
+from openminion.modules.storage.runtime.session_store import SessionRecord, SessionStore
 from openminion.modules.storage.runtime.session_store.keys import (
     is_room_session_key,
     normalize_identity,
@@ -71,6 +71,7 @@ __all__ = (
     "resolve_storage_provider",
     "RowRef",
     "SessionRecord",
+    "SessionStore",
     "STORAGE_INTERFACE_VERSION",
     "StorageEnvelope",
     "StorageError",

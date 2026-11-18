@@ -4,7 +4,8 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from openminion.modules.llm.schemas import LLMResponse
+    from openminion.modules.artifact.models import ImageInputContext
+    from openminion.modules.llm.schemas import LLMRequest, LLMResponse
     from openminion.modules.skill.learning.runtime import WorkflowObservationResult
 
 from pydantic import BaseModel
@@ -166,6 +167,16 @@ class ContextAPI(Protocol):
 @runtime_checkable
 class LLMAPI(Protocol):
     contract_version: str
+
+    def read_images(
+        self,
+        record: ImageInputContext,
+        *,
+        question: str,
+        max_output_tokens: int,
+        on_response: Callable[[LLMResponse], None],
+        before_request: Callable[[LLMRequest], LLMRequest],
+    ) -> LLMResponse: ...
 
     def estimate_tokens(self, *, model: str, context: dict[str, Any]) -> int: ...
 

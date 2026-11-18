@@ -55,6 +55,7 @@ def _handle_health_request(
     if probe_session_id:
         payload["probe_session_id"] = probe_session_id
     if path == "/v1/health":
+        payload["capabilities"] = ["turns.images.v1"]
         payload["daemon"] = v1_daemon_health(
             ctx.runtime,
             config_path=ctx.config_path,
