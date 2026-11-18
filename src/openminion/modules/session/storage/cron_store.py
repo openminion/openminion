@@ -33,38 +33,8 @@ from openminion.modules.storage.record_store import RecordStore
 
 from .cron_coordination import CronCoordinationStore, _initial_next_due
 from .json_utils import parse_json, to_json
+from .cron_due import canonical_due, due_job_rows
 from .rows import row_to_cron_job, row_to_cron_run
-
-
-def _due_job_rows(
-    record_store: RecordStore, *, now_iso: str, now: datetime, limit: int
-) -> list[dict[str, Any]]:
-    rows = record_store.query_dicts(
-        """
-        SELECT * FROM cron_jobs
-        WHERE enabled = 1 AND next_due_at IS NOT NULL AND next_due_at <= ?
-        ORDER BY next_due_at ASC LIMIT ?
-        """,
-        (now_iso, limit),
-    )
-    if rows:
-        return rows
-    fallback_rows = record_store.query_dicts(
-        """
-        SELECT * FROM cron_jobs
-        WHERE enabled = 1 AND next_due_at IS NOT NULL
-        ORDER BY next_due_at ASC
-        """
-    )
-    due_fallback: list[dict[str, Any]] = []
-    for row in fallback_rows:
-        try:
-            due_at = parse_iso_datetime(str(row["next_due_at"]))
-        except Exception:
-            continue
-        if due_at <= now:
-            due_fallback.append(row)
-    return due_fallback[:limit]
 
 
 class CronStore(CronCoordinationStore):
@@ -268,7 +238,9 @@ class CronStore(CronCoordinationStore):
         now = to_iso_utc(now_dt)
         next_due: str | None = None
         if enabled and next_due_at_override is not None:
-            next_due = next_due_at_override
+            # Compensation writes must land in the same canonical form as ordinary
+            # creation, so a restored offset value cannot outlive this call.
+            next_due = canonical_due(next_due_at_override)
         elif enabled:
             schedule = normalize_schedule(job["schedule"])
             if str(schedule["kind"]) == "at":
@@ -486,9 +458,7 @@ class CronStore(CronCoordinationStore):
             )
             if self._scheduler_is_paused_locked():
                 return []
-            rows = _due_job_rows(
-                self._record_store, now_iso=now, now=now_dt, limit=safe_limit
-            )
+            rows = due_job_rows(self._record_store, now_dt=now_dt, limit=safe_limit)
 
             for row in rows:
                 job = row_to_cron_job(row)
