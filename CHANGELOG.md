@@ -7,6 +7,13 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Non-entry LLM calls (`act`, `judge`, `reflect`, freshness fallback) now record the
+  request they were billed for, next to the provider-billed `usage`: `context_bytes`,
+  `context_tokens` (named as an estimate), segment count, tool-schema count and bytes,
+  and request/response bytes. A call whose request this recorder was not given is
+  marked `attribution: usage_only` instead of reporting zero context columns, so an
+  absent measurement cannot be read as an empty request (Refs #640).
+
 - The agent loop's stall rule now counts consecutive failures: a productive batch clears
   the no-progress counter, so two intermittent failures spread across a turn no longer end it
   while work is still getting done (Refs #679).

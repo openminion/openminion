@@ -629,6 +629,8 @@ class DefaultAdaptiveToolLoopLLMRuntime:
             record_llm_response(
                 purpose=str((metadata or {}).get("purpose", "adaptive")),
                 response=response,
+                messages=list(messages),
+                tools=list(tools),
             )
             record_active_chat_provider_call(
                 purpose=str((metadata or {}).get("purpose", "adaptive")),
@@ -656,7 +658,10 @@ class DefaultAdaptiveToolLoopLLMRuntime:
             messages, tools if tools else None, **overrides
         )
         record_llm_response(
-            purpose=str((metadata or {}).get("purpose", "adaptive")), response=response
+            purpose=str((metadata or {}).get("purpose", "adaptive")),
+            response=response,
+            messages=list(messages),
+            tools=list(tools),
         )
         record_active_chat_provider_call(
             purpose=str((metadata or {}).get("purpose", "adaptive")),
