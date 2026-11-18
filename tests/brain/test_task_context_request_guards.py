@@ -7,6 +7,7 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from openminion.modules.brain.loop.context.task_context import (
+    TASK_UPDATE_INSTRUCTIONS,
     TaskContextBudgetError,
     message_token_estimate,
     resolve_entry_task_update,
@@ -30,6 +31,47 @@ def task():
     return ResolvedTaskContext(
         revision=1, task_id="guard-test", objective="Export", consumed_input="0" * 64
     )
+
+
+def test_condition_quotes_preserve_json_punctuation():
+    spec = with_task_update_schema(build_tool_request_spec(), required=False)
+    description = spec.input_schema["properties"]["task_update"]["description"]
+    for instructions in (TASK_UPDATE_INSTRUCTIONS, description):
+        assert "user_quote and every set_conditions[].quote" in instructions
+        assert "including punctuation and JSON quotes" in instructions
+    user_input = 'Repair the finding. Allowed scope: {"allowed_paths": ["app.py"]}'
+    state = SimpleNamespace(resolved_task_context=None)
+    patch = {
+        "operation": "start",
+        "expected_revision": 0,
+        "user_quote": "Repair the finding",
+        "objective": "Repair the finding in app.py",
+        "set_conditions": [
+            {"key": "allowed_paths", "quote": 'allowed_paths: ["app.py"]'}
+        ],
+    }
+    call = ToolCall(
+        id="scope",
+        name="tool.request",
+        arguments={"name": "task.delegate", "task_update": patch},
+    )
+    response = LLMResponse(ok=True, provider="test", model="test", tool_calls=[call])
+    before = response.model_dump()
+    with pytest.raises(
+        ValueError, match="A condition must quote the latest user input"
+    ):
+        resolve_entry_task_update(state, response, user_input=user_input, clarify=False)
+    assert state.resolved_task_context is None
+    assert response.model_dump() == before
+    call.arguments["task_update"]["set_conditions"][0]["quote"] = (
+        '"allowed_paths": ["app.py"]'
+    )
+    updated = resolve_entry_task_update(
+        state, response, user_input=user_input, clarify=False
+    )
+    assert updated.revision == 1
+    assert updated.conditions == {"allowed_paths": '"allowed_paths": ["app.py"]'}
+    assert call.arguments == {"name": "task.delegate"}
 
 
 @pytest.mark.parametrize("patch_index", [0, 1])
