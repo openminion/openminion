@@ -801,6 +801,7 @@ def test_sdk_tool_honours_nested_name_only_validation_config(sdk_tools):
     assert received == []
     assert "VALUE 7" not in rejected.text
 
+
 def test_sdk_tool_preserves_transforming_validator_semantics(sdk_tools):
     calls = []
 
