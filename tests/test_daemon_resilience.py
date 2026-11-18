@@ -543,6 +543,9 @@ def test_daemon_stop_force_kills_hung_process(
     )
     monkeypatch.setattr(daemon_cmd, "load_config", lambda _path: SimpleNamespace())
     monkeypatch.setattr(
+        daemon_cmd, "probe_daemon_endpoint", lambda endpoint: ("unreachable", {})
+    )
+    monkeypatch.setattr(
         daemon_mod, "resolve_daemon_pid_file", lambda _cfg, **_roots: pid_file
     )
     monkeypatch.setattr(daemon_mod, "read_pid", lambda _pid_file: 123)

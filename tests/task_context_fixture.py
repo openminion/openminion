@@ -18,27 +18,25 @@ def replace_entry_task(
         for spec in request.get("tools") or []
     }
     contents = [_content(item) for item in request["messages"]]
+    snapshot = next(
+        (text for text in contents if text.startswith("CURRENT TASK (")), None
+    )
+    if snapshot is None:
+        return message
     selected = next(
         (
             call
             for call in calls
             if "task_update"
-            in specs.get(call["function"]["name"], {}).get("required", [])
+            in specs.get(call["function"]["name"], {}).get("properties", {})
         ),
         None,
     )
     if not specs and any(TASK_UPDATE_INSTRUCTIONS in content for content in contents):
-        snapshot = next(
-            (text for text in contents if text.startswith("CURRENT TASK (")), None
-        )
-        if snapshot is not None:
-            # Ollama fallback transmits the entry contract in messages, without native tools.
-            selected = calls[0]
+        # Ollama fallback transmits the entry contract in messages, without native tools.
+        selected = calls[0]
     if selected is None:
         return message
-    snapshot = next(
-        content for content in contents if content.startswith("CURRENT TASK (")
-    )
     task, _ = json.JSONDecoder().raw_decode(snapshot.split("\n", 1)[1])
     latest = _content(request["messages"][-1])
     assert request["messages"][-1]["role"] == "user" and not latest.startswith(

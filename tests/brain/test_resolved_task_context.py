@@ -398,7 +398,11 @@ def test_entry_budget_failure_preserves_snapshot_and_makes_no_provider_call(curr
         resolved_task_context=current, budgets_remaining=SimpleNamespace(tokens=1)
     )
     messages, _, error = prepare_task_context_prompt(
-        SimpleNamespace(llm_api=None), state, model="test", has_new_input=True, target=1
+        SimpleNamespace(llm_api=None),
+        state,
+        model="test",
+        user_input="Continue",
+        target=1,
     )
     assert messages == [] and error.reason_code == "task_context_budget_exceeded"
     assert state.resolved_task_context is current
