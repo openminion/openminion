@@ -66,7 +66,7 @@ def _hint_not_before(response: LLMResponse) -> float | None:
 
 
 def _hinted_wait_fits(not_before: float) -> bool:
-    remaining = remaining_turn_timeout(math.inf)
+    remaining: float = remaining_turn_timeout(math.inf)
     return remaining != math.inf and not_before - time.monotonic() < remaining
 
 
