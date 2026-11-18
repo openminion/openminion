@@ -7,6 +7,11 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Preserve accepted Pydantic argument keys through SDK tool sanitizing and
+  execution. Alias-only inputs remain usable, serialization aliases are not
+  treated as input keys, and representation selection no longer revalidates
+  already accepted arguments (Refs #454).
+
 - The freshness classifier is skipped only for the explicit `tool <name>` request form. Verb phrasing — including
   `use the time tool to get now`, which previously took the shortcut — is classified again, because punctuation or a
   dotted token cannot distinguish a real invocation from prose such as `use file.read documentation to explain its
