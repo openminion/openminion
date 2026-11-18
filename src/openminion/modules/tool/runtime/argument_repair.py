@@ -204,6 +204,9 @@ def _model_config_accepts_field_names(model_type: Any) -> bool:
 def _model_dump_accepts_input_keys(
     model: BaseModel, seen: set[int] | None = None
 ) -> bool:
+    # RootModel dumps as {"root": ...}, but its accepted input is the root value.
+    if getattr(type(model), "__pydantic_root_model__", False):
+        return False
     visited = seen if seen is not None else set()
     identity = id(model)
     if identity in visited:
