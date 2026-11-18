@@ -62,7 +62,7 @@ def _hint_not_before(response: LLMResponse) -> float | None:
         return None
     raw = str((getattr(error, "details", None) or {}).get("retry_after") or "")
     wait = retry_after_seconds(raw, now=time.time())
-    return None if wait is None else time.monotonic() + wait
+    return None if not wait else time.monotonic() + wait
 
 
 def _hinted_wait_fits(not_before: float) -> bool:
@@ -629,11 +629,11 @@ def _call_with_retries(
     routes = _route_admission.get()
     route = (provider_name, model_name)
     if routes is not None and route in routes:
-        not_before, recorded = routes[route]
-        if not_before > time.monotonic():
-            if not _hinted_wait_fits(not_before):
+        ready_at, recorded = routes[route]
+        if ready_at > time.monotonic():
+            if not _hinted_wait_fits(ready_at):
                 return recorded
-            _wait_until(not_before)
+            _wait_until(ready_at)
 
     for attempt in range(max_retries + 1):
         started = time.perf_counter()
@@ -722,8 +722,7 @@ def _call_with_retries(
         )
         if err_code in RETRYABLE_CODES and attempt < max_retries:
             step = max(0.0, (backoff_ms / 1000.0) * (2**attempt))
-            hinted = not_before is not None and not_before > time.monotonic()
-            if hinted and not _hinted_wait_fits(not_before):
+            if not_before is not None and not _hinted_wait_fits(not_before):
                 return response
             client._emit_operation(
                 request=call_request,
@@ -734,7 +733,7 @@ def _call_with_retries(
                 error_code=err_code,
                 extra={**attempt_extra, "attempt_posture": "retry"},
             )
-            if hinted:
+            if not_before is not None:
                 _wait_until(max(not_before, time.monotonic() + step))
             else:
                 time.sleep(step)
