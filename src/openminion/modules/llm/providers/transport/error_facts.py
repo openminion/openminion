@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 from openminion.base.redaction import redact_sensitive_text
@@ -50,6 +53,19 @@ def openai_error_facts(
     return facts
 
 
+def retry_after_seconds(value: str, *, now: float) -> float | None:
+    """Seconds a ``Retry-After`` value asks to wait from epoch ``now``; None if invalid."""
+    if re.fullmatch(r"[0-9]+", value):
+        return float(int(value))
+    try:
+        eligible = parsedate_to_datetime(value)
+    except ValueError:
+        return None
+    if eligible.tzinfo is None:
+        eligible = eligible.replace(tzinfo=timezone.utc)
+    return max(0.0, eligible.timestamp() - now)
+
+
 def openai_error_message(facts: Mapping[str, Any], *, status_code: int) -> str:
     return str(facts.get("upstream_message") or f"HTTP {status_code}")
 
@@ -81,4 +97,5 @@ __all__ = [
     "malformed_response_facts",
     "openai_error_facts",
     "openai_error_message",
+    "retry_after_seconds",
 ]

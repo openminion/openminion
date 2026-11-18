@@ -2,13 +2,16 @@
 
 import json
 import logging
+import math
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
 from pydantic import ValidationError
 
-from openminion.modules.runtime.sync import raise_if_cancelled
+from openminion.modules.runtime.sync import raise_if_cancelled, remaining_turn_timeout
 from openminion.modules.telemetry.trace.phase_timing import (
     active_chat_phase,
     record_active_chat_provider_attempt,
@@ -27,6 +30,7 @@ from ..diagnostics.events import (
 )
 from ..errors import ErrorCode, LLMCtlError
 from ..providers.cost import estimate_usage_cost_usd
+from ..providers.transport.error_facts import retry_after_seconds
 from ..schemas import (
     LLMRequest,
     LLMResponse,
@@ -38,6 +42,39 @@ from ..schemas import (
 
 RETRYABLE_CODES = {"RATE_LIMITED", "TIMEOUT", "PROVIDER_ERROR"}
 LOGGER = logging.getLogger(__name__)
+# Per entry retry loop: (provider, model) -> (monotonic not-before, its error response).
+_Routes = dict[tuple[str, str], tuple[float, LLMResponse]]
+_route_admission: ContextVar[_Routes | None] = ContextVar("llm_routes", default=None)
+
+
+@contextmanager
+def route_admission_scope() -> Iterator[None]:
+    token = _route_admission.set({})
+    try:
+        yield
+    finally:
+        _route_admission.reset(token)
+
+
+def _hint_not_before(response: LLMResponse) -> float | None:
+    error = response.error
+    if error is None or error.code not in RETRYABLE_CODES:
+        return None
+    raw = str((error.details or {}).get("retry_after", "") or "")
+    wait = retry_after_seconds(raw, now=time.time())
+    return None if wait is None else time.monotonic() + wait
+
+
+def _hinted_wait_fits(not_before: float) -> bool:
+    remaining = remaining_turn_timeout(math.inf)
+    return remaining != math.inf and not_before - time.monotonic() < remaining
+
+
+def _wait_until(until: float) -> None:
+    while (left := until - time.monotonic()) > 0:
+        raise_if_cancelled()
+        time.sleep(min(left, 0.05))
+    raise_if_cancelled()
 
 
 @dataclass
@@ -589,6 +626,14 @@ def _call_with_retries(
     route_posture: str = "primary",
 ) -> LLMResponse:
     max_retries, backoff_ms = client._retry_config(overrides)
+    routes = _route_admission.get()
+    route = (provider_name, model_name)
+    if routes is not None and route in routes:
+        not_before, recorded = routes[route]
+        if not_before > time.monotonic():
+            if not _hinted_wait_fits(not_before):
+                return recorded
+            _wait_until(not_before)
 
     for attempt in range(max_retries + 1):
         started = time.perf_counter()
@@ -653,6 +698,9 @@ def _call_with_retries(
         err_code = (
             response.error.code if response.error is not None else "PROVIDER_ERROR"
         )
+        not_before = _hint_not_before(response)
+        if routes is not None:
+            routes[route] = (-math.inf if not_before is None else not_before, response)
         _record_provider_attempt_result(
             attempt_extra=attempt_extra,
             attempt=attempt_number,
@@ -673,6 +721,10 @@ def _call_with_retries(
             extra=_extra_with_latency(attempt_extra, response=response),
         )
         if err_code in RETRYABLE_CODES and attempt < max_retries:
+            step = max(0.0, (backoff_ms / 1000.0) * (2**attempt))
+            hinted = not_before is not None and not_before > time.monotonic()
+            if hinted and not _hinted_wait_fits(not_before):
+                return response
             client._emit_operation(
                 request=call_request,
                 operation="retry",
@@ -682,7 +734,10 @@ def _call_with_retries(
                 error_code=err_code,
                 extra={**attempt_extra, "attempt_posture": "retry"},
             )
-            time.sleep(max(0.0, (backoff_ms / 1000.0) * (2**attempt)))
+            if hinted:
+                _wait_until(max(not_before, time.monotonic() + step))
+            else:
+                time.sleep(step)
             continue
         return response
 

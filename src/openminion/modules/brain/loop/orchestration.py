@@ -25,6 +25,7 @@ from openminion.modules.llm.client_call import (
     response_telemetry_event_fields,
 )
 from openminion.modules.llm.constants import REQUESTABLE_TOOL_NAMES_METADATA_KEY
+from openminion.modules.llm.runtime.flow import route_admission_scope
 from openminion.modules.brain.tools.parser import normalize_tool_name_for_brain
 from openminion.modules.brain.constants import (
     BRAIN_DECISION_ROUTE_ACT,
@@ -647,165 +648,168 @@ def decide(
     reconsider_clarification = False
     clarification_reconsidered = False
     project_control_retried = False
-    for attempt in range(max_retries + 2):
-        call_id = f"{llm_call_id}:{attempt}" if attempt else llm_call_id
-        emit_entry_identity_audit(logger, state, runner, call_id)
-        messages = list(base_messages)
-        if attempt:
-            messages = _insert_retry_system_message(
-                messages,
-                retry_message=(
-                    ENTRY_CLARIFY_RECONSIDERATION_MESSAGE
-                    if reconsider_clarification
-                    else build_entry_retry_message(has_real_tools=has_real_tools)
-                ),
+    with route_admission_scope():
+        for attempt in range(max_retries + 2):
+            call_id = f"{llm_call_id}:{attempt}" if attempt else llm_call_id
+            emit_entry_identity_audit(logger, state, runner, call_id)
+            messages = list(base_messages)
+            if attempt:
+                messages = _insert_retry_system_message(
+                    messages,
+                    retry_message=(
+                        ENTRY_CLARIFY_RECONSIDERATION_MESSAGE
+                        if reconsider_clarification
+                        else build_entry_retry_message(has_real_tools=has_real_tools)
+                    ),
+                )
+            reconsider_clarification = False
+            try:
+                response = runtime.complete(
+                    messages=messages,
+                    tools=tool_specs,
+                    model=model,
+                    tool_choice="auto" if tool_specs else "none",
+                    max_output_tokens=budget_max_tokens,
+                    metadata=entry_metadata,
+                )
+            except Exception as exc:  # noqa: BLE001
+                if isinstance(exc, TaskContextBudgetError):
+                    return task_budget_entry_decision(exc)
+                error_category, retryable = classify_retryable(exc)
+                request_id_payload = provider_request_id_payload(
+                    getattr(exc, "details", None)
+                )
+                logger.emit(
+                    "llm.call.failed",
+                    {
+                        "llm_call_id": call_id,
+                        "purpose": "entry",
+                        "run_id": str(state.root_turn_id or ""),
+                        "usage": {},
+                        "model": model,
+                        "error": str(exc),
+                        "error_category": error_category,
+                        "attempts": attempt + 1,
+                        **request_id_payload,
+                    },
+                    trace_id=state.trace_id,
+                    status="error",
+                    error={"code": "LLM_CALL_FAILED", "message": str(exc)},
+                )
+                if retryable and attempt < max_retries:
+                    backoff_ms = compute_backoff_ms(retry_policy, attempt)
+                    logger.emit(
+                        "llm.call.retry",
+                        {
+                            "llm_call_id": call_id,
+                            "attempt": attempt + 1,
+                            "reason": "provider_transient_error",
+                            "error_category": error_category,
+                            "backoff_ms": int(backoff_ms),
+                            **request_id_payload,
+                        },
+                        trace_id=state.trace_id,
+                    )
+                    _BACKOFF_SLEEP(backoff_ms / 1000.0)
+                    continue
+                provider_error = _provider_failure_error(exc)
+                if provider_error is not None:
+                    raise provider_error from exc
+                raise
+            usage_payload = _emit_entry_response(
+                logger,
+                state,
+                response,
+                call_id=call_id,
+                metrics=request_metrics,
+                attempt=attempt,
             )
-        reconsider_clarification = False
-        try:
-            response = runtime.complete(
-                messages=messages,
-                tools=tool_specs,
-                model=model,
-                tool_choice="auto" if tool_specs else "none",
-                max_output_tokens=budget_max_tokens,
-                metadata=entry_metadata,
-            )
-        except Exception as exc:  # noqa: BLE001
-            if isinstance(exc, TaskContextBudgetError):
-                return task_budget_entry_decision(exc)
-            error_category, retryable = classify_retryable(exc)
-            request_id_payload = provider_request_id_payload(
-                getattr(exc, "details", None)
-            )
-            logger.emit(
-                "llm.call.failed",
-                {
-                    "llm_call_id": call_id,
-                    "purpose": "entry",
-                    "run_id": str(state.root_turn_id or ""),
-                    "usage": {},
-                    "model": model,
-                    "error": str(exc),
-                    "error_category": error_category,
-                    "attempts": attempt + 1,
-                    **request_id_payload,
-                },
-                trace_id=state.trace_id,
-                status="error",
-                error={"code": "LLM_CALL_FAILED", "message": str(exc)},
-            )
-            if retryable and attempt < max_retries:
-                backoff_ms = compute_backoff_ms(retry_policy, attempt)
+            debit_entry_response(runner, state, usage_payload, logger)
+            last_detection = detect_entry_path(response)
+            if (
+                last_detection.path == "clarify"
+                and can_request_investigation_tool
+                and not clarification_reconsidered
+                and attempt < max_retries
+            ):
+                clarification_reconsidered = True
+                reconsider_clarification = True
                 logger.emit(
                     "llm.call.retry",
                     {
                         "llm_call_id": call_id,
                         "attempt": attempt + 1,
-                        "reason": "provider_transient_error",
-                        "error_category": error_category,
-                        "backoff_ms": int(backoff_ms),
-                        **request_id_payload,
+                        "reason": "clarify_before_tool_investigation",
                     },
                     trace_id=state.trace_id,
                 )
-                _BACKOFF_SLEEP(backoff_ms / 1000.0)
                 continue
-            provider_error = _provider_failure_error(exc)
-            if provider_error is not None:
-                raise provider_error from exc
-            raise
-        usage_payload = _emit_entry_response(
-            logger,
-            state,
-            response,
-            call_id=call_id,
-            metrics=request_metrics,
-            attempt=attempt,
-        )
-        debit_entry_response(runner, state, usage_payload, logger)
-        last_detection = detect_entry_path(response)
-        if (
-            last_detection.path == "clarify"
-            and can_request_investigation_tool
-            and not clarification_reconsidered
-            and attempt < max_retries
-        ):
-            clarification_reconsidered = True
-            reconsider_clarification = True
-            logger.emit(
-                "llm.call.retry",
-                {
-                    "llm_call_id": call_id,
-                    "attempt": attempt + 1,
-                    "reason": "clarify_before_tool_investigation",
-                },
-                trace_id=state.trace_id,
-            )
-            continue
-        if not project_control_retried and _has_invalid_project_entry_control(response):
-            project_control_retried = True
-            continue
-        if not _is_empty_entry_response(response):
-            break
-        if getattr(response, "empty_payload_recovered", False) is True:
+            if not project_control_retried and _has_invalid_project_entry_control(
+                response
+            ):
+                project_control_retried = True
+                continue
+            if not _is_empty_entry_response(response):
+                break
+            if getattr(response, "empty_payload_recovered", False) is True:
+                if attempt < max_retries:
+                    continue
+                raise ProviderError(
+                    "Provider returned no usable entry response after configured retries",
+                    code="EMPTY_PROVIDER_RESPONSE",
+                )
+            if (
+                str(getattr(state, "run_trigger", "") or "") == "idle_tick"
+                and last_detection is not None
+                and last_detection.path == "respond"
+            ):
+                logger.emit(
+                    "llm.call.empty_response_accepted",
+                    {
+                        "llm_call_id": call_id,
+                        "reason": "idle_tick_noop",
+                    },
+                    trace_id=state.trace_id,
+                )
+                break
             if attempt < max_retries:
+                logger.emit(
+                    "llm.call.retry",
+                    {
+                        "llm_call_id": call_id,
+                        "attempt": attempt + 1,
+                        "reason": "empty_entry_response",
+                    },
+                    trace_id=state.trace_id,
+                )
                 continue
-            raise ProviderError(
-                "Provider returned no usable entry response after configured retries",
-                code="EMPTY_PROVIDER_RESPONSE",
-            )
-        if (
-            str(getattr(state, "run_trigger", "") or "") == "idle_tick"
-            and last_detection is not None
-            and last_detection.path == "respond"
-        ):
             logger.emit(
-                "llm.call.empty_response_accepted",
+                "llm.call.failed",
                 {
                     "llm_call_id": call_id,
-                    "reason": "idle_tick_noop",
+                    "purpose": "entry",
+                    "model": model,
+                    "error": "exhausted_retries_empty_response",
                 },
                 trace_id=state.trace_id,
-            )
-            break
-        if attempt < max_retries:
-            logger.emit(
-                "llm.call.retry",
-                {
-                    "llm_call_id": call_id,
-                    "attempt": attempt + 1,
-                    "reason": "empty_entry_response",
+                status="error",
+                error={
+                    "code": "LLM_EMPTY_RESPONSE_EXHAUSTED",
+                    "message": "Provider returned empty entry responses after retries",
                 },
-                trace_id=state.trace_id,
             )
-            continue
-        logger.emit(
-            "llm.call.failed",
-            {
-                "llm_call_id": call_id,
-                "purpose": "entry",
-                "model": model,
-                "error": "exhausted_retries_empty_response",
-            },
-            trace_id=state.trace_id,
-            status="error",
-            error={
-                "code": "LLM_EMPTY_RESPONSE_EXHAUSTED",
-                "message": "Provider returned empty entry responses after retries",
-            },
-        )
-        _emit_decide_fail_closed_event(
-            logger=logger,
-            state=state,
-            reason_code="llm_empty_response",
-            source="entry_empty_response_retry_exhausted",
-            metadata={"llm_call_id": call_id, "attempts": max_retries + 1},
-        )
-        return _respond_decision(
-            confidence=0.5,
-            reason_code="llm_empty_response",
-            answer=_internal_failure_answer(),
-        )
+            _emit_decide_fail_closed_event(
+                logger=logger,
+                state=state,
+                reason_code="llm_empty_response",
+                source="entry_empty_response_retry_exhausted",
+                metadata={"llm_call_id": call_id, "attempts": max_retries + 1},
+            )
+            return _respond_decision(
+                confidence=0.5,
+                reason_code="llm_empty_response",
+                answer=_internal_failure_answer(),
+            )
 
     if response is None or last_detection is None:
         return _respond_decision(

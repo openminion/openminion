@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import subprocess
+from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from unittest.mock import patch
 
@@ -10,7 +11,10 @@ import pytest
 
 from openminion.modules.llm.errors import LLMCtlError
 from openminion.modules.llm.providers.transport.curl import curl_json_post
-from openminion.modules.llm.providers.transport.error_facts import openai_error_facts
+from openminion.modules.llm.providers.transport.error_facts import (
+    openai_error_facts,
+    retry_after_seconds,
+)
 from openminion.modules.llm.providers.transport.http import http_json_post
 from openminion.modules.llm.providers.transport.sse import iter_sse_post_lines
 
@@ -309,3 +313,35 @@ def test_curl_malformed_responses_do_not_leak(raw_body: str) -> None:
     evidence = json.dumps([debug_events, response_traces])
     assert "abcdefghijklmnop" not in evidence
     assert "response_bytes" in evidence
+
+
+_RECEIVED = datetime(2026, 11, 18, 12, 0, 0, tzinfo=timezone.utc).timestamp()
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("120", 120.0),
+        ("0", 0.0),
+        ("1.5", None),
+        ("-1", None),
+        ("1e3", None),
+        ("inf", None),
+        ("nan", None),
+        ("12abc", None),
+        ("²", None),
+        (" ", None),
+        ("", None),
+        ("Wed, 18 Nov 2026 12:00:30 GMT", 30.0),
+        ("Wed, 18 Nov 2026 12:00:30", 30.0),
+        ("Wednesday, 18-Nov-26 12:00:30 GMT", 30.0),
+        ("Wed Nov 18 12:00:30 2026", 30.0),
+        ("Wed, 18 Nov 2026 11:59:00 GMT", 0.0),
+        ("Wed, 41 Nov 2026 12:00:30 GMT", None),
+        ("not a date", None),
+    ],
+)
+def test_retry_after_seconds_parses_delay_and_http_date(
+    raw: str, expected: float | None
+) -> None:
+    assert retry_after_seconds(raw, now=_RECEIVED) == expected
