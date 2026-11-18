@@ -28,7 +28,6 @@ class RuntimeTurnRequest:
     channel: str
     target: str
     timeout_seconds: float
-    image_refs: tuple[str, ...] = ()
     session_id: str | None = None
     request_id: str | None = None
     idempotency_key: str | None = None
@@ -43,6 +42,7 @@ class RuntimeTurnRequest:
     explicit_agent: bool = False
     trusted_task_context: Mapping[str, str] | None = None
     trusted_security_scan_context: Mapping[str, str] | None = None
+    image_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
