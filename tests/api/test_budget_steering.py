@@ -20,7 +20,7 @@ class _BudgetScript(Script):
         self.closeout = None
 
     def respond(self, body):
-        if "The tool budget or a per-tool limit has been reached." in _all_text(body):
+        if "No further tool calls are available in this turn." in _all_text(body):
             self.closeout = body
             return _text(f"ZEBRA-42\n\n{FINALIZATION}")
         return super().respond(body)
