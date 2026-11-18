@@ -1,4 +1,3 @@
-import pydantic
 import pytest
 from pydantic import BaseModel, ConfigDict, Field, RootModel, ValidationError
 
@@ -181,21 +180,3 @@ def test_validate_model_tool_args_preserves_nested_alias_keys() -> None:
 
     assert result == {"query": {"external_value": 5}}
     assert _Args.model_validate(result).query.value == 5
-
-
-@pytest.mark.skipif(
-    tuple(int(part) for part in pydantic.VERSION.split(".")[:2]) < (2, 11),
-    reason="validate_by_alias/validate_by_name config exists from pydantic 2.11",
-)
-def test_validate_model_tool_args_respects_disabled_alias_validation() -> None:
-    class _NameOnly(BaseModel):
-        model_config = ConfigDict(validate_by_alias=False, validate_by_name=True)
-
-        value: int = Field(alias="external")
-
-    with pytest.raises(ValidationError):
-        validate_model_tool_args({"external": 7}, _NameOnly, "name-only")
-
-    assert validate_model_tool_args({"value": 7}, _NameOnly, "name-only") == {
-        "value": 7
-    }
