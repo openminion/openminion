@@ -793,7 +793,7 @@ def test_sdk_tool_honours_nested_name_only_validation_config(sdk_tools):
     assert type(received[0]) is _NameOnly
     assert "VALUE 7" in result.text
 
-    
+
 @pytest.mark.skipif(
     not _VALIDATE_BY_CONFIG,
     reason="validate_by_alias/validate_by_name config exists from pydantic 2.11",
