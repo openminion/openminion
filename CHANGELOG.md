@@ -7,6 +7,11 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- List every inactive tool by name with its full description at any directory
+  size; the entry-limit branch that replaced descriptions with a 40-character
+  phrase is gone, so two capabilities that differ only after a shared clause stay
+  distinguishable (Refs #619).
+
 - The agent loop's stall rule now counts consecutive failures: a productive batch clears
   the no-progress counter, so two intermittent failures spread across a turn no longer end it
   while work is still getting done (Refs #679).

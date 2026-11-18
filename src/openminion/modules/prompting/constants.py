@@ -2,4 +2,6 @@
 
 PROMPTING_MODULE_OWNER = "openminion.modules.prompting"
 
-__all__ = ["PROMPTING_MODULE_OWNER"]
+__all__ = [
+    "PROMPTING_MODULE_OWNER",
+]

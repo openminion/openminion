@@ -11,6 +11,7 @@ from openminion.modules.brain.config import (
     TOOL_SCHEMA_SHORTLIST_THRESHOLD,
 )
 from openminion.modules.llm.schemas import LLMResponse, Message, ToolSpec
+from openminion.modules.prompting.decision import render_inactive_tool_entries
 
 TOOL_REQUEST_TOOL_NAME = "tool.request"
 _SHORTLISTING_TELEMETRY_KEYS = (
@@ -155,16 +156,16 @@ def build_inactive_tool_directory_message(
             "activation itself never grants permission."
         ),
     ]
-    inactive_count = 0
+    entries: list[tuple[str, str]] = []
     for spec in requestable_tool_specs:
         name = str(getattr(spec, "name", "") or "").strip()
         if not name or name in active_names:
             continue
-        inactive_count += 1
         description = _compact_description(str(getattr(spec, "description", "") or ""))
-        lines.append(f"- {name}: {description or name}")
-    if inactive_count == 0:
+        entries.append((name, description))
+    if not entries:
         return None
+    lines.extend(render_inactive_tool_entries(entries))
     return Message(
         role="system",
         content="\n".join(lines),
