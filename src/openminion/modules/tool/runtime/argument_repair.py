@@ -221,9 +221,7 @@ def _model_dump_accepts_input_keys(
             and not accepts_field_names
         ):
             return False
-        if not _nested_models_accept_input_keys(
-            getattr(model, field_name), visited
-        ):
+        if not _nested_models_accept_input_keys(getattr(model, field_name), visited):
             return False
     return True
 
