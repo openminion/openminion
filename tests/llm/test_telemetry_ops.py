@@ -830,3 +830,102 @@ def test_route_admission_scope_resets_and_isolates_scopes() -> None:
         assert seen["fresh"] is None
         assert list(outer) == [("a", "m")]
     assert flow._route_admission.get() is None
+
+
+async def _operation_counts(
+    temp_db: str,
+    build: Callable[[TelemetryCtl], LLMCTL],
+    timeouts: list[float | None],
+) -> dict[str, int]:
+    service = TelemetryService(temp_db)
+    runtime = build(TelemetryCtl(service))
+    try:
+        for timeout_s in timeouts:
+            call = runtime.client(agent_name="default").call(
+                _request_payload("sess-retry-after-ops", "turn-1")
+            )
+            if timeout_s is None:
+                await call
+            else:
+                await await_with_cancel(call, timeout_s=timeout_s)
+        summary = await service.get_module_summary("sess-retry-after-ops")
+        return dict(summary["openminion-llm"]["operation_counts"])
+    finally:
+        await service.close()
+
+
+@pytest.mark.parametrize("timeout_s", [5.0, None], ids=["no-fit", "no-deadline"])
+def test_refused_hinted_retry_emits_no_retry_operation(
+    temp_db: str, clock: _FakeClock, timeout_s: float | None
+) -> None:
+    provider = _SequenceProvider([_rate_limited("30"), _make_response()])
+
+    counts = _run(
+        _operation_counts(
+            temp_db,
+            lambda ctl: _make_runtime(
+                telemetryctl=ctl, provider=provider, max_retries=2, backoff_ms=100
+            ),
+            [timeout_s],
+        )
+    )
+
+    assert counts == {"request": 1, "error": 1}
+
+
+def test_skipped_route_emits_no_request_operation(
+    temp_db: str, clock: _FakeClock
+) -> None:
+    order: list[str] = []
+    a = _OrderedProvider("provider_a", [_rate_limited("30")], order)
+    b = _OrderedProvider("provider_b", [_make_response()], order)
+
+    with flow.route_admission_scope():
+        counts = _run(
+            _operation_counts(
+                temp_db,
+                lambda ctl: _make_fallback_runtime(
+                    telemetryctl=ctl,
+                    primary=a,
+                    fallback=b,
+                    fallback_on=("RATE_LIMITED",),
+                ),
+                [None, None],
+            )
+        )
+
+    assert order == ["provider_a", "provider_b", "provider_b"]
+    assert counts == {"request": 3, "error": 1, "response": 2}
+
+
+def test_hinted_retry_waits_for_backoff_step_longer_than_hint(
+    clock: _FakeClock,
+) -> None:
+    provider = _SequenceProvider([_rate_limited("1"), _make_response()])
+    runtime = _make_runtime(
+        telemetryctl=None, provider=provider, max_retries=1, backoff_ms=5000
+    )
+
+    response = _call(runtime, timeout_s=120)
+
+    assert response.ok is True
+    assert provider.calls == 2
+    assert sum(clock.sleeps) == pytest.approx(5.0)
+    assert max(clock.sleeps) <= 0.05
+
+
+def test_fallback_route_hint_applies_only_to_the_fallback(clock: _FakeClock) -> None:
+    order: list[str] = []
+    runtime, _, _ = _routed(
+        order,
+        [_rate_limited(), _rate_limited()],
+        [_rate_limited("30"), _make_response()],
+    )
+
+    with flow.route_admission_scope():
+        _call(runtime, timeout_s=120)
+        response = _call(runtime, timeout_s=120)
+
+    assert response.ok is True
+    assert order == ["provider_a", "provider_b", "provider_a", "provider_b"]
+    assert sum(clock.sleeps) == pytest.approx(30.0)
