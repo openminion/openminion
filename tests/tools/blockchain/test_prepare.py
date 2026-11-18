@@ -9,9 +9,14 @@ from eth_abi.exceptions import DecodingError
 from eth_account import Account
 from web3 import Web3
 from web3.exceptions import ContractLogicError, Web3Exception
+from web3.providers.base import JSONBaseProvider
 
-from openminion.tools.blockchain.runtime import prepare_transaction
-from openminion.tools.blockchain.preparations import SessionRecordError
+from openminion.base.config.env import EnvironmentConfig
+from openminion.tools.blockchain.runtime import preparation_digest, prepare_transaction
+from openminion.tools.blockchain.preparations import (
+    SessionRecordError,
+    resolve_prepared_transaction,
+)
 from openminion.tools.blockchain.confirmation import (
     build_blockchain_send_confirmation_preview,
     parse_blockchain_send_confirmation_preview,
@@ -340,6 +345,135 @@ def test_prepare_rejects_chain_mismatch() -> None:
         "expected_chain_id": 31337,
         "observed_chain_id": 1,
     }
+
+
+class _ControlledRpcProvider(JSONBaseProvider):
+    def __init__(self, nonce_result: Any) -> None:
+        super().__init__()
+        self.nonce_result = nonce_result
+        self.calls: list[str] = []
+
+    def make_request(self, method: Any, params: Any) -> Any:
+        name = str(method)
+        self.calls.append(name)
+        if name == "eth_chainId":
+            return {"jsonrpc": "2.0", "id": 1, "result": "0x7a69"}
+        if name == "eth_getTransactionCount":
+            assert list(params) == [SENDER, "pending"]
+            return {"jsonrpc": "2.0", "id": 1, "result": self.nonce_result}
+        if name == "eth_estimateGas":
+            return {"jsonrpc": "2.0", "id": 1, "result": "0x5208"}
+        if name == "eth_getBlockByNumber":
+            return {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "number": "0x1",
+                    "baseFeePerGas": "0xa",
+                    "transactions": [],
+                },
+            }
+        if name == "eth_maxPriorityFeePerGas":
+            return {"jsonrpc": "2.0", "id": 1, "result": "0x3"}
+        if name == "eth_call":
+            return {"jsonrpc": "2.0", "id": 1, "result": "0x"}
+        raise AssertionError(f"unexpected RPC method: {name}")
+
+
+@pytest.mark.parametrize(
+    ("raw_nonce", "expected_decimal"),
+    [
+        ("0x0", "0"),
+        ("0x1", "1"),
+        ("0x9", "9"),
+    ],
+)
+def test_prepare_real_web3_preserves_valid_zero_and_positive_nonces_and_digest(
+    tmp_path,
+    raw_nonce: str,
+    expected_decimal: str,
+) -> None:
+    provider = _ControlledRpcProvider(raw_nonce)
+    context = _context(secret_service=_SecretService())
+    context.session_id = f"session-{expected_decimal}"
+    context.env = EnvironmentConfig(
+        values={
+            "OPENMINION_HOME": str(tmp_path),
+            "OPENMINION_DATA_ROOT": str(tmp_path / ".openminion"),
+        }
+    )
+
+    result = prepare_transaction(
+        {"kind": "native_transfer", "to_address": RECIPIENT, "value_wei": "1"},
+        context,
+        web3=Web3(provider),
+    )
+
+    assert result["ok"] is True
+    assert result["state"] == "prepared"
+    assert result["transaction"]["nonce"] == expected_decimal
+    expected_digest = preparation_digest(result["transaction"], None)
+    assert result["preparation_digest"] == expected_digest
+    stored = resolve_prepared_transaction(
+        {"preparation_digest": expected_digest},
+        session_id=context.session_id,
+        env=context.env,
+    )
+    assert stored["transaction"] == result["transaction"]
+    assert stored["preparation_digest"] == expected_digest
+    assert "eth_call" in provider.calls
+    assert "eth_sendRawTransaction" not in provider.calls
+
+
+@pytest.mark.parametrize(
+    "malformed_nonce",
+    [
+        True,
+        False,
+        1.75,
+        0.0,
+        None,
+        "",
+        "0x",
+        "0xzz",
+        "-0x1",
+        -1,
+        {},
+        [],
+    ],
+)
+def test_prepare_real_web3_rejects_malformed_pending_nonce_before_simulation(
+    tmp_path,
+    malformed_nonce: Any,
+) -> None:
+    provider = _ControlledRpcProvider(malformed_nonce)
+    context = _context(secret_service=_SecretService())
+    context.session_id = "session-malformed"
+    context.env = EnvironmentConfig(
+        values={
+            "OPENMINION_HOME": str(tmp_path),
+            "OPENMINION_DATA_ROOT": str(tmp_path / ".openminion"),
+        }
+    )
+
+    result = prepare_transaction(
+        {"kind": "native_transfer", "to_address": RECIPIENT, "value_wei": "1"},
+        context,
+        web3=Web3(provider),
+    )
+
+    assert result == {
+        "ok": False,
+        "state": "failed",
+        "error": {
+            "code": "RPC_UNAVAILABLE",
+            "message": "Blockchain RPC operation failed.",
+            "retryable": False,
+            "details": {"operation": "chain_read"},
+        },
+    }
+    assert provider.calls == ["eth_chainId", "eth_getTransactionCount"]
+    assert not (tmp_path / ".openminion").exists()
 
 
 def test_resolved_prepare_persists_digest_bound_v2_approval(
