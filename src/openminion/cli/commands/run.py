@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +26,113 @@ from openminion.api.turns import run_turn
 from openminion.services.gateway.constants import CALLER_HANDLES_DELIVERY_METADATA_KEY
 
 load_config = load_cli_config_from_args
+
+TURN_OUTCOME_COMPLETED = "completed"
+TURN_OUTCOME_NEEDS_USER = "needs_user"
+TURN_OUTCOME_DENIED = "denied"
+TURN_OUTCOME_FAILED = "failed"
+
+
+def _apply_turn_outcome(
+    args: Any,
+    response: dict[str, Any],
+    *,
+    jsonl: bool,
+    frames: "_StreamFramePrinter",
+) -> None:
+    """Report the turn outcome in-band; the process exit status is untouched.
+
+    The outcome reaches the caller through the printed envelope and the JSONL frames,
+    not through the exit code. Exit status here is what the previous release produced
+    on this route: 0 once the transport answered, because a returned envelope is not a
+    transport error. A distinct exit-code mapping is deferred pending the compatibility
+    decision on the public exit contract.
+    """
+    turn_outcome = _turn_outcome(response)
+    if turn_outcome != TURN_OUTCOME_COMPLETED:
+        response["turn_outcome"] = turn_outcome
+    if jsonl and frames.count == 0:
+        # Buffered fallback: no frame reached the caller, so synthesize the pair the
+        # server would have sent. The done frame makes no completion claim.
+        print_json_payload({"event": "response", "data": response}, indent=None)
+        print_json_payload({"event": "done", "data": {"ok": True}}, indent=None)
+    elif jsonl:
+        frames.flush_done(turn_outcome)
+    _print_output(args, response)
+    if turn_outcome != TURN_OUTCOME_COMPLETED and not bool(
+        getattr(args, "json", False)
+    ):
+        print(f"openminion: turn outcome: {turn_outcome}", file=sys.stderr)
+
+
+class _StreamFramePrinter:
+    """Forward daemon frames, holding the single ``done`` frame until the turn ends.
+
+    The server sends ``response`` and ``done`` before this command sees the
+    authoritative envelope, and the streamed response frame need not carry the turn
+    metadata the projection needs. Response frames are forwarded as they arrive;
+    ``done`` is held back and emitted once, after the projection, so the outcome on it
+    comes from the returned envelope rather than from the stream summary.
+    """
+
+    def __init__(self) -> None:
+        self.count = 0
+        self._done: dict[str, Any] | None = None
+
+    def __call__(self, event: DaemonStreamEvent) -> None:
+        self.count += 1
+        if event.event == "done":
+            self._done = dict(event.data) if isinstance(event.data, dict) else {}
+            return
+        print_json_payload({"event": event.event, "data": event.data}, indent=None)
+
+    def flush_done(self, turn_outcome: str) -> None:
+        if self._done is None:
+            return
+        done = self._done
+        self._done = None
+        if turn_outcome != TURN_OUTCOME_COMPLETED:
+            done["turn_outcome"] = turn_outcome
+        print_json_payload({"event": "done", "data": done}, indent=None)
+
+
+def _turn_metadata(response: dict[str, Any]) -> dict[str, Any]:
+    turn = response.get("turn")
+    if not isinstance(turn, dict):
+        return {}
+    metadata = turn.get("metadata")
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _confirmation_outcome(metadata: dict[str, Any]) -> dict[str, Any] | None:
+    raw = metadata.get("confirmation_outcome")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return None
+    return raw if isinstance(raw, dict) else None
+
+
+def _turn_outcome(response: dict[str, Any]) -> str:
+    """Project the returned turn to one of the four reported outcome values.
+
+    Transport ``ok`` stays separate: ``run`` prints the turn either way. Error
+    precedence is unchanged — a returned error or an ``error`` finish reason wins over
+    waiting and denial. The projection only decides what is reported; it does not
+    decide the process exit status, which this route keeps from the previous release.
+    """
+    metadata = _turn_metadata(response)
+    turn = response.get("turn")
+    errors = turn.get("errors") if isinstance(turn, dict) else None
+    if errors or str(metadata.get("finish_reason", "")).strip().lower() == "error":
+        return TURN_OUTCOME_FAILED
+    confirmation = _confirmation_outcome(metadata)
+    if confirmation and str(confirmation.get("result", "")).strip().lower() == "denied":
+        return TURN_OUTCOME_DENIED
+    if str(metadata.get("brain_status", "")).strip().lower() == "waiting_user":
+        return TURN_OUTCOME_NEEDS_USER
+    return TURN_OUTCOME_COMPLETED
 
 
 def run_openminion(args: Any) -> int:
@@ -65,16 +174,8 @@ def run_openminion(args: Any) -> int:
     jsonl = bool(getattr(args, "jsonl", False))
     stream = bool(getattr(args, "stream", False)) or jsonl
     path = "/v1/turn/stream" if stream else "/v1/turn"
-    stream_event_count = 0
+    frames = _StreamFramePrinter()
     transport_timeout_seconds = int(config.runtime.chat_turn_timeout_seconds) + 5
-
-    def emit_stream_event(event: DaemonStreamEvent) -> None:
-        nonlocal stream_event_count
-        stream_event_count += 1
-        print_json_payload(
-            {"event": event.event, "data": event.data},
-            indent=None,
-        )
 
     def call_daemon(endpoint: Any) -> tuple[int, dict[str, Any]]:
         if stream:
@@ -84,7 +185,7 @@ def run_openminion(args: Any) -> int:
                 path=path,
                 payload=request_payload,
                 timeout_s=transport_timeout_seconds,
-                on_event=emit_stream_event if jsonl else None,
+                on_event=frames if jsonl else None,
             )
         return daemon_request(
             endpoint=endpoint,
@@ -119,10 +220,7 @@ def run_openminion(args: Any) -> int:
         response.setdefault("runtime_fallback_reason", result.fallback_reason)
     if not response.get("ok", False):
         raise RuntimeError(_format_api_error(response, 500))
-    if jsonl and stream_event_count == 0:
-        print_json_payload({"event": "response", "data": response}, indent=None)
-        print_json_payload({"event": "done", "data": {"ok": True}}, indent=None)
-    _print_output(args, response)
+    _apply_turn_outcome(args, response, jsonl=jsonl, frames=frames)
     return 0
 
 
