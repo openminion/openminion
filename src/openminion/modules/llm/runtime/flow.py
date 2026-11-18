@@ -60,7 +60,7 @@ def _hint_not_before(response: LLMResponse) -> float | None:
     error = response.error
     if error is None or error.code not in RETRYABLE_CODES:
         return None
-    raw = str(error.details.get("retry_after") or "")
+    raw = str((getattr(error, "details", None) or {}).get("retry_after") or "")
     wait = retry_after_seconds(raw, now=time.time())
     return None if wait is None else time.monotonic() + wait
 
