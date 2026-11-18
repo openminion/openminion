@@ -283,7 +283,9 @@ def test_platform_python_launcher_of_this_installation_is_accepted(
     install, launcher = _framework_paths(tmp_path / "Python.framework", version)
     monkeypatch.setattr(daemon_cmd.sys, "executable", str(install))
     pid_file, state = stop_env
-    process = _install_process(state, _serve_argv(pid_file), exe=str(launcher))
+    argv = _serve_argv(pid_file)
+    argv[0] = str(launcher)
+    process = _install_process(state, argv, exe=str(launcher))
 
     assert daemon_cmd.daemon_stop(None) == 0
     assert process.terminated == 1
