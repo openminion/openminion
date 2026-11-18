@@ -118,6 +118,8 @@ class _StubOverlay:
 
 
 class _StubComposerRows:
+    image_paths = []
+
     def active_prompt_rows(self) -> int:
         return 2
 
@@ -178,6 +180,7 @@ class _MultiQueueComposer(_StubComposerRows):
     def __init__(self, *args, **kwargs) -> None:
         del args, kwargs
         self._calls = 0
+        self.image_paths = []
         self.busy_events: list[bool] = []
         self.prompt_session = object()
         type(self).last_instance = self
@@ -400,6 +403,7 @@ class _QueueCommandComposer(_StubComposerRows):
 
 class _LoopComposer:
     def __init__(self) -> None:
+        self.image_paths = []
         self.busy_events: list[bool] = []
         self.prompt_session = object()
 
@@ -1722,3 +1726,68 @@ async def test_terminal_approval_cannot_override_selected_deny(policy_ctl) -> No
     )
 
     assert await callback("browser", {"op": "tab.list"}, "call-1") is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["success", "failure", "cancel"])
+async def test_focus_image_draft_is_not_queued_and_retained_until_success(outcome):
+    runtime = _SingleTurnRuntime()
+    console = Console(file=io.StringIO(), force_terminal=False, width=120)
+    composer = _LoopComposer()
+    composer.image_paths = ["selected.png"]
+    draft = []
+    composer.prefill_draft = draft.append
+    loop = terminal_shell._TerminalFocusLoop(
+        runtime=runtime,
+        console=console,
+        transcript=terminal_shell.TerminalTranscript(console, plain_spinner=True),
+        status_line=terminal_shell.TerminalStatusLine(),
+        composer=composer,
+        overlay=object(),
+        working_dir="/tmp/focus-image-test",
+        custom_commands={},
+    )
+    await loop.handle_busy_input("look at this")
+    assert draft == ["look at this"]
+    assert loop._queued_entries() == []
+    assert composer.image_paths == ["selected.png"]
+    loop.active_image_paths = ["selected.png"]
+    finished = asyncio.get_running_loop().create_future()
+    if outcome == "cancel":
+        finished.cancel()
+        loop.turn_cancel_requested = True
+    else:
+        finished.set_result(outcome == "success")
+    loop.active_turn_task = finished
+    await loop.handle_turn_completion()
+    assert composer.image_paths == ([] if outcome == "success" else ["selected.png"])
+
+
+@pytest.mark.asyncio
+async def test_queued_text_turn_does_not_consume_current_image_draft(monkeypatch):
+    runtime = _SingleTurnRuntime()
+    console = Console(file=io.StringIO(), force_terminal=False, width=120)
+    composer = _LoopComposer()
+    composer.image_paths = ["next-turn.png"]
+    calls = []
+
+    async def run_turn(**kwargs):
+        calls.append(kwargs)
+        return True
+
+    monkeypatch.setattr(terminal_shell, "_run_agent_turn", run_turn)
+    loop = terminal_shell._TerminalFocusLoop(
+        runtime=runtime,
+        console=console,
+        transcript=terminal_shell.TerminalTranscript(console, plain_spinner=True),
+        status_line=terminal_shell.TerminalStatusLine(),
+        composer=composer,
+        overlay=object(),
+        working_dir="/tmp/focus-image-test",
+        custom_commands={},
+    )
+    await loop.start_turn("queued text")
+    await loop.handle_turn_completion()
+    await loop.cancel_read_task()
+    assert calls[0]["image_paths"] == []
+    assert composer.image_paths == ["next-turn.png"]

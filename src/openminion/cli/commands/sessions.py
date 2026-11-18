@@ -239,6 +239,9 @@ def run_sessions_delete(args) -> int:
 
     try:
         with closing(runtime), ArtifactCtl(artifact_config) as artifactctl:
+            session = runtime.sessions.get_session(session_id)
+            if session is not None:
+                artifactctl.revoke_session_images(session.image_scope)
             deleted = bool(runtime.sessions.delete_session(session_id))
             artifactctl.ref_remove_owner("session", session_id)
     except Exception as exc:

@@ -28,6 +28,7 @@ class RuntimeTurnRequest:
     channel: str
     target: str
     timeout_seconds: float
+    image_refs: tuple[str, ...] = ()
     session_id: str | None = None
     request_id: str | None = None
     idempotency_key: str | None = None
@@ -114,6 +115,7 @@ class TurnContext:
     message: str
     forced_tools: tuple[str, ...]
     inbound_metadata: Mapping[str, str] | None
+    image_refs: tuple[str, ...] = ()
 
 
 def freeze_metadata(metadata: dict[str, str] | None) -> Mapping[str, str] | None:

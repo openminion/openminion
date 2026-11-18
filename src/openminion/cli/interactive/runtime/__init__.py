@@ -602,7 +602,11 @@ class OpenMinionRuntime(
         inbound_metadata: dict[str, str] | None = None,
         approval_callback: ApprovalCallback | None = None,
         request_id: str | None = None,
+        image_paths: list[str] | None = None,
     ) -> AsyncIterator[str]:
+        from openminion.cli.transport.images import prepare_image_refs
+
+        image_refs = prepare_image_refs(self, image_paths or [])
         timer = phase_timing.ChatPhaseTimer(cold_start=False)
         turn_id = str(request_id or "").strip() or uuid4().hex
         with phase_timing.use_chat_phase_timer(timer):
@@ -613,6 +617,7 @@ class OpenMinionRuntime(
                     inbound_metadata=inbound_metadata,
                     approval_callback=approval_callback,
                     request_id=turn_id,
+                    image_refs=image_refs,
                 ):
                     if str(chunk or ""):
                         phase_timing.mark_active_chat_first_text()
@@ -725,6 +730,7 @@ class OpenMinionRuntime(
         inbound_metadata: dict[str, str] | None,
         approval_callback: ApprovalCallback | None,
         request_id: str | None,
+        image_refs: tuple[str, ...] = (),
     ) -> tuple[dict[str, Any], Callable[..., Any] | None, Callable[..., Any]]:
         kwargs: dict[str, Any] = {
             "channel": self._channel,
@@ -732,6 +738,8 @@ class OpenMinionRuntime(
             "body": text,
             "session_id": self.session_id,
         }
+        if image_refs:
+            kwargs["image_refs"] = image_refs
         stream_handler = getattr(self._gateway, "handle_message_streaming", None)
         if not callable(stream_handler):
             stream_handler = None
@@ -766,6 +774,7 @@ class OpenMinionRuntime(
         inbound_metadata: dict[str, str] | None = None,
         approval_callback: ApprovalCallback | None = None,
         request_id: str | None = None,
+        image_refs: tuple[str, ...] = (),
     ) -> AsyncIterator[str]:
         self._ensure_agent_resolved()
         if not self.is_bound:
@@ -778,6 +787,7 @@ class OpenMinionRuntime(
             inbound_metadata=inbound_metadata,
             approval_callback=policy_approval_callback,
             request_id=request_id,
+            image_refs=image_refs,
         )
         if stream_handler is not None:
             final_text = ""

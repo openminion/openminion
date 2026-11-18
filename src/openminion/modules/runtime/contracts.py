@@ -62,6 +62,7 @@ class TurnRequest:
     session_id: str
     input_text: str
     attachments: list[str] = field(default_factory=list)
+    image_refs: tuple[str, ...] = ()
     mode: str = "oneshot"
     stream: bool = False
     meta: dict[str, Any] = field(default_factory=dict)

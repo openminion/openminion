@@ -305,6 +305,18 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
             mode=self.mode,
         )
 
+        from openminion.modules.artifact.config import (
+            from_base_config as image_artifact_config,
+        )
+
+        self._image_artifact_config = image_artifact_config(
+            base_config=self._config,
+            home_root=self._context.home_paths.home_root,
+            data_root=self._context.home_paths.data_root,
+        )
+        if self._llm_runtime is not None:
+            self._llm_runtime.client.image_resolver = self._resolve_image_request
+
     def _init_bridge_state(
         self,
         *,

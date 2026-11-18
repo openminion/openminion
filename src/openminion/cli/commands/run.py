@@ -4,6 +4,7 @@ import argparse
 import logging
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urlencode
 
 from openminion.base.config.bootstrap import bootstrap_config_path
 from openminion.base.config.core import resolve_default_agent_id
@@ -28,8 +29,12 @@ load_config = load_cli_config_from_args
 
 def run_openminion(args: Any) -> int:
     message = _resolve_message(args)
-    if not message:
-        raise RuntimeError("Prompt is required (positional message or --file).")
+    image_paths = list(getattr(args, "image", None) or [])
+    if not message and not image_paths:
+        raise RuntimeError("Provide a prompt, --file or --image.")
+    from openminion.cli.transport.images import read_selected_images
+
+    images = read_selected_images(image_paths)
 
     config = _load_run_config(args)
     workspace_root = _resolve_workspace_root(args, config)
@@ -38,7 +43,7 @@ def run_openminion(args: Any) -> int:
     mode = str(config.runtime.process_mode or "daemon").strip().lower()
     auto_start = bool(config.runtime.daemon_auto_start)
 
-    request_payload = {
+    request_payload: dict[str, Any] = {
         "message": message,
         "input_text": message,
         "agent_id": str(getattr(args, "agent", "") or "").strip()
@@ -77,6 +82,33 @@ def run_openminion(args: Any) -> int:
         )
 
     def call_daemon(endpoint: Any) -> tuple[int, dict[str, Any]]:
+        if images:
+            query = urlencode(
+                {key: request_payload[key] for key in ("agent_id", "channel", "target")}
+            )
+            image_path = f"/v1/sessions/{quote(request_payload['session_id'], safe='')}/images?{query}"
+            refs = []
+            try:
+                for data, mime in images:
+                    status, uploaded = daemon_request(
+                        endpoint=endpoint,
+                        method="POST",
+                        path=image_path,
+                        data=data,
+                        content_type=mime,
+                    )
+                    if status != 201:
+                        return status, uploaded
+                    refs.append(uploaded["image"]["ref"])
+            finally:
+                if len(refs) != len(images):
+                    for ref in refs:
+                        daemon_request(
+                            endpoint=endpoint,
+                            method="DELETE",
+                            path=f"/v1/sessions/{quote(request_payload['session_id'], safe='')}/images/{ref[8:]}?{query}",
+                        )
+            request_payload["image_refs"] = refs
         if stream:
             return daemon_stream_request(
                 endpoint=endpoint,
@@ -108,7 +140,7 @@ def run_openminion(args: Any) -> int:
             args=args,
             auto_start=auto_start,
             daemon_call=call_daemon,
-            inproc_call=lambda: _run_inproc(args, request_payload),
+            inproc_call=lambda: _run_inproc(args, request_payload, images=images),
         )
     finally:
         if suppress_default_logs:
@@ -148,6 +180,8 @@ def _resolve_workspace_root(args: Any, config: Any) -> str:
 def _run_inproc(
     args: Any,
     request_payload: dict[str, Any],
+    *,
+    images: list[tuple[bytes, str]] | None = None,
 ) -> dict[str, Any]:
     turn_payload = {
         "message": request_payload["message"],
@@ -168,7 +202,7 @@ def _run_inproc(
         },
     }
     runtime = None
-    if getattr(args, "home_root", None) or getattr(args, "data_root", None):
+    if images or getattr(args, "home_root", None) or getattr(args, "data_root", None):
         from openminion.api.runtime import APIRuntime
 
         runtime = APIRuntime.from_config_path(
@@ -177,6 +211,17 @@ def _run_inproc(
             data_root=getattr(args, "data_root", None),
         )
     try:
+        if images:
+            from openminion.cli.transport.images import ingest_selected_images
+
+            turn_payload["image_refs"] = ingest_selected_images(
+                runtime,
+                images,
+                **{
+                    key: request_payload[key]
+                    for key in ("session_id", "agent_id", "channel", "target")
+                },
+            )
         turn = run_turn(
             config_path=args.config,
             payload=turn_payload,
@@ -260,6 +305,13 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     )
     run.add_argument("--purpose", default="", help="Optional purpose tag")
     run.add_argument("--file", default="", help="Read prompt body from file")
+    run.add_argument(
+        "--image",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="Attach a PNG, JPEG or WebP image; repeat up to four times",
+    )
     run.add_argument("--stream", action="store_true", help="Use /v1/turn/stream")
     run.add_argument(
         "--jsonl",

@@ -423,9 +423,10 @@ class RuntimeSessionStoreSessions:
                     updated_at,
                     status,
                     last_activity_at,
-                    active_agent_id
+                    active_agent_id,
+                    image_generation
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 {conflict_clause}
                 """,
                 (
@@ -439,6 +440,7 @@ class RuntimeSessionStoreSessions:
                     "active",
                     updated_at,
                     normalize_nullable_text(active_agent_id),
+                    uuid4().hex,
                 ),
             )
             if inserted > 0:

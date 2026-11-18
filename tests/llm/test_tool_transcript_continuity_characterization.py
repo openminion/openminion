@@ -319,7 +319,7 @@ def test_normalized_messages_keeps_empty_structured_assistant_turn() -> None:
 
 
 def test_provider_history_keeps_structured_tool_fields_out_of_metadata() -> None:
-    latest, history = latest_prompt_and_history(
+    latest, history, parts, image_input = latest_prompt_and_history(
         conversational=[
             (
                 "assistant",
@@ -350,6 +350,8 @@ def test_provider_history_keeps_structured_tool_fields_out_of_metadata() -> None
     )
 
     assert latest
+    assert parts == []
+    assert image_input is None
     assert history[0].tool_calls[0].id == "call-1"
     assert history[0].meta == {"transcript_lane": "canonical_events"}
     assert history[1].tool_call_id == "call-1"
@@ -359,7 +361,7 @@ def test_provider_history_keeps_structured_tool_fields_out_of_metadata() -> None
 
 
 def test_provider_history_preserves_user_before_completed_tool_exchange() -> None:
-    latest, history = latest_prompt_and_history(
+    latest, history, parts, image_input = latest_prompt_and_history(
         conversational=[
             ("user", "Inspect the file.", {}),
             (
@@ -385,6 +387,8 @@ def test_provider_history_preserves_user_before_completed_tool_exchange() -> Non
     )
 
     assert latest
+    assert parts == []
+    assert image_input is None
     assert [message.role for message in history] == ["user", "assistant", "tool"]
     assert history[1].tool_calls[0].id == "call-1"
     assert history[2].tool_call_id == "call-1"
