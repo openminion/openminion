@@ -141,6 +141,8 @@ def _make_fallback_runtime(
     primary: _SequenceProvider,
     fallback: _SequenceProvider,
     fallback_on: tuple[str, ...] = ("PROVIDER_ERROR",),
+    max_retries: int = 0,
+    backoff_ms: int = 0,
 ) -> LLMCTL:
     runtime = LLMCTL.from_config(
         {
@@ -148,7 +150,7 @@ def _make_fallback_runtime(
             "llmctl": {
                 "default_provider": primary.name,
                 "default_model": "primary-model",
-                "retries": {"max_retries": 0, "backoff_ms": 0},
+                "retries": {"max_retries": max_retries, "backoff_ms": backoff_ms},
                 "routing_defaults": {
                     "primary": {"provider": primary.name, "model": "primary-model"},
                     "fallbacks": [
@@ -912,6 +914,98 @@ def test_hinted_retry_waits_for_backoff_step_longer_than_hint(
     assert provider.calls == 2
     assert sum(clock.sleeps) == pytest.approx(5.0)
     assert max(clock.sleeps) <= 0.05
+
+
+def test_hinted_retry_returns_error_when_backoff_step_cannot_wait(
+    clock: _FakeClock,
+) -> None:
+    provider = _SequenceProvider([_rate_limited("1"), _make_response()])
+    runtime = _make_runtime(
+        telemetryctl=None, provider=provider, max_retries=1, backoff_ms=5000
+    )
+    timer = ChatPhaseTimer()
+
+    response = _call(runtime, timeout_s=2, timer=timer)
+
+    assert response.error is not None
+    assert response.error.code == "RATE_LIMITED"
+    assert response.error.details == {"status_code": 429, "retry_after": "1"}
+    assert provider.calls == 1
+    assert clock.sleeps == []
+    assert _attempts(timer) == [("primary", "initial", "error")]
+
+
+def test_hinted_retry_longer_than_deadline_allows_matching_fallback(
+    clock: _FakeClock,
+) -> None:
+    order: list[str] = []
+    a = _OrderedProvider("provider_a", [_rate_limited("1"), _make_response()], order)
+    b = _OrderedProvider("provider_b", [_make_response()], order)
+    runtime = _make_fallback_runtime(
+        telemetryctl=None,
+        primary=a,
+        fallback=b,
+        fallback_on=("RATE_LIMITED",),
+        max_retries=1,
+        backoff_ms=5000,
+    )
+
+    response = _call(runtime, timeout_s=2)
+
+    assert response.ok is True
+    assert order == ["provider_a", "provider_b"]
+    assert clock.sleeps == []
+
+
+def test_elapsed_route_hint_sends_without_waiting(clock: _FakeClock) -> None:
+    provider = _SequenceProvider([_rate_limited("30"), _make_response()])
+    runtime = _make_runtime(telemetryctl=None, provider=provider, max_retries=0)
+
+    with flow.route_admission_scope():
+        _call(runtime, timeout_s=None)
+        clock.now += 30
+        response = _call(runtime, timeout_s=None)
+
+    assert response.ok is True
+    assert provider.calls == 2
+    assert clock.sleeps == []
+
+
+_OVERSIZED = pytest.mark.parametrize(
+    "retry_after", ["9" * 309, "9" * 4301], ids=["float-overflow", "int-digit-limit"]
+)
+
+
+@_OVERSIZED
+def test_oversized_retry_after_returns_original_error(
+    clock: _FakeClock, retry_after: str
+) -> None:
+    provider = _SequenceProvider([_rate_limited(retry_after), _make_response()])
+    runtime = _make_runtime(
+        telemetryctl=None, provider=provider, max_retries=2, backoff_ms=100
+    )
+
+    response = _call(runtime, timeout_s=120)
+
+    assert response.error is not None
+    assert response.error.code == "RATE_LIMITED"
+    assert response.error.details == {"status_code": 429, "retry_after": retry_after}
+    assert provider.calls == 1
+    assert clock.sleeps == []
+
+
+@_OVERSIZED
+def test_oversized_retry_after_allows_matching_fallback(
+    clock: _FakeClock, retry_after: str
+) -> None:
+    order: list[str] = []
+    runtime, _, _ = _routed(order, [_rate_limited(retry_after)], [_make_response()])
+
+    response = _call(runtime, timeout_s=120)
+
+    assert response.ok is True
+    assert order == ["provider_a", "provider_b"]
+    assert clock.sleeps == []
 
 
 def test_fallback_route_hint_applies_only_to_the_fallback(clock: _FakeClock) -> None:

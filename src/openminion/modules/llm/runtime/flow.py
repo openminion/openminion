@@ -65,9 +65,10 @@ def _hint_not_before(response: LLMResponse) -> float | None:
     return None if not wait else time.monotonic() + wait
 
 
-def _hinted_wait_fits(not_before: float) -> bool:
+def _hinted_wait_fits(not_before: float, step: float = 0.0) -> bool:
     remaining: float = remaining_turn_timeout(math.inf)
-    return remaining != math.inf and not_before - time.monotonic() < remaining
+    wait = max(not_before - time.monotonic(), step)
+    return remaining != math.inf and wait < remaining
 
 
 def _wait_until(until: float) -> None:
@@ -722,7 +723,7 @@ def _call_with_retries(
         )
         if err_code in RETRYABLE_CODES and attempt < max_retries:
             step = max(0.0, (backoff_ms / 1000.0) * (2**attempt))
-            if not_before is not None and not _hinted_wait_fits(not_before):
+            if not_before is not None and not _hinted_wait_fits(not_before, step):
                 return response
             client._emit_operation(
                 request=call_request,

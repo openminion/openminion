@@ -56,10 +56,10 @@ def openai_error_facts(
 def retry_after_seconds(value: str, *, now: float) -> float | None:
     """Seconds a ``Retry-After`` value asks to wait from epoch ``now``; None if invalid."""
     if re.fullmatch(r"[0-9]+", value):
-        return float(int(value))
+        return float(value)
     try:
         eligible = parsedate_to_datetime(value)
-    except ValueError:
+    except (ValueError, OverflowError):
         return None
     if eligible.tzinfo is None:
         eligible = eligible.replace(tzinfo=timezone.utc)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import subprocess
 from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
@@ -342,6 +343,31 @@ _RECEIVED = datetime(2026, 11, 18, 12, 0, 0, tzinfo=timezone.utc).timestamp()
     ],
 )
 def test_retry_after_seconds_parses_delay_and_http_date(
+    raw: str, expected: float | None
+) -> None:
+    assert retry_after_seconds(raw, now=_RECEIVED) == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("9" * 308, 1e308),
+        ("9" * 309, math.inf),
+        ("9" * 4301, math.inf),
+        ("0" * 4300 + "5", 5.0),
+        ("Wed, 18 Nov 99999999999999999999 12:00:30 GMT", None),
+        ("Wed, 18 Nov 2026 12:00:30 +99999999999999999999", None),
+    ],
+    ids=[
+        "largest-finite",
+        "float-overflow",
+        "int-digit-limit",
+        "leading-zeros",
+        "year-overflow",
+        "offset-overflow",
+    ],
+)
+def test_retry_after_seconds_is_total_for_oversized_values(
     raw: str, expected: float | None
 ) -> None:
     assert retry_after_seconds(raw, now=_RECEIVED) == expected
