@@ -1,3 +1,4 @@
+from openminion.cli.transport.images import configure_images
 import asyncio
 from collections.abc import Callable
 import logging
@@ -39,6 +40,7 @@ from ..transcript import TerminalTranscript
 from .labels import _runtime_label
 from .approval import build_terminal_approval_callback as _build_approval_callback
 from . import progress as _progress
+from .progress import _route_durable_activity_event, _finalize_turn_status_line
 from .queue_control import (
     apply_queue_command,
     enqueue_entry,
@@ -263,6 +265,7 @@ class _TerminalFocusLoop:
         self.queue_auto_drain_paused = False
         self.run_next_after_interrupt = False
         self.active_turn_text = ""
+        self.active_image_paths: list[str] = []
         self.active_turn_started_at = 0.0
 
     def refresh_status_line(self, *, state: str = "idle") -> None:
@@ -408,7 +411,14 @@ class _TerminalFocusLoop:
             self._push_queue_error(exc)
             return
 
-    async def start_turn(self, text: str, *, request_id: str | None = None) -> None:
+    async def start_turn(
+        self,
+        text: str,
+        *,
+        request_id: str | None = None,
+        image_paths: list[str] | None = None,
+    ) -> None:
+        self.active_image_paths = list(image_paths or [])
         self.active_turn_text = str(text or "")
         self.active_turn_started_at = asyncio.get_running_loop().time()
         self.active_turn_task = asyncio.create_task(
@@ -418,6 +428,7 @@ class _TerminalFocusLoop:
                 transcript=self.transcript,
                 status_line=self.status_line,
                 request_id=request_id,
+                image_paths=self.active_image_paths,
                 approval_callback=_build_approval_callback(
                     overlay=self.overlay,
                     runtime=self.runtime,
@@ -466,6 +477,12 @@ class _TerminalFocusLoop:
                 "or press Esc to interrupt."
             )
             return
+        if self.composer.image_paths:
+            self.composer.prefill_draft(text)
+            self._push_system_message(
+                "Your images remain in the draft. Wait for this turn before sending."
+            )
+            return
         try:
             enqueue_entry(
                 queue=self.turn_input_queue,
@@ -494,6 +511,8 @@ class _TerminalFocusLoop:
         terminal_status = TurnInputQueueStatus.COMPLETED
         try:
             turn_succeeded = await finished_turn
+            if turn_succeeded and self.composer.image_paths == self.active_image_paths:
+                self.composer.image_paths.clear()
             if not turn_succeeded:
                 terminal_status = TurnInputQueueStatus.FAILED
         except asyncio.CancelledError:
@@ -538,6 +557,21 @@ class _TerminalFocusLoop:
                 await self.handle_queue_command(text)
                 self.start_read_task()
                 return None
+            if text == "/image" or text.startswith("/image "):
+                try:
+                    self._push_system_message(
+                        configure_images(
+                            self.runtime, text.removeprefix("/image mode ")
+                        )
+                        if text.startswith("/image mode ")
+                        else self.composer.manage_images(
+                            text, working_dir=self.working_dir
+                        )
+                    )
+                except (ValueError, OSError) as exc:
+                    self._push_system_message(str(exc))
+                self.start_read_task()
+                return None
             if text == "/editor":
                 draft = await self.composer.edit_draft("")
                 if draft is not None:
@@ -580,7 +614,7 @@ class _TerminalFocusLoop:
                 ChatMessage(kind=MessageKind.USER, sender="you", body=text),
                 render=False,
             )
-            await self.start_turn(text)
+            await self.start_turn(text, image_paths=list(self.composer.image_paths))
         except KeyboardInterrupt:
             if await _confirm_terminal_exit(console=self.console, overlay=self.overlay):
                 self.console.print(
@@ -624,7 +658,7 @@ class _TerminalFocusLoop:
             if notice := notice_task.result():
                 self._push_system_message(notice)
         text = (text or "").strip()
-        if not text:
+        if not text and not self.composer.image_paths:
             self.start_read_task()
             return None
         if text == "?":
@@ -787,34 +821,6 @@ async def _run_one_shot_stdin(
     return 0
 
 
-def _route_durable_activity_event(
-    transcript: TerminalTranscript, payload: dict[str, Any]
-) -> bool:
-    try:
-        from openminion.cli.status.activity_ledger import (
-            KIND_APPROVAL,
-            KIND_BACKGROUND,
-            KIND_BUDGET,
-            KIND_ERROR,
-            KIND_PLAN,
-            activity_from_progress_payload,
-        )
-
-        event = activity_from_progress_payload(payload)
-        if event is not None and event.kind in {
-            KIND_PLAN,
-            KIND_APPROVAL,
-            KIND_BACKGROUND,
-            KIND_BUDGET,
-            KIND_ERROR,
-        }:
-            transcript.push_activity_event(event)
-            return True
-    except Exception:
-        _LOGGER.debug("activity event routing failed", exc_info=True)
-    return False
-
-
 def _build_turn_progress_callback(
     *,
     transcript: TerminalTranscript,
@@ -862,16 +868,6 @@ def _build_turn_progress_callback(
     return _handle_progress
 
 
-def _finalize_turn_status_line(runtime: Any, status_line: TerminalStatusLine) -> None:
-    status_line.set_state(
-        state="idle",
-        permission_mode=_runtime_permission_mode(runtime),
-        action_policy_mode=_runtime_action_policy_mode(runtime),
-        custom=statusline_label(runtime),
-        turn_status="",
-    )
-
-
 async def _run_interruptible_agent_turn(
     *,
     text: str,
@@ -900,6 +896,7 @@ async def _run_agent_turn(
     transcript: TerminalTranscript,
     status_line: TerminalStatusLine | None,
     request_id: str | None = None,
+    image_paths: list[str] | None = None,
     approval_callback: Callable[..., Any] | None = None,
     invalidate_prompt: Callable[[], None] | None = None,
 ) -> bool:
@@ -952,6 +949,7 @@ async def _run_agent_turn(
             transcript=transcript,
             handle=handle,
             request_id=request_id,
+            image_paths=image_paths,
         )
         if room_reply is not None:
             reply = room_reply
@@ -962,6 +960,7 @@ async def _run_agent_turn(
                 progress_callback,
                 approval_callback,
                 request_id=request_id,
+                image_paths=image_paths,
             ):
                 chunk_str = str(chunk or "")
                 if not chunk_str:

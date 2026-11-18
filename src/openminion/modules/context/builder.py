@@ -149,6 +149,7 @@ class _SQLiteStandaloneSessionClient:
                     content=str(t.get("text", "")),
                     ts=str(t.get("ts", "")) if t.get("ts") else None,
                     is_error=bool(t.get("is_error")),
+                    image_input=(t.get("channel_meta") or {}).get("image_input"),
                 )
             )
 

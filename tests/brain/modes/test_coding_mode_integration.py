@@ -3685,7 +3685,6 @@ def test_project_confirmation_replay_preserves_context_in_provider_request(
         _apply_pending_confirmation_metadata_for_replay,
     )
     from openminion.modules.llm.providers.base import ProviderResponse
-    from openminion.services.agent.service import AgentService
     from openminion.services.brain.client import OpenMinionLLMClient
     from openminion.tools.agent.plugin import TaskDelegateArgs
     from openminion.tools.file.plugin import FileFindArgs
@@ -3723,7 +3722,9 @@ def test_project_confirmation_replay_preserves_context_in_provider_request(
     payloads = []
 
     async def record(request):
-        payloads.append(AgentService._provider_request_to_llm_payload(None, request))
+        from openminion.modules.llm.client_call import provider_request_payload
+
+        payloads.append(provider_request_payload(request))
         return ProviderResponse(text="Awaiting the next project step.")
 
     client = OpenMinionLLMClient(

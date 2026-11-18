@@ -209,10 +209,12 @@ class LocalSessionStore:
                 "turn_id": str(item.get("turn_id", "")),
                 "role": str(item.get("role", "user")),
                 "text": str(item.get("content", "")),
+                "channel_meta": dict(item.get("meta") or {}),
                 "timestamp": str(item.get("ts", "")),
             }
             for item in turns
             if str(item.get("content", "")).strip()
+            or (item.get("meta") or {}).get("image_input")
         ]
 
         latest_state = self.get_latest_working_state(session_id)

@@ -441,11 +441,14 @@ def _complete_provider_attempt(
 ) -> LLMResponse:
     try:
         raise_if_cancelled()
+        if any(message.image_input is not None for message in call_request.messages):
+            if client.image_resolver is None:
+                raise LLMCtlError("POLICY_DENIED", "Image storage is unavailable")
+            call_request = client.image_resolver(call_request)
         with active_chat_phase("provider_round_trip"):
             raw_resp = provider.complete(call_request, cfg)
-        raise_if_cancelled()
         with active_chat_phase("response_normalization"):
-            return client._normalize_response(
+            response = client._normalize_response(
                 raw_resp,
                 provider_name,
                 model_name,
@@ -456,7 +459,7 @@ def _complete_provider_attempt(
                 },
             )
     except LLMCtlError as exc:
-        return client._error_response(
+        response = client._error_response(
             provider=provider_name,
             model=model_name,
             code=exc.code,
@@ -465,12 +468,17 @@ def _complete_provider_attempt(
             usage=exc.usage,
         )
     except Exception as exc:
-        return client._error_response(
+        response = client._error_response(
             provider=provider_name,
             model=model_name,
             code="PROVIDER_ERROR",
             message=f"{type(exc).__name__}: {exc}",
         )
+
+    if client.on_attempt_response is not None:
+        client.on_attempt_response(response)
+    raise_if_cancelled()
+    return response
 
 
 def _emit_provider_success(

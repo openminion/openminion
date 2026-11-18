@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from openminion.base.time import utc_now_iso as iso_now  # noqa: F401
 
@@ -42,6 +44,17 @@ def normalize_alias_expiry(expires_at: str) -> str:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError("expires_at must be a timezone-aware ISO-8601 timestamp")
     return parsed.astimezone(timezone.utc).isoformat()
+
+
+@dataclass(frozen=True)
+class ImageRef:
+    ref: str
+    sha256: str
+    size_bytes: int
+    width: int
+    height: int
+    source_size_bytes: int
+    mime: str = "image/png"
 
 
 @dataclass
@@ -250,3 +263,26 @@ class VerifyReport:
             "failed": self.failed,
             "issues": [item.to_dict() for item in self.issues],
         }
+
+
+class ImageObservation(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    image_ref: str
+    visible_text: str
+    observations: list[str]
+    uncertainties: list[str]
+
+
+class ImageInputContext(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    session_id: str
+    session_generation: str
+    image_refs: list[str] = Field(min_length=1, max_length=4)
+    mode: Literal["native", "separate"]
+    connection_id: str
+    model: str
+    destination: str
+    purpose: Literal["describe", "text"] = "describe"
+    observations: list[ImageObservation] | None = None

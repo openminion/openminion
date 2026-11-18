@@ -4,6 +4,8 @@ from typing import Any, Literal, Protocol, runtime_checkable
 
 from openminion.base.config.env import resolve_environment_config
 from openminion.base.constants import OPENMINION_STRICT_PROVIDER_RESPONSE_CONTRACTS_ENV
+from openminion.modules.artifact.models import ImageInputContext
+from openminion.modules.llm.schemas import MessageContentPart
 from openminion.modules.llm.constants import (
     LLM_TOOL_CALL_STRATEGY_HYBRID,
     LLM_TOOL_CHOICE_AUTO,
@@ -59,6 +61,8 @@ class ProviderRequest:
     tool_call_strategy: str = LLM_TOOL_CALL_STRATEGY_HYBRID
     metadata: dict[str, str] = field(default_factory=dict)
     max_output_tokens: int | None = None
+    content_parts: list[MessageContentPart] = field(default_factory=list)
+    image_input: ImageInputContext | None = None
 
 
 @dataclass
@@ -71,6 +75,8 @@ class ProviderHistoryMessage:
     tool_status: str | None = None
     tool_output: Any = None
     tool_error: dict[str, Any] | None = None
+    content_parts: list[MessageContentPart] = field(default_factory=list)
+    image_input: ImageInputContext | None = None
 
     @property
     def body(self) -> str:

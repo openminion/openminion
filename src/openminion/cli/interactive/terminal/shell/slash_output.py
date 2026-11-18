@@ -29,7 +29,7 @@ from ..transcript import TerminalTranscript
 PROMPT_SAFE_OUTPUT_SLASHES = frozenset(
     """
     /activate /agents /identity /browser /close /compact /context /context-review /copy /cost
-    /delegate /details /diff /editor /effort /expand /export /goal /graph /handoff /help /init
+    /delegate /details /diff /editor /effort /expand /export /goal /graph /handoff /help /image /init
     /message
     /invite /kick /mcp /memory /model /normal /participants /permissions /project /queue
     /quiet /readonly /new /overview /rename /resume /review /room /routing /sessions /skills /start /status

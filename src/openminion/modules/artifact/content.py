@@ -1,6 +1,9 @@
 """Content sniffing and bounded text extraction for artifact ingestion."""
 
+import csv
+import io
 import mimetypes
+from typing import Any
 from pathlib import Path
 
 _FALLBACK_MIME_BY_SUFFIX = {
@@ -78,3 +81,45 @@ def _is_probably_text(sample: bytes) -> bool:
         return True
     printable = sum(b in {9, 10, 13} or 32 <= b <= 126 for b in sample)
     return printable / len(sample) >= 0.85
+
+
+def _bounded_excerpt(
+    text: str, *, max_lines: int, max_chars: int
+) -> tuple[str, list[str]]:
+    warnings: list[str] = []
+    if not text:
+        return "", []
+
+    lines = text.splitlines()
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        warnings.append("truncated_lines")
+
+    excerpt = "\n".join(lines)
+    if len(excerpt) > max_chars:
+        excerpt = excerpt[:max_chars]
+        warnings.append("truncated_chars")
+
+    return excerpt, warnings
+
+
+def _build_table_view(text: str, *, delimiter: str, max_rows: int) -> dict[str, Any]:
+    reader = csv.reader(io.StringIO(text), delimiter=delimiter)
+    header = next(reader, [])
+    sampled_rows: list[list[str]] = []
+    total_rows = 0
+
+    for row in reader:
+        total_rows += 1
+        if len(sampled_rows) < max_rows:
+            sampled_rows.append(row)
+
+    warnings = ["rows_sampled"] if total_rows > max_rows else []
+
+    return {
+        "columns": header,
+        "rows": sampled_rows,
+        "sampled_rows": len(sampled_rows),
+        "total_rows": total_rows,
+        "warnings": warnings,
+    }

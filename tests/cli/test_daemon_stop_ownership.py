@@ -83,6 +83,9 @@ def stop_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         lambda *a, **k: DaemonEndpoint(config_path=CONFIG_PATH, host=HOST, port=PORT),
     )
     monkeypatch.setattr(daemon_cmd, "load_config", lambda path: object())
+    monkeypatch.setattr(
+        daemon_cmd, "probe_daemon_endpoint", lambda endpoint: ("unreachable", {})
+    )
     monkeypatch.setattr(daemon_mod, "resolve_daemon_pid_file", lambda *a, **k: pid_file)
     monkeypatch.setattr(
         daemon_mod,
