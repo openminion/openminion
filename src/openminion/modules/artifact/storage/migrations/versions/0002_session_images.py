@@ -16,7 +16,7 @@ DDL = (
         session_id TEXT NOT NULL,
         sha256 TEXT NOT NULL,
         size_bytes INTEGER NOT NULL,
-            source_size_bytes INTEGER NOT NULL,
+        source_size_bytes INTEGER NOT NULL,
         width INTEGER NOT NULL,
         height INTEGER NOT NULL,
         created_at TEXT NOT NULL,
