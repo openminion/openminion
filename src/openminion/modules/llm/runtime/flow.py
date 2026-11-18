@@ -636,13 +636,11 @@ def _call_with_retries(
 ) -> LLMResponse:
     max_retries, backoff_ms = client._retry_config(overrides)
     routes = _route_admission.get()
-    route = (provider_name, model_name)
-    if routes is not None and route in routes:
-        ready_at, recorded = routes[route]
-        if ready_at > time.monotonic():
-            if not _hinted_wait_fits(ready_at):
-                return recorded
-            _wait_until(ready_at)
+    ready_at, recorded = (routes or {}).get((provider_name, model_name), (0.0, None))
+    if recorded is not None and ready_at > time.monotonic():
+        if not _hinted_wait_fits(ready_at):
+            return recorded
+        _wait_until(ready_at)
 
     for attempt in range(max_retries + 1):
         started = time.perf_counter()
@@ -709,7 +707,7 @@ def _call_with_retries(
         )
         not_before = _hint_not_before(response)
         if routes is not None:
-            routes[route] = (-math.inf if not_before is None else not_before, response)
+            routes[(provider_name, model_name)] = (not_before or -math.inf, response)
         _record_provider_attempt_result(
             attempt_extra=attempt_extra,
             attempt=attempt_number,
