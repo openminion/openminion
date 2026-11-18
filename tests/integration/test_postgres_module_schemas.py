@@ -367,7 +367,7 @@ WORKING_MODULES = (
 def test_new_database_gives_every_module_its_own_schema(
     database: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    assert _start_runtime(database, tmp_path / "rt1") == 15
+    assert _start_runtime(database, tmp_path / "rt1") == 16
     _runtime_rows(database)
     runtime_before = _snapshot(database)["public"]
 
@@ -394,7 +394,7 @@ def test_new_database_gives_every_module_its_own_schema(
     finally:
         audit.close()
     assert _snapshot(database)["public"] == runtime_before
-    assert _start_runtime(database, tmp_path / "rt2") == 15
+    assert _start_runtime(database, tmp_path / "rt2") == 16
 
 
 def test_modules_first_then_runtime_storage(
@@ -403,7 +403,7 @@ def test_modules_first_then_runtime_storage(
     for module_id in ("memory", "a2a", "session", "registry"):
         assert _migrate(database, tmp_path, capsys, module_id)["code"] == 0
 
-    assert _start_runtime(database, tmp_path / "rt") == 15
+    assert _start_runtime(database, tmp_path / "rt") == 16
     columns = _scalars(
         database,
         "SELECT column_name FROM information_schema.columns "
@@ -469,7 +469,7 @@ def test_runtime_storage_after_the_session_store_tried_its_url(
         database, "SELECT indexname FROM pg_indexes WHERE schemaname = 'public'"
     )
 
-    assert _start_runtime(database, tmp_path / "rt2") == 15
+    assert _start_runtime(database, tmp_path / "rt2") == 16
     before = _snapshot(database)["public"]
     result = _migrate(database, tmp_path, capsys)
     assert {m: result[m]["status"] for m in WORKING_MODULES} == {
@@ -578,7 +578,7 @@ def _runtime_then_a2a(url: str, tmp_path: Path) -> None:
 
 
 def _artifact_then_registry(url: str, tmp_path: Path) -> None:
-    _legacy_module(url, "artifact")
+    _legacy_module(url, "artifact", "0001_baseline")
     _legacy_module(url, "registry")
 
 
@@ -637,7 +637,7 @@ LAYOUTS = {
     "runtime-then-a2a-audit-store": (
         _runtime_then_a2a,
         ["a2a", "a2a-audit-store"],
-        ["idempotency_keys is recorded by runtime storage v15"],
+        ["idempotency_keys is recorded by runtime storage v16"],
         ["registry", "memory", "runtime"],
     ),
     "artifact-then-registry": (
@@ -650,7 +650,7 @@ LAYOUTS = {
         _altered_runtime_table,
         ["runtime", "session"],
         [
-            "sessions has other columns than runtime storage v15 lists",
+            "sessions has other columns than runtime storage v16 lists",
             "sessions matches no recorded ledger",
         ],
         ["memory", "a2a"],
@@ -752,7 +752,7 @@ def test_unproven_layouts_are_refused_without_writing(
         assert _ledger(database, f"public__{owner}")[1] == owner
     assert _snapshot(database)["public"] == before["public"]
     if "runtime" in unaffected:
-        assert _start_runtime(database, tmp_path / "rt-unaffected") == 15
+        assert _start_runtime(database, tmp_path / "rt-unaffected") == 16
 
 
 def test_a_store_behind_head_opens_after_storage_migrate(
@@ -1420,7 +1420,7 @@ def test_relocation_r1_and_its_inverse(database: str, tmp_path: Path) -> None:
         memory.put(_memory_record("rec-2"))
     finally:
         memory.close()
-    assert _start_runtime(database, tmp_path / "rt1") == 15
+    assert _start_runtime(database, tmp_path / "rt1") == 16
     assert _ledger(database, "public__memory") == (["0004_namespace"], "memory")
     assert _schemas(database) == ["public", "public__memory"]
 
@@ -1430,7 +1430,7 @@ def test_relocation_r1b_lets_runtime_resume(database: str, tmp_path: Path) -> No
 
     _execute(database, *_documented_sql("R1b"))
 
-    assert _start_runtime(database, tmp_path / "rt") == 15
+    assert _start_runtime(database, tmp_path / "rt") == 16
     memory = _memory(database, tmp_path)
     try:
         assert memory.get("rec-1") is not None
@@ -1459,4 +1459,4 @@ def test_relocation_r2_parks_and_copies_the_module_rows(
     finally:
         audit.close()
     assert _snapshot(database)["public"]["tables"]["idempotency_keys"] == runtime_keys
-    assert _start_runtime(database, tmp_path / "rt2") == 15
+    assert _start_runtime(database, tmp_path / "rt2") == 16

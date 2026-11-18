@@ -47,6 +47,25 @@ class _FakeSSEHTTPResponse:
             yield line.encode("utf-8")
 
 
+def test_http_response_trace_accepts_nested_delegation_identity(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENMINION_TRACE_REQUESTS", "1")
+    monkeypatch.setenv("OPENMINION_TRACE_REQUESTS_DIR", str(tmp_path))
+    session = "task-delegate::" + "parent::conv:project::delegate:child::" * 12
+    trace_http_json_response(
+        trace_metadata={"session_id": session, "turn_id": "turn", "label": "call01"},
+        provider_name="provider",
+        url="https://provider.example/path",
+        status_code=200,
+        body_text='{"choices":[]}',
+        transport="urllib",
+    )
+    paths = list(tmp_path.rglob("*-http-response.json"))
+    assert len(paths) == 1
+    payload = json.loads(paths[0].read_text())
+    assert payload["body_text"] == '{"choices":[]}'
+    assert payload["trace"]["session_id"] == session
+
+
 def test_http_trace_write_failures_are_noncritical_and_metadata_only(
     tmp_path, monkeypatch, caplog
 ) -> None:

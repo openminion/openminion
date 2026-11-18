@@ -627,8 +627,8 @@ def _force_budget_answer_only_finalization(
         Message(
             role="system",
             content=(
-                "The tool budget or a per-tool limit has been reached. Do not call "
-                "more tools. This must be the final answer for the current turn. "
+                "No further tool calls are available in this turn. "
+                "This must be the final answer for the current turn. "
                 "Use the successful tool results already available and write the "
                 "best user-facing final answer now. Do not narrate future steps, "
                 "do not say you will continue, and preserve any explicit output "
@@ -660,8 +660,8 @@ def _force_budget_answer_only_finalization(
         loop_state=loop_state,
         tool_results=_substantive_tool_results(loop_state),
         reason=(
-            "The tool budget or a per-tool limit has been reached. Do not call "
-            "more tools. This must be the final answer for the current turn."
+            "No further tool calls are available in this turn. "
+            "This must be the final answer for the current turn."
             f"{finalization_instruction}"
         ),
     )

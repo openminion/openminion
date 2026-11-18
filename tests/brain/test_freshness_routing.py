@@ -110,13 +110,11 @@ def test_lexical_false_positive_can_stay_local_only_when_classifier_says_no() ->
     assert obligations.require_sources is False
 
 
-def test_direct_tool_request_skips_freshness_classifier_call() -> None:
+def test_verb_form_with_a_structured_id_is_classified() -> None:
     with patch(
         "openminion.modules.brain.bootstrap.freshness_classify.call_structured_with_retry",
-        side_effect=AssertionError(
-            "classifier should be skipped for direct tool request"
-        ),
-    ):
+        return_value=_classifier_payload(),
+    ) as classifier:
         contract, obligations, diagnostics = classify_request_freshness(
             _runner(),
             state=_state(),
@@ -127,20 +125,18 @@ def test_direct_tool_request_skips_freshness_classifier_call() -> None:
             logger=SimpleNamespace(),
         )
 
-    assert contract.intent == "file.read"
-    assert contract.time_sensitive is False
-    assert obligations.require_live_data is False
-    assert diagnostics.classifier_mode == "skipped_direct_tool_request"
+    assert classifier.call_count == 1
+    assert contract.time_sensitive is True
+    assert obligations.require_live_data is True
+    assert diagnostics.classifier_mode == "llm"
 
 
-def test_direct_tool_request_accepts_the_tool_phrase() -> None:
+def test_verb_form_tool_phrase_is_classified() -> None:
     with patch(
         "openminion.modules.brain.bootstrap.freshness_classify.call_structured_with_retry",
-        side_effect=AssertionError(
-            "classifier should be skipped for direct tool request"
-        ),
-    ):
-        contract, obligations, diagnostics = classify_request_freshness(
+        return_value=_classifier_payload(),
+    ) as classifier:
+        _contract, obligations, diagnostics = classify_request_freshness(
             _runner(),
             state=_state(),
             user_input=(
@@ -149,9 +145,9 @@ def test_direct_tool_request_accepts_the_tool_phrase() -> None:
             logger=SimpleNamespace(),
         )
 
-    assert contract.intent == "task.pause"
-    assert obligations.require_live_data is False
-    assert diagnostics.classifier_mode == "skipped_direct_tool_request"
+    assert classifier.call_count == 1
+    assert obligations.require_live_data is True
+    assert diagnostics.classifier_mode == "llm"
 
 
 def test_explicit_tool_command_skips_freshness_classifier_call() -> None:
@@ -546,3 +542,56 @@ def test_final_close_message_allows_structurally_grounded_answer() -> None:
     )
 
     assert message == answer
+
+
+def _classifier_payload() -> dict[str, object]:
+    return {
+        "intent": "current_weather_and_rates",
+        "domain": "general",
+        "time_sensitive": True,
+        "needs_live_data": True,
+        "needs_sources": False,
+        "needs_exact_date": False,
+        "answer_mode": "browse_then_answer",
+        "reason": "The request needs current facts.",
+        "confidence": 0.8,
+    }
+
+
+def test_prose_after_a_verb_is_still_classified() -> None:
+    for text in (
+        "run time estimates for the crawl",
+        "call time on this project",
+        "use file.read documentation to explain its latest behavior",
+        "call task.pause semantics into question using current docs",
+    ):
+        with patch(
+            "openminion.modules.brain.bootstrap.freshness_classify.call_structured_with_retry",
+            return_value=_classifier_payload(),
+        ) as classifier:
+            contract, obligations, diagnostics = classify_request_freshness(
+                _runner(),
+                state=_state(),
+                user_input=text,
+                logger=SimpleNamespace(),
+            )
+
+        assert classifier.call_count == 1, text
+        assert diagnostics.classifier_mode == "llm", text
+        assert contract.time_sensitive is True, text
+        assert obligations.require_live_data is True, text
+
+
+def test_bare_tool_word_verb_form_no_longer_skips_classification() -> None:
+    with patch(
+        "openminion.modules.brain.bootstrap.freshness_classify.call_structured_with_retry",
+        return_value=_classifier_payload(),
+    ) as classifier:
+        classify_request_freshness(
+            _runner(),
+            state=_state(),
+            user_input="use the time tool to get now",
+            logger=SimpleNamespace(),
+        )
+
+    assert classifier.call_count == 1

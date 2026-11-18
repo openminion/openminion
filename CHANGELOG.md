@@ -1,7 +1,7 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-11-15
+Last updated: 2026-11-17
 
 This file tracks package-facing release notes for `openminion`.
 
@@ -14,6 +14,30 @@ This file tracks package-facing release notes for `openminion`.
   `resolve_timeout_seconds`, and `approval_callback` governs child-turn tool confirmations
   without altering the `transfer_to_<name>` parent-policy check or inheriting parent
   callbacks when omitted. (Refs #774)
+
+- The freshness classifier is skipped only for the explicit `tool <name>` request form. Verb phrasing — including
+  `use the time tool to get now`, which previously took the shortcut — is classified again, because punctuation or a
+  dotted token cannot distinguish a real invocation from prose such as `use file.read documentation to explain its
+  latest behavior`. (Refs #784)
+
+- The agent loop's stall rule now counts consecutive failures: a productive batch clears
+  the no-progress counter, so two intermittent failures spread across a turn no longer end it
+  while work is still getting done (Refs #679).
+
+
+## Current package line - 2026-11-17
+
+- The Playwright browser provider now creates its artifact directories (downloads,
+  screenshots, PDFs, traces) on the first `instance_start` instead of at construction,
+  so unused browser artifact directory creation no longer blocks runtime startup;
+  errors creating the required directories still surface on instance start, before
+  the browser launches, with the existing paths and containment check unchanged.
+  (Refs #769)
+
+- A turn whose accepted answer was truncated or filtered now reports the provider's
+  termination (`finish_reason: length`, `content_filter`, …) instead of an unconditional
+  `stop`, and keeps `stop` when the answer was replaced (Refs #602).
+
 
 - `openminion config diff <file>` shows what importing that file would change: per-leaf added, removed and changed values for the merge mode (or `--replace` for `config import --force`), with `--json` and exit code 1 when the config would differ, and no write in any case. The comparison is of the config the parser resolves (stored file plus environment overrides); credential values and URL passwords are redacted, so a secret-only change is reported without its value. (Refs #767)
 
@@ -28,6 +52,11 @@ This file tracks package-facing release notes for `openminion`.
   `data_root` directory and failing SQLite bootstrap, while keeping filenames
   containing whitespace, explicit relative/absolute/`Path` values, and data-root
   containment unchanged (Refs #766).
+
+- Configuration compatibility guidance now identifies accepted but inert
+  `self_improvement.max_applied_notes` and `self_improvement.min_token_overlap`
+  settings, explains the effective six-note context limit, and recommends leaving
+  both settings unset (Refs #779).
 
 ## Current package line - 2026-11-15
 

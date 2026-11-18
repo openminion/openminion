@@ -1,3 +1,4 @@
+import logging
 import asyncio
 from collections.abc import Callable
 from typing import Any
@@ -5,6 +6,14 @@ from typing import Any
 from openminion.cli.status.tool_calls import format_public_tool_activity
 
 from ..status_line import TerminalStatusLine
+from ..transcript import TerminalTranscript
+from .permissions import (
+    runtime_permission_mode as _runtime_permission_mode,
+    runtime_action_policy_mode as _runtime_action_policy_mode,
+)
+from openminion.cli.presentation.visible_parity import statusline_label
+
+_LOGGER = logging.getLogger(__name__)
 
 _DEFAULT_TURN_STATUS = "Working on it..."
 
@@ -96,3 +105,41 @@ async def stop_turn_status_line_tick(task: asyncio.Task[None] | None) -> None:
         await task
     except asyncio.CancelledError:
         pass
+
+
+def _route_durable_activity_event(
+    transcript: TerminalTranscript, payload: dict[str, Any]
+) -> bool:
+    try:
+        from openminion.cli.status.activity_ledger import (
+            KIND_APPROVAL,
+            KIND_BACKGROUND,
+            KIND_BUDGET,
+            KIND_ERROR,
+            KIND_PLAN,
+            activity_from_progress_payload,
+        )
+
+        event = activity_from_progress_payload(payload)
+        if event is not None and event.kind in {
+            KIND_PLAN,
+            KIND_APPROVAL,
+            KIND_BACKGROUND,
+            KIND_BUDGET,
+            KIND_ERROR,
+        }:
+            transcript.push_activity_event(event)
+            return True
+    except Exception:
+        _LOGGER.debug("activity event routing failed", exc_info=True)
+    return False
+
+
+def _finalize_turn_status_line(runtime: Any, status_line: TerminalStatusLine) -> None:
+    status_line.set_state(
+        state="idle",
+        permission_mode=_runtime_permission_mode(runtime),
+        action_policy_mode=_runtime_action_policy_mode(runtime),
+        custom=statusline_label(runtime),
+        turn_status="",
+    )

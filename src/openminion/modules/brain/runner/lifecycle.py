@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from openminion.modules.artifact.models import ImageInputContext
+
+
 from typing import TYPE_CHECKING
 
 from openminion.base.config.env import resolve_environment_config
@@ -157,6 +160,7 @@ def run_until_idle(
     trigger: str = RUN_TRIGGER_USER_INPUT,
     capture_identity: "CaptureIdentity | None" = None,
     runtime_conversation_id: str | None = None,
+    image_input: ImageInputContext | None = None,
 ) -> "StepOutput":
     trigger_mode, user_input = _prepare_run_trigger(
         runner, session_id, trace_id, user_input, trigger
@@ -175,6 +179,7 @@ def run_until_idle(
         capability_category=capability_category,
         capture_identity=capture_identity,
         runtime_conversation_id=runtime_conversation_id,
+        image_input=image_input,
     )
     iterations = 1
 
@@ -282,6 +287,7 @@ def _start_run(
     capability_category: str | None,
     capture_identity: "CaptureIdentity | None",
     runtime_conversation_id: str | None,
+    image_input: ImageInputContext | None = None,
 ) -> "StepOutput":
     runner._pending_run_trigger = trigger_mode
     return runner.step(
@@ -292,6 +298,7 @@ def _start_run(
         capability_category=capability_category,
         capture_identity=capture_identity,
         runtime_conversation_id=runtime_conversation_id,
+        image_input=image_input,
     )
 
 

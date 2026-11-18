@@ -39,6 +39,10 @@ package source and release surface.
   token cost, and the automatic fact-extraction call.
 - [`provider-capabilities.md`](provider-capabilities.md): explicit provider
   capability facts, request requirements, and deterministic pre-call routing.
+- [`configuration-compatibility.md`](configuration-compatibility.md): settings
+  that are accepted and preserved but no longer change behaviour, and where the
+  effective limit is owned — starting with the two inert `self_improvement`
+  note fields.
 - [`security-scanning.md`](security-scanning.md): bounded local Semgrep and
   Trivy setup, exposure, evidence, and safety limits.
 - [`tool-dependency-readiness.md`](tool-dependency-readiness.md): explicit
@@ -60,6 +64,8 @@ package source and release surface.
   gates and validation expectations.
 - [`pre-authoring-code-simplicity-and-readability-guideline.md`](pre-authoring-code-simplicity-and-readability-guideline.md):
   how to keep new code readable before cleanup is needed.
+
+- [`selected-images.md`](selected-images.md): explicit image selection and native/separate-reader configuration.
 
 ## Package Boundaries
 

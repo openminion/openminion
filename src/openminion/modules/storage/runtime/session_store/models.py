@@ -16,6 +16,13 @@ class SessionRecord:
     closed_at: str | None
     expires_at: str | None
     active_agent_id: str | None = None
+    image_generation: str = ""
+
+    @property
+    def image_scope(self) -> str:
+        if not self.image_generation:
+            raise ValueError("Session image generation is unavailable")
+        return f"{self.id}::{self.image_generation}"
 
     @property
     def owner_agent_id(self) -> str:

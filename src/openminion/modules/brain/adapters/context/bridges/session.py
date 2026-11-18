@@ -121,7 +121,10 @@ class BridgeSessionClient:
                     or "user"
                 )
                 content = str(item.get("text", item.get("content", "")) or "").strip()
-                if not content:
+                image_input = (item.get("channel_meta", item.get("meta")) or {}).get(
+                    "image_input"
+                )
+                if not content and image_input is None:
                     continue
                 if role == "assistant" and bool(item.get("is_error")):
                     continue
@@ -135,6 +138,7 @@ class BridgeSessionClient:
                         turn_id=turn_id,
                         role=role,
                         content=content,
+                        image_input=image_input,
                         ts=ts,
                         is_error=bool(item.get("is_error")),
                     )

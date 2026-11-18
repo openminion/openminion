@@ -130,6 +130,7 @@ class _DummyRunner:
         approval_callback=None,
         runtime_session_id=None,
         runtime_conversation_id=None,
+        image_input=None,
         root_turn_id=None,
         capture_event_id=None,
         capture_id=None,

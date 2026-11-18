@@ -678,12 +678,14 @@ def build_brain_runner_bundle(service: Any) -> Any:
             OpenMinionLLMClient(
                 runtime_provider,
                 invoke_provider_request=service._invoke_provider_request,
+                read_images=service._read_images,
                 runtime_tools=runtime_tool_specs,
                 telemetryctl=service._telemetryctl,
                 home_root=service._context.home_paths.home_root,
             )
         )
     artifact_config = service._get_manager_config("artifact")
+
     session_api = bridge_module.create_session_api(
         mode=service.mode,
         db_path=service.db_path,

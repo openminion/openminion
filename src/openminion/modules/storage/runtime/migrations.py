@@ -612,6 +612,14 @@ DEFAULT_MIGRATIONS: Tuple[Migration, ...] = (
         ),
         backfill=backfill_session_metadata_strings,
     ),
+    Migration(
+        version=16,
+        name="session_image_generation",
+        statements=(
+            "ALTER TABLE sessions ADD COLUMN image_generation TEXT NOT NULL DEFAULT ''",
+            "UPDATE sessions SET image_generation = lower(hex(randomblob(16)))",
+        ),
+    ),
 )
 
 
@@ -808,6 +816,10 @@ def _adapt_migration_statements(
             )
             .replace("embedding BLOB NOT NULL", "embedding BYTEA NOT NULL")
             .replace("event_id INTEGER PRIMARY KEY", "event_id BIGINT PRIMARY KEY")
+            .replace(
+                "lower(hex(randomblob(16)))",
+                "replace(gen_random_uuid()::text, '-', '')",
+            )
             .replace(
                 _MESSAGE_APPEND_SEQ_BACKFILL, _POSTGRES_MESSAGE_APPEND_SEQ_BACKFILL
             )

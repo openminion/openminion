@@ -19,6 +19,7 @@ from openminion.services.gateway.turn.runtime import _extract_ephemeral_prompt_m
 from openminion.services.stats import RunStats
 from openminion.services.runtime.ingress import (
     TurnRequestError,
+    RuntimeTurnRequest,
     execute_runtime_turn,
     runtime_turn_request_from_payload,
     submit_turn_payload,
@@ -28,6 +29,15 @@ from openminion.services.runtime.ingress.requests import (
     runtime_turn_request_from_manager_request,
 )
 from tests._csc_fixtures import _csc_install_default_agent
+
+
+def test_runtime_turn_request_preserves_positional_session() -> None:
+    request = RuntimeTurnRequest(
+        "agent", "profile", "message", "cli", "target", 30, "session"
+    )
+
+    assert request.session_id == "session"
+    assert request.image_refs == ()
 
 
 class _GatewayStub:

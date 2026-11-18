@@ -329,6 +329,7 @@ def test_build_context_injects_model_capability_overrides_into_hints() -> None:
         _emit_brain_operation=MagicMock(return_value=True),
     )
     state = SimpleNamespace(
+        image_input=None,
         unresolved_clarify_items=[],
         clarify_responses={},
         active_mode_name=None,

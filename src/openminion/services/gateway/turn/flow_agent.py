@@ -1,3 +1,4 @@
+import json
 from typing import Any
 from collections.abc import Callable
 
@@ -119,6 +120,7 @@ class GatewayTurnAgentExecutionMixin:
         channel: str,
         target: str,
         body: str,
+        image_refs: tuple[str, ...] = (),
         run_id: str,
         authenticity_decision: Any,
         participant_id: str,
@@ -127,6 +129,7 @@ class GatewayTurnAgentExecutionMixin:
             channel=channel,
             target=target,
             body=body,
+            image_refs=image_refs,
             metadata={
                 **_extract_ephemeral_prompt_metadata(
                     routing.normalized_inbound_metadata
@@ -168,6 +171,7 @@ class GatewayTurnAgentExecutionMixin:
         channel: str,
         target: str,
         body: str,
+        image_refs: tuple[str, ...] = (),
         run_id: str,
         participant_id: str,
         session_turn_fence_token: int | None,
@@ -184,6 +188,7 @@ class GatewayTurnAgentExecutionMixin:
             role="inbound",
             body=body,
             metadata={
+                **({"image_refs": json.dumps(image_refs)} if image_refs else {}),
                 "channel": channel,
                 "target": target,
                 "run_id": run_id,
@@ -290,6 +295,7 @@ class GatewayTurnAgentExecutionMixin:
         channel: str,
         target: str,
         body: str,
+        image_refs: tuple[str, ...] = (),
         run_id: str,
         lifecycle_payload: dict[str, Any],
         history: list[Message],
@@ -333,6 +339,7 @@ class GatewayTurnAgentExecutionMixin:
             channel=channel,
             target=target,
             body=body,
+            image_refs=image_refs,
             run_id=run_id,
             authenticity_decision=authenticity_decision,
             participant_id=participant_id,
@@ -342,6 +349,7 @@ class GatewayTurnAgentExecutionMixin:
             channel=channel,
             target=target,
             body=body,
+            image_refs=image_refs,
             run_id=run_id,
             participant_id=participant_id,
             session_turn_fence_token=session_turn_fence_token,

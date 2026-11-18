@@ -184,6 +184,7 @@ def _request_hash(
     session_id: str | None,
     inbound_metadata: dict[str, str] | None,
     typed_turn_intent: object | None = None,
+    image_refs: tuple[str, ...] = (),
 ) -> str:
     serialized_typed_turn_intent: object | None = None
     if typed_turn_intent is not None:
@@ -201,6 +202,7 @@ def _request_hash(
         "session_id": session_id or "",
         "inbound_metadata": _normalize_metadata(inbound_metadata),
         "typed_turn_intent": serialized_typed_turn_intent,
+        **({"image_refs": image_refs} if image_refs else {}),
     }
     encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()

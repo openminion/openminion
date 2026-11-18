@@ -706,6 +706,8 @@ def build_context(
     if runner.context_api is None:
         return {}
     hints = _runtime_freshness_hints(state=state, hints=dict(hints or {}))
+    if state.image_input is not None:
+        hints["image_input"] = state.image_input.model_dump()
 
     if state.unresolved_clarify_items:
         hints["pending_clarifications"] = [

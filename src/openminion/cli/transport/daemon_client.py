@@ -113,6 +113,8 @@ def daemon_request(
     path: str,
     payload: dict[str, Any] | None = None,
     timeout_s: float = 30.0,
+    data: bytes | None = None,
+    content_type: str = "application/octet-stream",
 ) -> tuple[int, dict[str, Any]]:
     request = _build_daemon_request(
         endpoint=endpoint,
@@ -120,6 +122,8 @@ def daemon_request(
         path=path,
         payload=payload,
         accept="application/json",
+        data=data,
+        content_type=content_type,
     )
 
     try:
@@ -178,11 +182,17 @@ def _build_daemon_request(
     payload: dict[str, Any] | None,
     accept: str,
     last_event_id: str | None = None,
+    data: bytes | None = None,
+    content_type: str = "application/octet-stream",
 ) -> Request:
     normalized_method = method.upper().strip() or "GET"
     normalized_path = path if path.startswith("/") else f"/{path}"
-    body: bytes | None = None
+    if payload is not None and data is not None:
+        raise ValueError("Send JSON or binary data, not both")
+    body = data
     headers = {"Accept": accept}
+    if data is not None:
+        headers["Content-Type"] = content_type
     if payload is not None:
         body = json.dumps(payload).encode("utf-8")
         headers["Content-Type"] = "application/json"

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from openminion.modules.artifact.models import ImageInputContext
+
 from dataclasses import dataclass, field as _dc_field
 from typing import Any, Callable
 
@@ -29,16 +31,27 @@ def make_segment(
     refs: list[str] | None = None,
     is_artifact_preview: bool = False,
     pinned: bool = False,
+    image_input: ImageInputContext | None = None,
     estimate_tokens: Callable[[str], int],
 ) -> ContextSegment:
     is_cacheable = bucket == "static_prefix"
-    content_hash = _content_hash(content) if content else ""
+    accounted_content = content
+    if image_input is not None:
+        from openminion.modules.prompting.image_input import image_evidence_prompt
+
+        accounted_content += (
+            image_evidence_prompt(image_input)
+            if image_input.observations is not None
+            else image_input.model_dump_json()
+        )
+    content_hash = _content_hash(accounted_content) if accounted_content else ""
     return ContextSegment(
         id=seg_id,
         bucket=bucket,  # type: ignore[arg-type]
         role=role,  # type: ignore[arg-type]
         content=content,
-        token_estimate=estimate_tokens(content) if content else 0,
+        image_input=image_input,
+        token_estimate=estimate_tokens(accounted_content) if accounted_content else 0,
         content_hash=content_hash,
         refs=refs or [],
         is_artifact_preview=is_artifact_preview,
@@ -143,6 +156,7 @@ class _SegmentAssemblyRuntime:
         refs: list[str] | None = None,
         is_artifact_preview: bool = False,
         pinned: bool = False,
+        image_input: ImageInputContext | None = None,
     ) -> ContextSegment:
         return make_segment(
             seg_id,
@@ -152,5 +166,6 @@ class _SegmentAssemblyRuntime:
             refs=refs,
             is_artifact_preview=is_artifact_preview,
             pinned=pinned,
+            image_input=image_input,
             estimate_tokens=self.estimate_tokens,
         )

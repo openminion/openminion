@@ -1,3 +1,5 @@
+from openminion.modules.artifact.models import ImageInputContext
+from openminion.modules.llm.schemas import LLMRequest, LLMResponse
 import asyncio
 import concurrent.futures
 import inspect
@@ -117,6 +119,11 @@ def _runner_turn_kwargs(metadata_source: dict[str, Any]) -> dict[str, Any]:
 
 
 class BrainBridgeTurnMixin:
+    _config: Any
+    _image_artifact_config: Any
+    _runtime_handle: Any
+    _llm_runtime: Any
+    _logger: Any
     _identity_security_lab_facts: Callable[[], dict[str, Any]]
 
     async def _prepare_turn(
@@ -179,6 +186,7 @@ class BrainBridgeTurnMixin:
             session_id=session_id,
             user_input=message.body,
             inbound_metadata=message.metadata,
+            has_images=bool(message.image_refs),
         )
         runner._capture_excluded_for_turn = capture_is_excluded(message.metadata or {})
         runner._terminal_capture_enabled_for_turn = terminal_capture_is_enabled(
@@ -376,6 +384,41 @@ class BrainBridgeTurnMixin:
         setattr(runner, "_pending_permission_overrides", permission_overrides)
         runner._pending_session_action_policy_mode_override = action_policy_mode
 
+    def _resolve_image_request(self, request: LLMRequest) -> LLMRequest:
+        from openminion.modules.llm.image_input import resolve_image_request
+
+        return resolve_image_request(
+            request,
+            config=self._config,
+            artifacts=self._image_artifact_config,
+            sessions=self._runtime_handle.sessions,
+            provider=self._llm_runtime.name,
+            model=self._llm_runtime.model,
+        )
+
+    def _read_images(
+        self,
+        record: ImageInputContext,
+        *,
+        question: str,
+        max_output_tokens: int,
+        on_response: Callable[[LLMResponse], None],
+        before_request: Callable[[LLMRequest], LLMRequest],
+    ) -> LLMResponse:
+        from openminion.modules.llm.image_input import read_images
+
+        return read_images(
+            self._config,
+            self._image_artifact_config,
+            record,
+            question=question,
+            max_output_tokens=max_output_tokens,
+            logger=self._logger,
+            sessions=self._runtime_handle.sessions,
+            on_response=on_response,
+            before_request=before_request,
+        )
+
     def _execute_turn(
         self,
         *,
@@ -391,6 +434,17 @@ class BrainBridgeTurnMixin:
         # cron-scheduled idle ticks arrive with a `pae_idle_tick`
         metadata_source = getattr(message, "metadata", {}) or {}
         turn_kwargs = _runner_turn_kwargs(metadata_source)
+        if message.image_refs:
+            from openminion.modules.llm.image_input import admit_images
+
+            turn_kwargs["image_input"] = admit_images(
+                self._config,
+                self._image_artifact_config,
+                session=self._runtime_handle.sessions.get_session(
+                    str(metadata_source["runtime_session_id"])
+                ),
+                image_refs=message.image_refs,
+            )
         self._bind_inbound_permission_metadata(
             runner=runner,
             metadata_source=metadata_source,

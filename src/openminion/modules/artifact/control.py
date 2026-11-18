@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
-import csv
 import hashlib
-import io
 import json
 import logging
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, cast
+from uuid import uuid4
 
 from openminion.base.time import utc_now_iso as iso_now
 from openminion.modules.artifact.content import (
     _determine_mime,
+    _bounded_excerpt,
+    _build_table_view,
     _decode_text,
     _detect_encoding,
     _extract_ingest_text_from_bytes,
@@ -35,6 +36,7 @@ from openminion.modules.artifact.integrity import read_file_sample
 from openminion.modules.artifact.interfaces import ARTIFACT_INTERFACE_VERSION
 from openminion.modules.artifact.models import (
     ArtifactMeta,
+    ImageRef,
     ArtifactRef,
     GCReport,
     PurgeReport,
@@ -99,6 +101,54 @@ class ArtifactCtl:
 
     def __exit__(self, *_exc: Any) -> None:
         self.close()
+
+    def ingest_image(self, data: bytes, *, mime: str, session_id: str) -> ImageRef:
+        from .images import normalize_image
+
+        if not session_id:
+            raise ArtifactCtlError("INVALID_ARGUMENT", "Images require a session")
+        self._enforce_ingest_size(len(data), source="selected image")
+        normalized, width, height = normalize_image(data, mime)
+        self._enforce_ingest_size(len(normalized), source="normalized image")
+        sha = hashlib.sha256(normalized).hexdigest()
+        self._check_ingest_policy(sha, opaque=True)
+        self.blob_store.put_bytes(sha, normalized)
+        if self.index.get_artifact(sha) is None:
+            self.index.upsert_artifact(
+                ArtifactMeta(
+                    sha256=sha,
+                    size_bytes=len(normalized),
+                    mime="image/png",
+                    created_at=iso_now(),
+                    session_id=session_id,
+                    meta_json={"opaque": True},
+                )
+            )
+        image = ImageRef(
+            f"image://{uuid4()}", sha, len(normalized), width, height, len(data)
+        )
+        self.index.bind_image(image, session_id)
+        return image
+
+    def get_image(self, image_ref: str, *, session_id: str) -> ImageRef:
+        image = self.index.get_image(image_ref, session_id)
+        if image is None or not self.blob_store.exists(image.sha256):
+            raise ArtifactCtlError(
+                "IMAGE_UNAVAILABLE",
+                "Image is unavailable in this session; select it again",
+            )
+        return image
+
+    def read_image(self, image_ref: str, *, session_id: str) -> bytes:
+        image = self.get_image(image_ref, session_id=session_id)
+        with self.blob_store.get_stream(image.sha256) as stream:
+            return cast(bytes, stream.read())
+
+    def revoke_image(self, image_ref: str, *, session_id: str) -> None:
+        self.index.revoke_image(image_ref, session_id)
+
+    def revoke_session_images(self, session_id: str) -> None:
+        self.index.revoke_session_images(session_id)
 
     def ingest_bytes(
         self,
@@ -439,6 +489,7 @@ class ArtifactCtl:
     def delete(self, ref_or_sha: str, soft: bool = True) -> None:
         sha = self._resolve_sha(ref_or_sha)
         now = iso_now()
+        self.index.revoke_images_for_blob(sha)
         derived_shas = self._soft_delete_derived_views([sha], now)
         if sha not in self.index.active_view_shas():
             self.index.soft_delete_artifacts([sha], now)
@@ -878,26 +929,6 @@ class ArtifactCtl:
         return payload
 
 
-def _bounded_excerpt(
-    text: str, *, max_lines: int, max_chars: int
-) -> tuple[str, list[str]]:
-    warnings: list[str] = []
-    if not text:
-        return "", []
-
-    lines = text.splitlines()
-    if len(lines) > max_lines:
-        lines = lines[:max_lines]
-        warnings.append("truncated_lines")
-
-    excerpt = "\n".join(lines)
-    if len(excerpt) > max_chars:
-        excerpt = excerpt[:max_chars]
-        warnings.append("truncated_chars")
-
-    return excerpt, warnings
-
-
 def _redact_text(text: str) -> str:
     redacted = _EMAIL_RE.sub("[REDACTED_EMAIL]", text)
     return _LONG_NUM_RE.sub(
@@ -940,28 +971,6 @@ def _passes_luhn(candidate: str) -> bool:
                 value -= 9
         checksum += value
     return checksum % 10 == 0
-
-
-def _build_table_view(text: str, *, delimiter: str, max_rows: int) -> dict[str, Any]:
-    reader = csv.reader(io.StringIO(text), delimiter=delimiter)
-    header = next(reader, [])
-    sampled_rows: list[list[str]] = []
-    total_rows = 0
-
-    for row in reader:
-        total_rows += 1
-        if len(sampled_rows) < max_rows:
-            sampled_rows.append(row)
-
-    warnings = ["rows_sampled"] if total_rows > max_rows else []
-
-    return {
-        "columns": header,
-        "rows": sampled_rows,
-        "sampled_rows": len(sampled_rows),
-        "total_rows": total_rows,
-        "warnings": warnings,
-    }
 
 
 def _policy_hash(policy: dict[str, Any] | None) -> str:

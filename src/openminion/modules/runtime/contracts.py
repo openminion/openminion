@@ -68,6 +68,7 @@ class TurnRequest:
     explicit_agent: bool = False
     trusted_task_context: Mapping[str, str] | None = None
     trusted_security_scan_context: Mapping[str, str] | None = None
+    image_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
