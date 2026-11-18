@@ -772,10 +772,6 @@ _VALIDATE_BY_CONFIG = tuple(int(part) for part in pydantic.VERSION.split(".")[:2
     not _VALIDATE_BY_CONFIG,
     reason="validate_by_alias/validate_by_name config exists from pydantic 2.11",
 )
-@pytest.mark.skipif(
-    not _VALIDATE_BY_CONFIG,
-    reason="validate_by_alias/validate_by_name config exists from pydantic 2.11",
-)
 def test_sdk_tool_honours_nested_name_only_validation_config(sdk_tools):
     class _NameOnly(BaseModel):
         model_config = ConfigDict(validate_by_alias=False, validate_by_name=True)
