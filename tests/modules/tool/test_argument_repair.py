@@ -183,7 +183,6 @@ def test_validate_model_tool_args_preserves_nested_alias_keys() -> None:
     assert _Args.model_validate(result).query.value == 5
 
 
-
 @pytest.mark.skipif(
     tuple(int(part) for part in pydantic.VERSION.split(".")[:2]) < (2, 11),
     reason="validate_by_alias/validate_by_name config exists from pydantic 2.11",
