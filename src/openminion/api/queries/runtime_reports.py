@@ -3,6 +3,7 @@
 from typing import Any
 
 from openminion.api.queries.mcp_reports import build_mcp_section as _build_mcp_section
+from openminion.api.queries.time_direct_tools import direct_time_tool_report
 from openminion.api.queries.tool_families import build_tool_family_items
 from openminion.modules.brain.bootstrap.route_catalog import (
     available_routes as available_brain_routes,
@@ -61,10 +62,9 @@ def build_tool_schema_report(runtime: Any, *, tool_name: str) -> dict[str, Any] 
     normalized = str(tool_name or "").strip()
     if not normalized:
         return None
-    for item in build_tool_inventory_report(runtime):
-        if item["name"] == normalized:
-            return dict(item)
-    return None
+    inventory = build_tool_inventory_report(runtime)
+    found = next((dict(item) for item in inventory if item["name"] == normalized), None)
+    return found or direct_time_tool_report(runtime, normalized, inventory)
 
 
 def _build_provider_items(runtime: Any, diagnostics: dict[str, Any]) -> dict[str, Any]:
