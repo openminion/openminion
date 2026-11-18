@@ -793,6 +793,31 @@ def test_sdk_tool_honours_nested_name_only_validation_config(sdk_tools):
     assert type(received[0]) is _NameOnly
     assert "VALUE 7" in result.text
 
+    
+@pytest.mark.skipif(
+    not _VALIDATE_BY_CONFIG,
+    reason="validate_by_alias/validate_by_name config exists from pydantic 2.11",
+)
+def test_sdk_tool_rejects_alias_when_name_only_validation_disables_aliases(sdk_tools):
+    received = []
+
+    class _NameOnly(BaseModel):
+        model_config = ConfigDict(validate_by_alias=False, validate_by_name=True)
+
+        value: int = Field(alias="external")
+
+    @tool(name="name_only_reject_alias", min_scope="READ_ONLY", idempotent=True)
+    def operation(query: _NameOnly) -> str:
+        received.append(query)
+        return f"VALUE {query.value}"
+
+    result = _run_alias_tool(
+        sdk_tools, "name_only_reject_alias", {"query": {"external": 7}}, operation
+    )
+
+    assert received == []
+    assert "VALUE 7" not in result.text
+
 
 def test_sdk_tool_preserves_transforming_validator_semantics(sdk_tools):
     calls = []
