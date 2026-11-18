@@ -5,7 +5,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+
+import pytest
 
 from openminion.modules.brain.adapters.context import LocalContextAdapter
 from openminion.modules.brain.adapters.memory import LocalMemoryAdapter
@@ -54,6 +56,7 @@ class _MockLLM:
         purpose: str,
         context: dict[str, Any],
         schema: type,
+        on_response=None,
     ) -> dict[str, Any]:
         self.calls.append(
             {"model": model, "purpose": purpose, "schema": schema.__name__}
@@ -475,3 +478,103 @@ def test_afe_skips_when_disabled() -> None:
             and payload.get("reason") == "disabled"
             for event_type, payload, _kw in logger.events
         )
+
+
+@pytest.mark.parametrize("reset_policy", [None, "mission_start"])
+def test_afe_usage_survives_user_input_interpretation(tmp_path, reset_policy) -> None:
+    from openminion.modules.brain.adapters.llm import LlmctlAdapter
+    from openminion.modules.brain.diagnostics.usage import llm_usage_scope
+    from openminion.modules.brain.runtime.tokens import debit_tokens
+    from openminion.modules.llm.schemas import LLMResponse, UsageInfo
+    from openminion.modules.telemetry.usage.coverage import coverage_from_session_events
+
+    response = LLMResponse(
+        ok=True,
+        provider="test",
+        model="reflect-default",
+        output_text='{"items": []}',
+        usage=UsageInfo(input_tokens=2025, output_tokens=675),
+    )
+    client = SimpleNamespace(call=Mock(return_value=response))
+    runner = _runner(tmp_path, llm_api=LlmctlAdapter(client))
+    runner._capture_authorized_for_turn = True
+    runner._debit_tokens = lambda state, response, logger: debit_tokens(
+        state=state, response=response, logger=logger
+    )
+    runner._clarify = lambda **kwargs: False
+    runner._evaluate_meta = lambda **kwargs: None
+    state, logger = _state(), _Logger()
+    canonical_events = []
+    event_owner = SimpleNamespace(
+        emit_canonical_event=lambda session_id, event_type, payload, **kwargs: (
+            canonical_events.append({"event_type": event_type, "payload": payload})
+        )
+    )
+    with llm_usage_scope(event_owner, state.session_id, state.trace_id, "afe-run"):
+        process_user_input(
+            runner=runner,
+            state=state,
+            logger=logger,
+            tick_ctx=TickRunContext(
+                session_id=state.session_id,
+                user_input="Repair the local adapter.",
+                forced_reset_policy_name=reset_policy,
+            ),
+        )
+
+    assert client.call.call_count == 1
+    assert state.budgets_remaining.tokens == 2300
+    assert state.llm_calls_used == (0 if reset_policy == "mission_start" else 1)
+    assert state.phase == "INTERPRET"
+    usage_events = [
+        {"event_type": kind, "payload": payload}
+        for kind, payload, _ in logger.events
+        if kind == "llm.response"
+    ]
+    assert len(usage_events) == 1
+    assert usage_events[0]["payload"]["usage"]["total_tokens"] == 2700
+    coverage = coverage_from_session_events(canonical_events + usage_events)
+    assert coverage.observed_llm_call_events == 1
+    assert coverage.input_tokens.reported == coverage.output_tokens.reported == 1
+
+
+@pytest.mark.parametrize(
+    "outcome,charged,calls_used",
+    [
+        ("invalid", 2700, 1),
+        ("provider_failure", 2700, 0),
+        ("missing_usage", 0, 1),
+        ("transport_failure", 0, 0),
+    ],
+)
+def test_afe_charges_returned_usage_before_report_validation(
+    tmp_path, outcome, charged, calls_used
+) -> None:
+    from openminion.modules.brain.adapters.llm import LlmctlAdapter
+    from openminion.modules.brain.runtime.tokens import debit_tokens
+    from openminion.modules.llm.schemas import LLMResponse, UsageInfo
+
+    response = LLMResponse(
+        ok=outcome != "provider_failure",
+        provider="test",
+        model="reflect-default",
+        output_text='{"items": []}' if outcome != "invalid" else '{"items": "invalid"}',
+        usage=UsageInfo()
+        if outcome == "missing_usage"
+        else UsageInfo(total_tokens=2700),
+    )
+    call = Mock(return_value=response)
+    if outcome == "transport_failure":
+        call.side_effect = RuntimeError("transport failed before response")
+    runner = _runner(tmp_path, llm_api=LlmctlAdapter(SimpleNamespace(call=call)))
+    runner._debit_tokens = lambda state, response, logger: debit_tokens(
+        state=state, response=response, logger=logger
+    )
+    state = _state()
+    extract_user_message_candidates(
+        runner, state=state, user_message="Repair the local adapter.", logger=_Logger()
+    )
+    assert call.call_count == 1
+    assert state.budgets_remaining.tokens == 5000 - charged
+    assert state.llm_calls_used == calls_used
+    assert _candidate_payloads(str(tmp_path)) == []

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from openminion.modules.llm.schemas import LLMResponse
     from openminion.modules.skill.learning.runtime import WorkflowObservationResult
 
 from pydantic import BaseModel
@@ -174,6 +176,7 @@ class LLMAPI(Protocol):
         purpose: str,
         context: dict[str, Any],
         schema: type[BaseModel],
+        on_response: Callable[[LLMResponse], None] | None = None,
     ) -> dict[str, Any]: ...
 
 

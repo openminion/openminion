@@ -1,4 +1,5 @@
 import json
+from collections.abc import Callable
 from typing import Any, cast
 
 from openminion.modules.brain.diagnostics.usage import record_llm_response
@@ -16,6 +17,7 @@ from openminion.modules.brain.retry import (
     STRUCTURED_RETRYABLE_KEY,
 )
 from openminion.modules.llm.errors import ErrorCode, LLMCtlError
+from openminion.modules.llm.schemas import LLMResponse
 from openminion.modules.telemetry.trace.structured import write_structured_trace
 from openminion.modules.telemetry.trace.phase_timing import (
     record_active_chat_provider_call,
@@ -345,6 +347,7 @@ class LlmctlAdapter(LLMAPI):
         context: dict[str, Any],
         schema: type,
         temperature: float = 0.0,
+        on_response: Callable[[LLMResponse], None] | None = None,
     ) -> Any:
         request = _build_request(
             model=model,
@@ -354,6 +357,8 @@ class LlmctlAdapter(LLMAPI):
             temperature=temperature,
         )
         response = self.client.call(request)
+        if on_response is not None:
+            on_response(response)
         record_llm_response(purpose=purpose, response=response)
         record_active_chat_provider_call(
             purpose=purpose,

@@ -1,5 +1,6 @@
 import json
 import re
+from collections.abc import Callable
 from typing import Any
 
 from pydantic import BaseModel
@@ -32,8 +33,9 @@ class LocalLLMAdapter:
         purpose: str,
         context: dict[str, Any],
         schema: type[BaseModel],
+        on_response: Callable[[LLMResponse], None] | None = None,
     ) -> dict[str, Any]:
-        del model, purpose
+        del model, purpose, on_response
         user_input = _extract_mock_user_input(context)
         if schema.__name__ == "SkillSubsetSelection":
             user_message = _extract_skill_selection_user_message(context)
