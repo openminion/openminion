@@ -7,6 +7,8 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- A provider that answers `RATE_LIMITED`, times out or fails at the transport now enters a process-local cooldown sized by its own `Retry-After` (falling back to the configured backoff and escalating while failures repeat): the next turn skips that provider instead of spending an attempt, routing can use a configured fallback while it is cooling, and retries sleep for the longer of backoff and `Retry-After`. A success clears the cooldown. (Refs #759)
+
 - The agent loop's stall rule now counts consecutive failures: a productive batch clears
   the no-progress counter, so two intermittent failures spread across a turn no longer end it
   while work is still getting done (Refs #679).

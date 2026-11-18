@@ -4,10 +4,11 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, cast
 
 from pydantic import ValidationError
 
+from openminion.modules.llm import health
 from openminion.modules.runtime.sync import raise_if_cancelled
 from openminion.modules.telemetry.trace.phase_timing import (
     active_chat_phase,
@@ -37,6 +38,8 @@ from ..schemas import (
 )
 
 RETRYABLE_CODES = {"RATE_LIMITED", "TIMEOUT", "PROVIDER_ERROR"}
+
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -589,6 +592,13 @@ def _call_with_retries(
     route_posture: str = "primary",
 ) -> LLMResponse:
     max_retries, backoff_ms = client._retry_config(overrides)
+    registry = health.provider_health_for(client)
+    blocked = cast(
+        Optional[LLMResponse],
+        health.begin_attempt(registry, client, provider_name, model_name),
+    )
+    if blocked is not None:
+        return blocked
 
     for attempt in range(max_retries + 1):
         started = time.perf_counter()
@@ -639,6 +649,7 @@ def _call_with_retries(
             response = response.model_copy(update={"latency_ms": elapsed_ms})
 
         if response.ok:
+            registry.record_success(provider_name, model_name)
             _emit_provider_success(
                 client,
                 call_request=call_request,
@@ -650,43 +661,82 @@ def _call_with_retries(
             )
             return response
 
-        err_code = (
-            response.error.code if response.error is not None else "PROVIDER_ERROR"
-        )
-        _record_provider_attempt_result(
+        final = _handle_attempt_failure(
+            client,
+            registry,
+            call_request=call_request,
+            attempt=attempt,
+            attempt_number=attempt_number,
             attempt_extra=attempt_extra,
-            attempt=attempt_number,
             provider_name=provider_name,
             model_name=model_name,
             response=response,
-            outcome="error",
-            error_code=err_code,
+            max_retries=max_retries,
+            backoff_ms=backoff_ms,
         )
-        client._emit_operation(
-            request=call_request,
-            operation="error",
-            provider_name=provider_name,
-            model_name=model_name,
-            status="error",
-            attempt=attempt_number,
-            error_code=err_code,
-            extra=_extra_with_latency(attempt_extra, response=response),
-        )
-        if err_code in RETRYABLE_CODES and attempt < max_retries:
-            client._emit_operation(
-                request=call_request,
-                operation="retry",
-                provider_name=provider_name,
-                model_name=model_name,
-                attempt=attempt_number,
-                error_code=err_code,
-                extra={**attempt_extra, "attempt_posture": "retry"},
-            )
-            time.sleep(max(0.0, (backoff_ms / 1000.0) * (2**attempt)))
-            continue
-        return response
+        if final is not None:
+            return final
 
     raise AssertionError("retry loop must execute")
+
+
+def _handle_attempt_failure(
+    client: Any,
+    registry: Any,
+    *,
+    call_request: LLMRequest,
+    attempt: int,
+    attempt_number: int,
+    attempt_extra: Dict[str, Any],
+    provider_name: str,
+    model_name: str,
+    response: LLMResponse,
+    max_retries: int,
+    backoff_ms: int,
+) -> LLMResponse | None:
+    """Record a failed attempt; return the final response or ``None`` to retry."""
+    err_code = response.error.code if response.error is not None else "PROVIDER_ERROR"
+    _record_provider_attempt_result(
+        attempt_extra=attempt_extra,
+        attempt=attempt_number,
+        provider_name=provider_name,
+        model_name=model_name,
+        response=response,
+        outcome="error",
+        error_code=err_code,
+    )
+    client._emit_operation(
+        request=call_request,
+        operation="error",
+        provider_name=provider_name,
+        model_name=model_name,
+        status="error",
+        attempt=attempt_number,
+        error_code=err_code,
+        extra=_extra_with_latency(attempt_extra, response=response),
+    )
+    retry_after_s = health.note_failure(
+        registry,
+        provider_name,
+        model_name,
+        response,
+        err_code,
+        err_code in RETRYABLE_CODES,
+        backoff_ms,
+    )
+    if err_code in RETRYABLE_CODES and attempt < max_retries:
+        client._emit_operation(
+            request=call_request,
+            operation="retry",
+            provider_name=provider_name,
+            model_name=model_name,
+            attempt=attempt_number,
+            error_code=err_code,
+            extra={**attempt_extra, "attempt_posture": "retry"},
+        )
+        time.sleep(health.retry_sleep_seconds(attempt, backoff_ms, retry_after_s))
+        return None
+    return response
 
 
 def _apply_tool_policy_post(
