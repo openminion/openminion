@@ -593,9 +593,6 @@ def call_structured_with_retry(
 
     def _write_attempt_trace(
         *,
-        active_schema: Any,
-        active_context: dict[str, Any],
-        attempt_index: int,
         result: Any | None,
         outcome: str,
         fail_closed_reason: str = "",
@@ -624,9 +621,6 @@ def call_structured_with_retry(
         **response_options,
     )
     _write_attempt_trace(
-        active_schema=active_schema,
-        active_context=active_context,
-        attempt_index=attempt_index,
         result=result,
         outcome=("retryable" if is_retryable_structured_result(result) else "accepted"),
     )
@@ -640,9 +634,6 @@ def call_structured_with_retry(
             )
             if not is_retryable_structured_result(finalized):
                 _write_attempt_trace(
-                    active_schema=active_schema,
-                    active_context=active_context,
-                    attempt_index=attempt_index,
                     result=finalized,
                     outcome="accepted",
                 )
@@ -652,9 +643,6 @@ def call_structured_with_retry(
         optional_empty = _optional_empty_result_for_schema(active_schema_name)
         if optional_empty is not None:
             _write_attempt_trace(
-                active_schema=active_schema,
-                active_context=active_context,
-                attempt_index=attempt_index,
                 result=optional_empty,
                 outcome="fail_closed",
                 fail_closed_reason="optional_empty_result",
@@ -664,18 +652,12 @@ def call_structured_with_retry(
         if attempt_index >= len(schema_sequence) - 1:
             if _is_decision_schema(schema_name):
                 _write_attempt_trace(
-                    active_schema=active_schema,
-                    active_context=active_context,
-                    attempt_index=attempt_index,
                     result=result,
                     outcome="fail_closed",
                     fail_closed_reason="decision_fail_closed",
                 )
                 return build_decide_fail_closed_result(result)
             _write_attempt_trace(
-                active_schema=active_schema,
-                active_context=active_context,
-                attempt_index=attempt_index,
                 result=result,
                 outcome="exhausted",
                 fail_closed_reason="structured_retry_exhausted",
@@ -698,9 +680,6 @@ def call_structured_with_retry(
                 **response_options,
             )
             _write_attempt_trace(
-                active_schema=active_schema,
-                active_context=active_context,
-                attempt_index=attempt_index,
                 result=result,
                 outcome=(
                     "retryable"
@@ -711,9 +690,6 @@ def call_structured_with_retry(
         except Exception:
             if _is_decision_schema(schema_name):
                 _write_attempt_trace(
-                    active_schema=active_schema,
-                    active_context=active_context,
-                    attempt_index=attempt_index,
                     result=result,
                     outcome="fail_closed",
                     fail_closed_reason="retry_call_exception",

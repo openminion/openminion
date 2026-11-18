@@ -35,7 +35,6 @@ class LocalLLMAdapter:
         schema: type[BaseModel],
         on_response: Callable[[LLMResponse], None] | None = None,
     ) -> dict[str, Any]:
-        del model, purpose, on_response
         user_input = _extract_mock_user_input(context)
         if schema.__name__ == "SkillSubsetSelection":
             user_message = _extract_skill_selection_user_message(context)
