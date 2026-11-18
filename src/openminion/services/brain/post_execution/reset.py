@@ -693,8 +693,9 @@ def _reset_state_for_new_input(
     session_id: str,
     user_input: str,
     inbound_metadata: dict[str, Any] | None = None,
+    has_images: bool = False,
 ) -> None:
-    if not user_input.strip():
+    if not user_input.strip() and not has_images:
         return
     state_inline = self._latest_working_state_inline(
         runner=runner,

@@ -1,6 +1,7 @@
 """Stdlib HTTP and SSE transport for the OpenMinion API."""
 
 import logging
+import re
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from time import perf_counter
@@ -42,6 +43,20 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
             started_at=started_at,
         ):
             return
+        image_path = re.fullmatch(
+            r"/v1/sessions/([^/]+)/images/([0-9a-f-]{36})", parsed.path
+        )
+        if image_path:
+            from .images import handle_image_upload
+
+            handle_image_upload(
+                self,
+                session_id=image_path[1],
+                image_id=image_path[2],
+                query=parsed.query,
+                method="GET",
+            )
+            return
         if try_handle_turn_stream_attach(self, parsed=parsed, request_id=request_id):
             return
         status, payload = dispatch_request(
@@ -68,6 +83,12 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
             request_id=request_id,
             started_at=started_at,
         ):
+            return
+        image_path = re.fullmatch(r"/v1/sessions/([^/]+)/images", path)
+        if image_path:
+            from .images import handle_image_upload
+
+            handle_image_upload(self, session_id=image_path[1], query=parsed.query)
             return
         try:
             payload = self._read_optional_json_body()
@@ -104,6 +125,20 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
             request_id=request_id,
             started_at=started_at,
         ):
+            return
+        image_path = re.fullmatch(
+            r"/v1/sessions/([^/]+)/images/([0-9a-f-]{36})", parsed.path
+        )
+        if image_path:
+            from .images import handle_image_upload
+
+            handle_image_upload(
+                self,
+                session_id=image_path[1],
+                image_id=image_path[2],
+                query=parsed.query,
+                method="DELETE",
+            )
             return
         try:
             payload = self._read_optional_json_body()
@@ -173,8 +208,10 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
         write_sse_event(self.wfile, event=event, data=data, event_id=event_id)
 
     def _write_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
+        data = _json_dumps(payload).encode("utf-8")
         self.send_response(int(status))
         self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
         meta = payload.get("meta", {})
         if request_id := meta.get("request_id"):
             self.send_header("X-Request-ID", request_id)
@@ -190,7 +227,7 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
                 if key in {"Cache-Control", "Referrer-Policy"}:
                     self.send_header(str(key), str(value))
         self.end_headers()
-        self.wfile.write(_json_dumps(payload).encode("utf-8"))
+        self.wfile.write(data)
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A003
         return

@@ -116,3 +116,11 @@ def add_model_connection(
         "provider_config_overrides": route,
         "default": default or bool(existing.get("default")),
     }
+    if (
+        existing.get("provider") == provider
+        and existing.get("provider_config_overrides", {}) == route
+    ):
+        if "image_input" in existing:
+            profile.model_connections[connection_id]["image_input"] = dict(
+                existing["image_input"]
+            )

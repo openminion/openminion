@@ -4,6 +4,7 @@ import ast
 import asyncio
 import inspect
 import io
+import textwrap
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,6 +14,7 @@ from rich.console import Console
 
 from openminion.cli.interactive.terminal.shell import (
     _SLASH_COMMANDS,
+    _TerminalFocusLoop,
     _handle_slash,
     _handle_slash_input,
 )
@@ -287,6 +289,7 @@ def _extract_implemented_slashes() -> set[str]:
     implemented: set[str] = set()
 
     dispatchers = (
+        _TerminalFocusLoop.handle_idle_input,
         _handle_slash,
         _handle_session_slash,
         _handle_shell_preference_slash,
@@ -295,13 +298,13 @@ def _extract_implemented_slashes() -> set[str]:
         handle_room_slash,
     )
     for dispatcher in dispatchers:
-        tree = ast.parse(inspect.getsource(dispatcher))
+        tree = ast.parse(textwrap.dedent(inspect.getsource(dispatcher)))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Compare):
                 continue
             if (
                 isinstance(node.left, ast.Name)
-                and node.left.id == "cmd"
+                and node.left.id in {"cmd", "text"}
                 and len(node.ops) == 1
                 and isinstance(node.ops[0], ast.Eq)
                 and len(node.comparators) == 1
@@ -312,7 +315,7 @@ def _extract_implemented_slashes() -> set[str]:
                 implemented.add(node.comparators[0].value)
             if (
                 isinstance(node.left, ast.Name)
-                and node.left.id == "cmd"
+                and node.left.id in {"cmd", "text"}
                 and len(node.ops) == 1
                 and isinstance(node.ops[0], ast.In)
                 and len(node.comparators) == 1

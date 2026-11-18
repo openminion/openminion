@@ -10,6 +10,7 @@ from pydantic import (
     model_validator,
 )
 
+from openminion.modules.artifact.models import ImageInputContext
 from openminion.modules.session.capture import TerminalCaptureIntentReceipt
 from openminion.modules.tool.plugin_api import ToolConfirmationPreview
 
@@ -111,6 +112,7 @@ class WorkingState(BaseModel):
     inherited_task_conditions: dict[str, str] = Field(default_factory=dict)
     active_goal_id: str | None = None
     last_user_input: str = ""
+    image_input: ImageInputContext | None = None
     active_mode_name: str | None = None
     active_skill_id: str | None = None
     active_skill_ids: list[str] = Field(default_factory=list)

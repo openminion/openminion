@@ -247,6 +247,7 @@ class GatewayService:
         forced_tools: Optional[list[str]] = None,
         capability_category: Optional[str] = None,
         typed_turn_intent: TypedTurnIntent | None = None,
+        image_refs: tuple[str, ...] = (),
         progress_callback: Callable[[object], None] | None = None,
         approval_callback: Callable[..., Any] | None = None,
     ) -> Message:
@@ -265,6 +266,7 @@ class GatewayService:
                 forced_tools=forced_tools,
                 capability_category=capability_category,
                 typed_turn_intent=typed_turn_intent,
+                image_refs=image_refs,
                 progress_callback=progress_callback,
                 approval_callback=approval_callback,
             )
@@ -280,6 +282,7 @@ class GatewayService:
             forced_tools=forced_tools,
             capability_category=capability_category,
             typed_turn_intent=typed_turn_intent,
+            image_refs=image_refs,
             progress_callback=progress_callback,
             approval_callback=approval_callback,
         )
@@ -297,6 +300,7 @@ class GatewayService:
         forced_tools: Optional[list[str]] = None,
         capability_category: Optional[str] = None,
         typed_turn_intent: TypedTurnIntent | None = None,
+        image_refs: tuple[str, ...] = (),
         approval_callback: Callable[..., Any] | None = None,
     ) -> AsyncIterator[GatewayStreamEvent]:
         loop = asyncio.get_running_loop()
@@ -368,6 +372,7 @@ class GatewayService:
             "forced_tools": forced_tools,
             "capability_category": capability_category,
             "typed_turn_intent": typed_turn_intent,
+            "image_refs": image_refs,
             "progress_callback": _progress_callback,
             "approval_callback": bridged_approval_callback,
         }
@@ -416,6 +421,7 @@ class GatewayService:
         forced_tools: Optional[list[str]] = None,
         capability_category: Optional[str] = None,
         typed_turn_intent: TypedTurnIntent | None = None,
+        image_refs: tuple[str, ...] = (),
         progress_callback: Callable[[object], None] | None = None,
         approval_callback: Callable[..., Any] | None = None,
     ) -> Message:
@@ -438,6 +444,7 @@ class GatewayService:
             session_id=session_id,
             inbound_metadata=inbound_metadata,
             typed_turn_intent=typed_turn_intent,
+            image_refs=image_refs,
         )
         reserved = self._idempotency.reserve(
             method=self._METHOD_HANDLE_MESSAGE,
@@ -468,6 +475,7 @@ class GatewayService:
                 forced_tools=forced_tools,
                 capability_category=capability_category,
                 typed_turn_intent=typed_turn_intent,
+                image_refs=image_refs,
                 progress_callback=progress_callback,
                 approval_callback=approval_callback,
             )
@@ -509,6 +517,7 @@ class GatewayService:
         forced_tools: Optional[list[str]] = None,
         capability_category: Optional[str] = None,
         typed_turn_intent: TypedTurnIntent | None = None,
+        image_refs: tuple[str, ...] = (),
         progress_callback: Callable[[object], None] | None = None,
         approval_callback: Callable[..., Any] | None = None,
     ) -> Message:
@@ -553,6 +562,7 @@ class GatewayService:
                 forced_tools=forced_tools,
                 capability_category=capability_category,
                 typed_turn_intent=typed_turn_intent,
+                image_refs=image_refs,
                 progress_callback=progress_callback,
                 approval_callback=approval_callback,
                 resolved_session=resolved_session,
@@ -580,6 +590,7 @@ class GatewayService:
         forced_tools: Optional[list[str]] = None,
         capability_category: Optional[str] = None,
         typed_turn_intent: TypedTurnIntent | None = None,
+        image_refs: tuple[str, ...] = (),
         progress_callback: Callable[[object], None] | None = None,
         approval_callback: Callable[..., Any] | None = None,
     ) -> Message:
@@ -597,6 +608,7 @@ class GatewayService:
             forced_tools=forced_tools,
             capability_category=capability_category,
             typed_turn_intent=typed_turn_intent,
+            image_refs=image_refs,
             progress_callback=progress_callback,
             approval_callback=approval_callback,
         )

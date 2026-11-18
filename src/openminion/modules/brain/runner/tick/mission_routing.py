@@ -21,6 +21,8 @@ from .context import TickRunContext, _runner_delegate
 
 
 def _append_original_turn(*, runner, tick_ctx: TickRunContext) -> None:
+    if tick_ctx.image_input is not None:
+        return
     runner.session_api.append_turn(
         tick_ctx.session_id,
         "user",

@@ -65,6 +65,8 @@ package source and release surface.
 - [`pre-authoring-code-simplicity-and-readability-guideline.md`](pre-authoring-code-simplicity-and-readability-guideline.md):
   how to keep new code readable before cleanup is needed.
 
+- [`selected-images.md`](selected-images.md): explicit image selection and native/separate-reader configuration.
+
 ## Package Boundaries
 
 `README.md`, `API_COMPATIBILITY.md`, `RELEASING.md`, and this docs directory are

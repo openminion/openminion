@@ -97,6 +97,11 @@ class ProviderSetupRequest:
     env: Mapping[str, str] | None = None
     add_model: bool = False
     connection_id: str = ""
+    supports_images: bool = False
+    image_mode: str = ""
+    image_reader_connection: str = ""
+    image_reader_model: str = ""
+    image_purpose: str = "describe"
 
 
 @dataclass(frozen=True)
@@ -167,6 +172,12 @@ def build_provider_setup(
     *,
     existing_config: OpenMinionConfig | None = None,
 ) -> ProviderSetupResult:
+    if request.image_mode != "separate" and (
+        request.image_reader_connection
+        or request.image_reader_model
+        or request.image_purpose != "describe"
+    ):
+        raise ProviderSetupError("Image reader fields require separate image mode")
     preset = get_setup_preset(request.preset_id)
     config_path = resolve_config_path(request.config_path, home_root=request.home_root)
     data_root = Path(request.data_root or (Path.home() / ".openminion")).expanduser()
@@ -224,6 +235,34 @@ def build_provider_setup(
         add_model=request.add_model,
         connection_id=connection_id,
     )
+    profile = config.agents[agent_id]
+    if request.supports_images:
+        connection = profile.model_connections[connection_id]
+        connection.setdefault("image_input", {})[model] = "supported"
+        connection.setdefault("provider_config_overrides", {})[
+            "enable_vision_input"
+        ] = True
+        if changes_agent_default:
+            profile.provider_config_overrides["enable_vision_input"] = True
+    if request.image_mode:
+        from openminion.base.config.image_input import (
+            ImageInputConfig,
+            validate_image_connections,
+        )
+
+        policy = {"mode": request.image_mode}
+        if request.image_mode == "separate":
+            policy.update(
+                connection_id=request.image_reader_connection,
+                model=request.image_reader_model,
+                purpose=request.image_purpose,
+            )
+        profile.image_input = (
+            None
+            if request.image_mode == "off"
+            else ImageInputConfig.model_validate(policy)
+        )
+        validate_image_connections(profile.image_input, profile.model_connections)
     preview = ProviderSetupPreview(
         config_path=config_path,
         agent_id=agent_id,

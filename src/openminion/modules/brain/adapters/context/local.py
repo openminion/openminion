@@ -22,6 +22,8 @@ class LocalContextAdapter:
         hints: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         turns = self.session_store.list_turns(session_id)[-10:]
+        for turn in turns:
+            turn["image_input"] = turn["meta"].get("image_input")
         events = self.session_store.list_events(session_id)[-25:]
         normalized_hints = {} if hints is None else dict(hints)
         context_budget_tier = normalized_hints.get("context_budget_tier")

@@ -324,9 +324,11 @@ def test_default_window_boundary_keeps_both_runs_whole(
         migrations=tuple(item for item in DEFAULT_MIGRATIONS if item.version < 13),
     )
     connection = connect_database(database_path)
-    sessions = SessionStore(connection)
-    session = sessions.resolve_session(
-        agent_id="main", channel="console", target="run-status"
+    session_id = "legacy-run-status"
+    connection.execute(
+        "INSERT INTO sessions(id, session_key, channel, target) "
+        "VALUES (?, ?, 'console', 'run-status')",
+        (session_id, "legacy-run-status-key"),
     )
     stamps = _forward_clock()
     thread = {"conversation_id": "conv", "thread_id": "thread"}
@@ -342,7 +344,7 @@ def test_default_window_boundary_keeps_both_runs_whole(
             "VALUES (?, ?, ?, ?)",
             [
                 (
-                    session.id,
+                    session_id,
                     f"run.{state}",
                     metadata_json(
                         {
@@ -359,12 +361,13 @@ def test_default_window_boundary_keeps_both_runs_whole(
             ],
         )
         connection.commit()
-        assert migrate_database(database_path).applied_versions == (13, 14, 15)
+        assert migrate_database(database_path).applied_versions == (13, 14, 15, 16)
+        sessions = SessionStore(connection)
         monkeypatch.setattr(lifecycle, "utc_now_iso", lambda: next(stamps))
         new_queued, new_failed = (
             append_run_state_event(
                 sessions,
-                session_id=session.id,
+                session_id=session_id,
                 run_id="new",
                 state=state,
                 current_step="step",
@@ -373,13 +376,13 @@ def test_default_window_boundary_keeps_both_runs_whole(
             )
             for state in (RUN_STATE_QUEUED, RUN_STATE_FAILED)
         )
-        runs = list_session_runs(sessions, session_id=session.id)
+        runs = list_session_runs(sessions, session_id=session_id)
         old_read = list_session_run_events(
-            sessions, session_id=session.id, run_id="old", limit=1000
+            sessions, session_id=session_id, run_id="old", limit=1000
         )
-        projection = resolve_thread_lifecycle(sessions, session_id=session.id, **thread)
-        high_water = sessions.event_high_water(session_id=session.id)
-        old_first = sessions.list_events(session_id=session.id, limit=1)[0]
+        projection = resolve_thread_lifecycle(sessions, session_id=session_id, **thread)
+        high_water = sessions.event_high_water(session_id=session_id)
+        old_first = sessions.list_events(session_id=session_id, limit=1)[0]
     finally:
         connection.close()
 

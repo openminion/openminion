@@ -23,6 +23,7 @@ class Message:
     stats: MessageStats | None = None
     id: str = field(default_factory=lambda: uuid4().hex)
     timestamp: datetime = field(default_factory=utc_now)
+    image_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
