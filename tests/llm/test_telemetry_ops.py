@@ -249,6 +249,35 @@ def test_llm_module_emits_request_response_and_cache_hit(temp_db: str) -> None:
     assert stats["operation_counts"]["cache_hit"] == 1
 
 
+def test_failed_attempt_emits_error_operation_with_status_and_code(
+    temp_db: str,
+) -> None:
+    response, _, summary = _run(
+        _call_and_summary(
+            temp_db,
+            session_id="sess-attempt-error",
+            request_payload=_request_payload("sess-attempt-error", "turn-1"),
+            outcomes=[LLMCtlError("INVALID_ARGUMENT", "bad request", {})],
+        )
+    )
+
+    assert response.ok is False
+    stats = [
+        (
+            event.data["operation"],
+            event.data["status"],
+            event.data.get("error_code"),
+            event.data["attempt"],
+        )
+        for event in summary.events
+        if event.event_type == "module.stats"
+    ]
+    assert stats == [
+        ("request", "ok", None, 1),
+        ("error", "error", "INVALID_ARGUMENT", 1),
+    ]
+
+
 def test_llm_module_emits_retry_and_error_for_retryable_failure(temp_db: str) -> None:
     response, provider, stats = _run(
         _call_and_stats(
