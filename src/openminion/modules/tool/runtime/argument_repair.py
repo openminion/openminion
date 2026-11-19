@@ -204,7 +204,7 @@ def _model_config_accepts_field_names(model_type: Any) -> bool:
 def _model_dump_accepts_input_keys(
     model: BaseModel, seen: set[int] | None = None
 ) -> bool:
-    # RootModel dumps as {"root": ...}, but its accepted input is the root value.
+    # RootModel serializes its root value directly; preserve the accepted input shape.
     if getattr(type(model), "__pydantic_root_model__", False):
         return False
     visited = seen if seen is not None else set()
@@ -214,7 +214,19 @@ def _model_dump_accepts_input_keys(
     visited.add(identity)
 
     accepts_field_names = _model_config_accepts_field_names(type(model))
+    config = getattr(type(model), "model_config", {}) or {}
+    serialize_by_alias = bool(config.get("serialize_by_alias"))
     for field_name, field_info in type(model).model_fields.items():
+        serialization_alias = getattr(field_info, "serialization_alias", None)
+        if serialization_alias is None:
+            serialization_alias = getattr(field_info, "alias", None)
+        if (
+            serialize_by_alias
+            and serialization_alias is not None
+            and serialization_alias != field_name
+        ):
+            return False
+
         input_alias = getattr(field_info, "validation_alias", None)
         if input_alias is None:
             input_alias = getattr(field_info, "alias", None)

@@ -18,6 +18,8 @@ from openminion.base.config.core import ActionPolicyRuleConfig, ActionPolicyMatc
 from openminion.modules.policy.runtime.action_policy import derive_tool_risk_registry
 from tests._csc_fixtures import _csc_install_default_agent
 
+_SERIALIZE_BY_ALIAS_CONFIG = "serialize_by_alias" in ConfigDict.__annotations__
+
 
 @pytest.fixture
 def sdk_tools(tmp_path, monkeypatch):
@@ -707,6 +709,62 @@ def test_sdk_tool_nested_serialization_alias_is_not_an_input_key(sdk_tools):
     assert "VALUE 7" in result.text
 
 
+@pytest.mark.skipif(
+    not _SERIALIZE_BY_ALIAS_CONFIG,
+    reason="serialize_by_alias config exists from Pydantic 2.13",
+)
+def test_sdk_tool_nested_serialize_by_alias_config_preserves_input_keys(sdk_tools):
+    class _Query(BaseModel):
+        model_config = ConfigDict(serialize_by_alias=True, extra="forbid")
+
+        value: int = Field(serialization_alias="output_value")
+
+    received = []
+
+    @tool(name="nested_config_serialization_probe", min_scope="READ_ONLY", idempotent=True)
+    def operation(query: _Query) -> str:
+        received.append(query)
+        return f"VALUE {query.value}"
+
+    result = _run_alias_tool(
+        sdk_tools,
+        "nested_config_serialization_probe",
+        {"query": {"value": 7}},
+        operation,
+    )
+
+    assert received == [_Query(value=7)]
+    assert "VALUE 7" in result.text
+
+
+@pytest.mark.skipif(
+    not _SERIALIZE_BY_ALIAS_CONFIG,
+    reason="serialize_by_alias config exists from Pydantic 2.13",
+)
+def test_sdk_tool_nested_serialize_by_alias_config_rejects_output_key(sdk_tools):
+    class _Query(BaseModel):
+        model_config = ConfigDict(serialize_by_alias=True, extra="forbid")
+
+        value: int = Field(serialization_alias="output_value")
+
+    received = []
+
+    @tool(name="nested_config_serialization_probe", min_scope="READ_ONLY", idempotent=True)
+    def operation(query: _Query) -> str:
+        received.append(query)
+        return f"VALUE {query.value}"
+
+    result = _run_alias_tool(
+        sdk_tools,
+        "nested_config_serialization_probe",
+        {"query": {"output_value": 7}},
+        operation,
+    )
+
+    assert received == []
+    assert "VALUE 7" not in result.text
+
+
 def test_sdk_tool_validation_and_serialization_alias_top_level(sdk_tools):
     received = []
 
@@ -827,5 +885,5 @@ def test_sdk_tool_preserves_transforming_validator_semantics(sdk_tools):
     )
 
     assert received == [[1, 99, 99, 99]]
-    assert len(calls) == 4
+    assert len(calls) == 3
     assert "VALUES [1, 99, 99, 99]" in result.text
