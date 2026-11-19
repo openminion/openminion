@@ -471,3 +471,129 @@ def test_execute_tool_spec_call_propagates_artifactctl_construction_failure(
             arguments={"key": "missing"},
             context=_context(tmp_path, {}),
         )
+
+
+def test_tool_result_from_payload_serializes_basemodel_values(
+    tmp_path, monkeypatch
+) -> None:
+    from openminion import tool
+    from openminion.modules.brain.loop.tools.messages import (
+        action_result_to_tool_message,
+    )
+    from openminion.modules.brain.schemas import ActionResult
+    from openminion.modules.tool.registry import ToolExecutionBatch
+    from pydantic import BaseModel
+
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / ".openminion"))
+
+    class _ScanReport(BaseModel):
+        status: str
+        count: int
+
+    @tool
+    def scan_direct() -> _ScanReport:
+        return _ScanReport(status="error", count=3)
+
+    @tool
+    def scan_nested() -> dict[str, object]:
+        return {
+            "items": (
+                _ScanReport(status="ok", count=1),
+                [_ScanReport(status="warn", count=2)],
+            )
+        }
+
+    @tool
+    def scan_denied() -> dict[str, object]:
+        return {
+            "ok": False,
+            "source": "guard",
+            "error": {
+                "code": "DENIED",
+                "message": "refused",
+                "details": {"report": _ScanReport(status="blocked", count=1)},
+            },
+        }
+
+    @tool
+    def ordinary_bool_key() -> dict[str, object]:
+        return {"data": {True: "value"}}
+
+    @tool
+    def ordinary_none_key() -> dict[str, object]:
+        return {"data": {None: 1}}
+
+    ctx = _context(tmp_path, {})
+
+    direct = execute_tool_spec_call(
+        tool=scan_direct.tool_decl, arguments={}, context=ctx
+    )
+    assert direct.ok is True
+    assert direct.verified is True
+    assert direct.data == {"result": {"status": "error", "count": 3}}
+    assert direct.content == '{"result": {"count": 3, "status": "error"}}'
+    msg = action_result_to_tool_message(
+        "call-1",
+        "scan_direct",
+        ActionResult(
+            command_id="cmd-1",
+            status="success",
+            summary=direct.content,
+            outputs=direct.data,
+        ),
+    )
+    assert '"count": 3' in msg.content
+
+    nested = execute_tool_spec_call(
+        tool=scan_nested.tool_decl, arguments={}, context=ctx
+    )
+    assert nested.ok is True
+    assert nested.data == {
+        "items": [
+            {"status": "ok", "count": 1},
+            [{"status": "warn", "count": 2}],
+        ]
+    }
+
+    denied = execute_tool_spec_call(
+        tool=scan_denied.tool_decl, arguments={}, context=ctx
+    )
+    assert denied.ok is False
+    assert denied.verified is False
+    assert denied.error == "refused"
+    assert denied.source == "guard"
+    assert denied.data == {
+        "error_code": "DENIED",
+        "details": {"report": {"status": "blocked", "count": 1}},
+    }
+    assert (
+        denied.content
+        == '{"details": {"report": {"count": 1, "status": "blocked"}}, "error_code": "DENIED"}'
+    )
+
+    bool_key = execute_tool_spec_call(
+        tool=ordinary_bool_key.tool_decl, arguments={}, context=ctx
+    )
+    assert bool_key.ok is True
+    assert bool_key.data == {True: "value"}
+    assert bool_key.content == '{"true": "value"}'
+
+    none_key = execute_tool_spec_call(
+        tool=ordinary_none_key.tool_decl, arguments={}, context=ctx
+    )
+    assert none_key.ok is True
+    assert none_key.data == {None: 1}
+    assert none_key.content == '{"null": 1}'
+
+    batch_payload = ToolExecutionBatch(
+        results=[direct, nested, denied, bool_key, none_key]
+    ).to_metadata_payload()
+    serialized = json.loads(batch_payload)
+    assert serialized[0]["data"] == {"result": {"status": "error", "count": 3}}
+    assert serialized[1]["data"] == nested.data
+    assert serialized[2]["data"] == denied.data
+    assert serialized[2]["ok"] is False
+    assert serialized[2]["error"] == "refused"
+    assert serialized[3]["data"] == {"true": "value"}
+    assert serialized[4]["data"] == {"null": 1}

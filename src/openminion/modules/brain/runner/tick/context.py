@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from openminion.modules.artifact.models import ImageInputContext
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -207,6 +209,7 @@ class TickRunContext:
     trace_id: str | None = None
     forced_tools: list[str] | None = None
     capability_category: str | None = None
+    image_input: ImageInputContext | None = None
     original_user_input: str | None = None
     has_new_user_input: bool = False
     mission_route: Any | None = None
@@ -227,6 +230,7 @@ def build_tick_run_context(
     trace_id: str | None,
     forced_tools: list[str] | None,
     capability_category: str | None,
+    image_input: ImageInputContext | None = None,
 ) -> TickRunContext:
     return TickRunContext(
         session_id=session_id,
@@ -235,5 +239,6 @@ def build_tick_run_context(
         forced_tools=forced_tools,
         capability_category=capability_category,
         original_user_input=user_input,
-        has_new_user_input=bool(str(user_input or "").strip()),
+        image_input=image_input,
+        has_new_user_input=bool(str(user_input or "").strip() or image_input),
     )

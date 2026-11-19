@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -203,3 +205,33 @@ def test_child_exiting_during_the_final_sleep_is_reported_as_an_exit(
     assert "exited with code 3 before answering" in message
     assert "failed to become healthy" not in message
     assert process.terminated is False
+
+
+def test_startup_creates_private_state_and_log_directories(
+    daemon_paths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pid_file, log_file = daemon_paths
+    process = _FakeProcess(returncode=0)
+    monkeypatch.setattr(daemon_cmd, "_spawn_daemon", lambda *a, **k: process)
+    previous = os.umask(0o022)
+    try:
+        daemon_cmd._start_daemon(_endpoint())
+    finally:
+        os.umask(previous)
+
+    assert stat.S_IMODE(pid_file.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(log_file.parent.stat().st_mode) == 0o700
+
+
+def test_startup_preserves_a_caller_owned_directory_mode(
+    daemon_paths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pid_file, log_file = daemon_paths
+    log_file.parent.mkdir(parents=True)
+    os.chmod(log_file.parent, 0o755)
+    process = _FakeProcess(returncode=1)
+    monkeypatch.setattr(daemon_cmd, "_spawn_daemon", lambda *a, **k: process)
+
+    daemon_cmd._start_daemon(_endpoint())
+
+    assert stat.S_IMODE(log_file.parent.stat().st_mode) == 0o755

@@ -4,6 +4,7 @@ from openminion.base.config.runtime.reasoning import (
 )
 
 from .constants import (
+    MINIMAX_REASONING_EFFORT_MODELS,
     THINKING_DEGRADE_PROVIDER_UNSUPPORTED,
     THINKING_METADATA_DEGRADED_REASON,
     THINKING_METADATA_PROVIDER_EFFORT,
@@ -39,7 +40,6 @@ def resolve_provider_effort_support(
     route: str | None = None,
 ) -> tuple[bool, str | None, str | None]:
     normalized_provider = (provider_name or "").strip().lower()
-    del model_name
     if provider_effort is None or not normalized_provider:
         return True, provider_effort, None
     route_key = (route or "").strip().lower()
@@ -56,8 +56,11 @@ def resolve_provider_effort_support(
             return True, provider_effort, None
         return False, None, THINKING_DEGRADE_PROVIDER_UNSUPPORTED
     if route_key == THINKING_ROUTE_DIRECT:
-        # Direct OpenAI/Anthropic/Groq/Cerebras/OpenRouter adapters build
-        # request payloads that never carry the resolved effort.
+        if (
+            normalized_provider == "openai"
+            and str(model_name or "").strip().lower() in MINIMAX_REASONING_EFFORT_MODELS
+        ):
+            return True, provider_effort, None
         return False, None, THINKING_DEGRADE_PROVIDER_UNSUPPORTED
     # No explicit route (the base-config/capability path resolves effort without
     # knowing the execution route): keep the original provider-allowlist

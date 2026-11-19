@@ -14,7 +14,13 @@ from openminion.modules.llm.providers.base import (
     ProviderToolSpec,
 )
 from openminion.modules.llm.providers.normalization import normalize_provider_response
-from openminion.modules.llm.schemas import Message, ToolCall, UsageInfo
+from openminion.modules.artifact.models import ImageInputContext
+from openminion.modules.llm.schemas import (
+    Message,
+    MessageContentPart,
+    ToolCall,
+    UsageInfo,
+)
 from openminion.modules.llm.thinking import serialize_thinking_blocks
 from openminion.modules.prompting.continuation import (
     ACTIVE_TASK_CONTINUATION_PROMPT,
@@ -228,6 +234,12 @@ def normalized_messages(req: Any) -> list[tuple[str, str, dict[str, Any]]]:
         role = str(getattr(message, "role", "")).strip().lower()
         content = str(getattr(message, "content", "")).strip()
         meta = dict(getattr(message, "meta", {}) or {})
+        image_input = getattr(message, "image_input", None)
+        if image_input is not None:
+            meta["image_input"] = image_input
+        content_parts = list(getattr(message, "content_parts", []) or [])
+        if content_parts:
+            meta["content_parts"] = content_parts
         tool_calls = list(getattr(message, "tool_calls", []) or [])
         tool_call_id = str(getattr(message, "tool_call_id", "") or "").strip()
         tool_status = str(getattr(message, "tool_status", "") or "").strip()
@@ -260,7 +272,13 @@ def normalized_messages(req: Any) -> list[tuple[str, str, dict[str, Any]]]:
             meta["tool_output"] = tool_output
         if tool_error is not None:
             meta["tool_error"] = dict(tool_error)
-        if not content and not tool_calls and not tool_call_id:
+        if (
+            not content
+            and image_input is None
+            and not content_parts
+            and not tool_calls
+            and not tool_call_id
+        ):
             continue
         if role not in {"system", "user", "assistant", "tool"}:
             role = "user"
@@ -274,10 +292,20 @@ def provider_history_payload(message: ProviderHistoryMessage) -> dict[str, Any] 
         role = "user"
     content = message.content.strip()
     tool_call_id = str(message.tool_call_id or "").strip()
-    if not content and not message.tool_calls and not tool_call_id:
+    if (
+        not content
+        and message.image_input is None
+        and not message.content_parts
+        and not message.tool_calls
+        and not tool_call_id
+    ):
         return None
 
     payload: dict[str, Any] = {"role": role, "content": content}
+    if message.image_input is not None:
+        payload["image_input"] = message.image_input.model_dump()
+    if any(part.type == "image" for part in message.content_parts):
+        payload["content_parts"] = [part.model_dump() for part in message.content_parts]
     if message.meta:
         payload["meta"] = dict(message.meta)
     if message.tool_calls:
@@ -300,6 +328,48 @@ def provider_history_payload(message: ProviderHistoryMessage) -> dict[str, Any] 
             }
         )
     return payload
+
+
+def provider_request_payload(
+    request: ProviderRequest,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, str]]:
+    messages: list[dict[str, Any]] = []
+    if str(request.system_prompt or "").strip():
+        messages.append({"role": "system", "content": str(request.system_prompt)})
+
+    for item in list(request.history or []):
+        payload = provider_history_payload(item)
+        if payload is not None:
+            messages.append(payload)
+
+    messages.append(
+        {
+            "role": "user",
+            "content": str(request.user_message or ""),
+            **(
+                {"content_parts": [part.model_dump() for part in request.content_parts]}
+                if any(part.type == "image" for part in request.content_parts)
+                else {}
+            ),
+        }
+    )
+
+    tools = [
+        {
+            "name": str(spec.name),
+            "description": str(spec.description or ""),
+            "input_schema": dict(spec.parameters or {}),
+            "strict": bool(spec.strict),
+        }
+        for spec in list(request.tools or [])
+        if str(spec.name or "").strip()
+    ]
+    metadata = {str(k): str(v) for k, v in dict(request.metadata or {}).items()}
+    if str(request.tool_call_strategy or "").strip():
+        metadata["tool_call_strategy"] = str(request.tool_call_strategy)
+    if request.image_input is not None:
+        messages[-1]["image_input"] = request.image_input.model_dump()
+    return messages, tools, metadata
 
 
 def response_telemetry_event_fields(response: Any) -> dict[str, Any]:
@@ -334,8 +404,15 @@ def latest_prompt_and_history(
     *,
     conversational: list[tuple[str, str, dict[str, Any]]],
     metadata: dict[str, str],
-) -> tuple[str, list[ProviderHistoryMessage]]:
+) -> tuple[
+    str,
+    list[ProviderHistoryMessage],
+    list[MessageContentPart],
+    ImageInputContext | None,
+]:
     latest_msg = ""
+    content_parts = []
+    image_input = None
     prompt_index = -1
     for idx in range(len(conversational) - 1, -1, -1):
         role, content, _meta = conversational[idx]
@@ -343,7 +420,9 @@ def latest_prompt_and_history(
             latest_msg = content
             prompt_index = idx
             break
-    if prompt_index == len(conversational) - 1:
+    if conversational and prompt_index == len(conversational) - 1:
+        content_parts = list(conversational[prompt_index][2].get("content_parts", []))
+        image_input = conversational[prompt_index][2].get("image_input")
         history_entries = (
             conversational[:prompt_index] + conversational[prompt_index + 1 :]
         )
@@ -359,6 +438,8 @@ def latest_prompt_and_history(
         history_entries
         and history_entries[-1][0] == "user"
         and history_entries[-1][1].strip() == latest_msg.strip()
+        and history_entries[-1][2].get("content_parts", []) == content_parts
+        and history_entries[-1][2].get("image_input") == image_input
     ):
         history_entries.pop()
     history = []
@@ -393,6 +474,8 @@ def latest_prompt_and_history(
             ProviderHistoryMessage(
                 role=role,
                 content=content,
+                image_input=meta_value.pop("image_input", None),
+                content_parts=meta_value.pop("content_parts", []),
                 meta=meta_value,
                 tool_calls=tool_calls,
                 tool_call_id=tool_call_id,
@@ -401,7 +484,7 @@ def latest_prompt_and_history(
                 tool_error=raw_tool_error if isinstance(raw_tool_error, dict) else None,
             )
         )
-    return latest_msg, history
+    return latest_msg, history, content_parts, image_input
 
 
 def provider_tools_from_request(req: Any) -> list[ProviderToolSpec]:
@@ -504,6 +587,7 @@ def llm_response_kwargs(
                 role="assistant",
                 content=str(resp.text or ""),
                 tool_calls=tool_calls,
+                meta=dict(resp.assistant_meta),
             )
         )
     return {

@@ -11,7 +11,10 @@ from openminion.modules.llm.providers.base import (
     ProviderRequest,
     ProviderToolSpec,
 )
+from openminion.modules.llm.client_call import llm_response_kwargs
 from openminion.modules.llm.providers.behavior import resolve_behavior_profile
+from openminion.modules.llm.providers.message_payloads import _messages_openai_like
+from openminion.modules.llm.schemas import LLMRequest, Message
 from openminion.services.agent import AgentService
 from openminion.services.runtime.plugins import PluginRegistry
 
@@ -41,6 +44,7 @@ class _FakeOkResponse:
         finish_reason: str | None = None,
         usage: object | None = None,
         empty_payload_recovered: bool = False,
+        assistant_messages: list[object] | None = None,
     ) -> None:
         self.ok = True
         self.error = None
@@ -57,6 +61,7 @@ class _FakeOkResponse:
         )
         self.contract_version = "v1"
         self.empty_payload_recovered = empty_payload_recovered
+        self.assistant_messages = list(assistant_messages or [])
 
 
 class _FakeErrorResponse:
@@ -222,6 +227,56 @@ class RuntimeClientStructuredToolChoiceTests(unittest.TestCase):
             client.calls[0]["tool_choice"],
             {"type": "function", "function": {"name": "submit_output"}},
         )
+
+    def test_runtime_client_replays_minimax_reasoning_with_tool_result(self) -> None:
+        service = _service(client=_CapturingRuntimeClient())
+        response = service._llm_response_to_provider_response(
+            _FakeOkResponse(
+                tool_calls=[_FakeToolCall(name="submit_output", arguments={})],
+                assistant_messages=[
+                    SimpleNamespace(
+                        role="assistant",
+                        meta={"reasoning_content": "Use the tool first."},
+                    )
+                ],
+            )
+        )
+        payload = llm_response_kwargs(
+            resp=response,
+            req=SimpleNamespace(model="MiniMax-M3.1-Flash"),
+            client_name="openai",
+            structured_fields={},
+            trace_context={},
+        )
+        assistant = payload["assistant_messages"][0]
+        call_id = assistant.tool_calls[0].id
+        request = LLMRequest(
+            messages=[
+                assistant,
+                Message(
+                    role="tool",
+                    content='{"ok": true}',
+                    tool_call_id=call_id,
+                    tool_status="success",
+                ),
+            ]
+        )
+
+        minimax_messages = _messages_openai_like(
+            request,
+            include_fallback_instruction=False,
+            preserve_reasoning_content=True,
+        )
+        generic_messages = _messages_openai_like(
+            request,
+            include_fallback_instruction=False,
+        )
+
+        self.assertEqual(
+            minimax_messages[0]["reasoning_content"], "Use the tool first."
+        )
+        self.assertEqual(minimax_messages[1]["tool_call_id"], call_id)
+        self.assertNotIn("reasoning_content", generic_messages[0])
 
     def test_runtime_client_preserves_openai_style_usage_dict(self) -> None:
         client = _UsageDictRuntimeClient()

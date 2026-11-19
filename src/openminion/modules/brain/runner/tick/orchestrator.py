@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+from openminion.modules.artifact.models import ImageInputContext
+
+
 from typing import TYPE_CHECKING
+
+from ...execution.feasibility import has_pending_feasibility_choice
+from ...execution.continuation import has_pending_continuation_reply
 
 from openminion.modules.telemetry.trace.phase_timing import active_chat_phase
 
@@ -248,6 +254,7 @@ def run_step(
     capability_category: str | None = None,
     capture_identity: "CaptureIdentity | None" = None,
     runtime_conversation_id: str | None = None,
+    image_input: ImageInputContext | None = None,
 ) -> "StepOutput":
     started = _runner_delegate("_now_ms", runner)
     with active_chat_phase("brain_state_load"):
@@ -267,6 +274,7 @@ def run_step(
     tick_ctx = build_tick_run_context(
         session_id=session_id,
         user_input=user_input,
+        image_input=image_input,
         trace_id=trace_id,
         forced_tools=forced_tools,
         capability_category=capability_category,
@@ -278,6 +286,22 @@ def run_step(
         tick_ctx.mission_route = _mission_route_for_tick(
             runner, state, tick_ctx.user_input
         )
+        if image_input is not None and (
+            state.pending_jobs
+            or state.pending_confirmation_command is not None
+            or tick_ctx.mission_route.action in {"pause", "cancel"}
+            or (
+                mission_is_active(state) and tick_ctx.mission_route.action == "ordinary"
+            )
+            or has_pending_feasibility_choice(state)
+            or has_pending_continuation_reply(state)
+        ):
+            from openminion.modules.llm.providers.contracts import ProviderError
+
+            raise ProviderError(
+                "Finish the pending control request before sending images in a new turn",
+                code="IMAGE_INPUT_CONTROL_REQUEST",
+            )
         if tick_ctx.has_new_user_input:
             _capture_new_user_input(
                 runner,

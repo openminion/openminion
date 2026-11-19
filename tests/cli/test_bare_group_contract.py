@@ -9,7 +9,7 @@ def _parse(argv: list[str]):
     return build_parser().parse_args(argv)
 
 
-@pytest.mark.parametrize("group", ["status", "service"])
+@pytest.mark.parametrize("group", ["status", "service", "replay"])
 def test_bare_group_requires_a_subcommand(group: str, capsys) -> None:
     with pytest.raises(SystemExit) as excinfo:
         _parse([group])
@@ -27,6 +27,7 @@ def test_bare_group_requires_a_subcommand(group: str, capsys) -> None:
         ["status", "runtime"],
         ["service", "status"],
         ["service", "list"],
+        ["replay", "checkpoints", "task-1", "--task-db", "/tmp/tasks.db"],
     ],
 )
 def test_valid_subcommands_still_parse(argv: list[str]) -> None:
@@ -36,7 +37,7 @@ def test_valid_subcommands_still_parse(argv: list[str]) -> None:
     assert getattr(args, "handler", None) is not None
 
 
-@pytest.mark.parametrize("group", ["status", "service"])
+@pytest.mark.parametrize("group", ["status", "service", "replay"])
 def test_bare_group_never_loads_config_or_onboarding(group: str, monkeypatch) -> None:
     from openminion.cli import config as cli_config
 

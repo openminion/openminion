@@ -133,6 +133,7 @@ class ContextCtlAdapter(ContextAPI):
             purpose=purpose_name,
             mode_name=mode_name,
             query=user_query,
+            image_input=hints.get("image_input"),
             continuity_query=str(hints.get("continuity_query") or "").strip(),
             constraints=BuildConstraints.model_validate(hints) if hints else None,
             budgets_override=budgets_override,

@@ -21,7 +21,12 @@ def _dedupe_current_query_turns(
         last_turn = recent_turns[-1]
         last_role = map_turn_role(last_turn.role)
         last_content = str(last_turn.content or "").strip()
-        if last_role == "user" and current_query and last_content == current_query:
+        if (
+            last_role == "user"
+            and (current_query or request.image_input)
+            and last_content == current_query
+            and last_turn.image_input == request.image_input
+        ):
             recent_turns.pop()
             continue
         break
@@ -101,6 +106,7 @@ def append_recent_window_segments(
                 CONTEXT_BUCKET_RECENT_WINDOW,
                 content,
                 role=map_turn_role(turn.role),
+                image_input=turn.image_input,
                 pinned=idx in protected_indexes,
             )
         )
