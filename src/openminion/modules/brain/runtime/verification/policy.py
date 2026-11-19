@@ -293,10 +293,11 @@ def verify_freshness_answer(
                 f"Missing {contract.domain.value}-domain live-data evidence for "
                 "a freshness-sensitive answer."
             )
-    if obligations.require_exact_date and not _has_dated_evidence(action_result):
-        reasons.append(
-            "Missing exact-date evidence for an exact-date freshness answer."
-        )
+        # Local effective-date reasoning is judged from sources, not live timestamps.
+        if obligations.require_exact_date and not _has_dated_evidence(action_result):
+            reasons.append(
+                "Missing exact-date evidence for an exact-date freshness answer."
+            )
     return reasons
 
 
