@@ -131,24 +131,24 @@ def test_validate_model_tool_args_keeps_root_model_shapes() -> None:
     assert validate_model_tool_args({"query": [1, 2]}, _Args, "t") == {"query": [1, 2]}
 
 
-if "serialize_by_alias" in ConfigDict.__annotations__:
-    def test_tool_args_preserves_nested_serialize_by_alias_input_keys() -> None:
-        class _Query(BaseModel):
-            model_config = ConfigDict(serialize_by_alias=True, extra="forbid")
+def test_tool_args_preserves_nested_serialize_by_alias_input_keys() -> None:
+    if "serialize_by_alias" not in ConfigDict.__annotations__:
+        return
+    class _Query(BaseModel):
+        model_config = ConfigDict(serialize_by_alias=True, extra="forbid")
 
-            value: int = Field(serialization_alias="output_value")
+        value: int = Field(serialization_alias="output_value")
 
-        class _Args(BaseModel):
-            model_config = ConfigDict(extra="forbid")
+    class _Args(BaseModel):
+        model_config = ConfigDict(extra="forbid")
 
-            query: _Query
+        query: _Query
 
-        provider = {"query": {"value": 7}}
-        result = validate_model_tool_args(provider, _Args, "serialize-by-alias")
+    provider = {"query": {"value": 7}}
+    result = validate_model_tool_args(provider, _Args, "serialize-by-alias")
 
-        assert result == provider
-        assert _Args.model_validate(result).query.value == 7
-
+    assert result == provider
+    assert _Args.model_validate(result).query.value == 7
 
 def test_transforming_validator_runs_once_in_argument_owner() -> None:
     from pydantic import field_validator

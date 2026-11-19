@@ -709,62 +709,64 @@ def test_sdk_tool_nested_serialization_alias_is_not_an_input_key(sdk_tools):
     assert "VALUE 7" in result.text
 
 
-if _SERIALIZE_BY_ALIAS_CONFIG:
-    def test_sdk_tool_nested_serialize_by_alias_config_preserves_input_keys(sdk_tools):
-        class _Query(BaseModel):
-            model_config = ConfigDict(serialize_by_alias=True, extra="forbid")
+def test_sdk_tool_nested_serialize_by_alias_config_preserves_input_keys(sdk_tools):
+    if not _SERIALIZE_BY_ALIAS_CONFIG:
+        return
+    class _Query(BaseModel):
+        model_config = ConfigDict(serialize_by_alias=True, extra="forbid")
 
-            value: int = Field(serialization_alias="output_value")
+        value: int = Field(serialization_alias="output_value")
 
-        received = []
+    received = []
 
-        @tool(
-            name="nested_config_serialization_probe",
-            min_scope="READ_ONLY",
-            idempotent=True,
-        )
-        def operation(query: _Query) -> str:
-            received.append(query)
-            return f"VALUE {query.value}"
+    @tool(
+        name="nested_config_serialization_probe",
+        min_scope="READ_ONLY",
+        idempotent=True,
+    )
+    def operation(query: _Query) -> str:
+        received.append(query)
+        return f"VALUE {query.value}"
 
-        result = _run_alias_tool(
-            sdk_tools,
-            "nested_config_serialization_probe",
-            {"query": {"value": 7}},
-            operation,
-        )
+    result = _run_alias_tool(
+        sdk_tools,
+        "nested_config_serialization_probe",
+        {"query": {"value": 7}},
+        operation,
+    )
 
-        assert received == [_Query(value=7)]
-        assert "VALUE 7" in result.text
+    assert received == [_Query(value=7)]
+    assert "VALUE 7" in result.text
 
 
-    def test_sdk_tool_nested_serialize_by_alias_config_rejects_output_key(sdk_tools):
-        class _Query(BaseModel):
-            model_config = ConfigDict(serialize_by_alias=True, extra="forbid")
+def test_sdk_tool_nested_serialize_by_alias_config_rejects_output_key(sdk_tools):
+    if not _SERIALIZE_BY_ALIAS_CONFIG:
+        return
+    class _Query(BaseModel):
+        model_config = ConfigDict(serialize_by_alias=True, extra="forbid")
 
-            value: int = Field(serialization_alias="output_value")
+        value: int = Field(serialization_alias="output_value")
 
-        received = []
+    received = []
 
-        @tool(
-            name="nested_config_serialization_probe",
-            min_scope="READ_ONLY",
-            idempotent=True,
-        )
-        def operation(query: _Query) -> str:
-            received.append(query)
-            return f"VALUE {query.value}"
+    @tool(
+        name="nested_config_serialization_probe",
+        min_scope="READ_ONLY",
+        idempotent=True,
+    )
+    def operation(query: _Query) -> str:
+        received.append(query)
+        return f"VALUE {query.value}"
 
-        result = _run_alias_tool(
-            sdk_tools,
-            "nested_config_serialization_probe",
-            {"query": {"output_value": 7}},
-            operation,
-        )
+    result = _run_alias_tool(
+        sdk_tools,
+        "nested_config_serialization_probe",
+        {"query": {"output_value": 7}},
+        operation,
+    )
 
-        assert received == []
-        assert "VALUE 7" not in result.text
-
+    assert received == []
+    assert "VALUE 7" not in result.text
 
 def test_sdk_tool_validation_and_serialization_alias_top_level(sdk_tools):
     received = []
