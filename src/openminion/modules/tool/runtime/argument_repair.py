@@ -182,7 +182,7 @@ def accepted_tool_args(
     *,
     input_keys: Collection[str] | None = None,
 ) -> dict[str, Any]:
-    """Return a canonical dump only when it preserves accepted input keys and shape."""
+    """Return a canonical dump only when accepted input keys and shape stay valid."""
     dumped = validated.model_dump()
     if not isinstance(accepted, Mapping):
         return dumped

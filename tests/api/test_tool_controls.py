@@ -721,7 +721,11 @@ def test_sdk_tool_nested_serialize_by_alias_config_preserves_input_keys(sdk_tool
 
     received = []
 
-    @tool(name="nested_config_serialization_probe", min_scope="READ_ONLY", idempotent=True)
+    @tool(
+        name="nested_config_serialization_probe",
+        min_scope="READ_ONLY",
+        idempotent=True,
+    )
     def operation(query: _Query) -> str:
         received.append(query)
         return f"VALUE {query.value}"
@@ -749,7 +753,11 @@ def test_sdk_tool_nested_serialize_by_alias_config_rejects_output_key(sdk_tools)
 
     received = []
 
-    @tool(name="nested_config_serialization_probe", min_scope="READ_ONLY", idempotent=True)
+    @tool(
+        name="nested_config_serialization_probe",
+        min_scope="READ_ONLY",
+        idempotent=True,
+    )
     def operation(query: _Query) -> str:
         received.append(query)
         return f"VALUE {query.value}"
