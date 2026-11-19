@@ -7,6 +7,14 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- The file family gains `file.mkdir` and `file.copy`: `file.mkdir` creates a
+  directory (missing parents only with `parents`) and reports whether it created it,
+  and `file.copy` copies one file's contents to a destination path, creating its
+  parents as `file.write` does and refusing an existing destination unless `overwrite`
+  is set. Both are write-scoped, blocked under read-only mode, resolved through the
+  existing workspace containment, and rejected by the memory backend. (Refs #813)
+
+
 - `purge_soft_deleted` (`run_gc` / `memctl gc`) now reuses the canonical SQLite
   (`expiry_clause` + `expiry_bind_params`) and PostgreSQL (`EXPIRY_CLAUSE`) instant
   predicates (`NOT <expiry_clause>`) instead of comparing `expires_at < now` as text,

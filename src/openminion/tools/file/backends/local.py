@@ -4,6 +4,7 @@ import fnmatch
 import hashlib
 import errno
 import os
+import shutil
 import stat
 from pathlib import Path
 from types import ModuleType
@@ -556,3 +557,51 @@ class LocalStorageBackend:
 
     def is_dir(self, path: str) -> bool:
         return Path(path).is_dir()
+
+    def mkdir(self, path: str, *, parents: bool = False) -> bool:
+        target = Path(path)
+        if target.exists():
+            if target.is_dir():
+                return False
+            raise ToolRuntimeError(
+                "INVALID_ARGUMENT", "path exists and is not a directory"
+            )
+        try:
+            target.mkdir(parents=parents)
+        except FileNotFoundError as exc:
+            raise ToolRuntimeError(
+                "NOT_FOUND", "parent directory does not exist"
+            ) from exc
+        except PermissionError as exc:
+            raise ToolRuntimeError("POLICY_DENIED", "permission denied") from exc
+        except OSError as exc:
+            raise ToolRuntimeError("EXEC_ERROR", str(exc)) from exc
+        return True
+
+    def copy_file(
+        self, source: str, destination: str, *, overwrite: bool = False
+    ) -> int:
+        src = Path(source)
+        dst = Path(destination)
+        if not src.exists():
+            raise ToolRuntimeError("NOT_FOUND", f"path does not exist: {source}")
+        if not src.is_file():
+            raise ToolRuntimeError("INVALID_ARGUMENT", "source is not a file")
+        if dst.is_dir():
+            raise ToolRuntimeError("INVALID_ARGUMENT", "destination is a directory")
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if overwrite:
+                shutil.copyfile(src, dst)
+            else:
+                with src.open("rb") as reader, dst.open("xb") as writer:
+                    shutil.copyfileobj(reader, writer)
+            return int(dst.stat().st_size)
+        except FileExistsError as exc:
+            raise ToolRuntimeError(
+                "PRECONDITION_FAILED", f"destination exists: {destination}"
+            ) from exc
+        except PermissionError as exc:
+            raise ToolRuntimeError("POLICY_DENIED", "permission denied") from exc
+        except OSError as exc:
+            raise ToolRuntimeError("EXEC_ERROR", str(exc)) from exc
