@@ -202,10 +202,7 @@ def _model_config_accepts_field_names(model_type: Any) -> bool:
 
 
 def _model_dump_accepts_input_keys(
-    model: BaseModel,
-    seen: set[int] | None = None,
-    *,
-    inherited_serialize_by_alias: bool = False,
+    model: BaseModel, seen: set[int] | None = None
 ) -> bool:
     # RootModel serializes its root value directly; preserve the accepted input shape.
     if getattr(type(model), "__pydantic_root_model__", False):
@@ -218,9 +215,7 @@ def _model_dump_accepts_input_keys(
 
     accepts_field_names = _model_config_accepts_field_names(type(model))
     config = getattr(type(model), "model_config", {}) or {}
-    serialize_by_alias = inherited_serialize_by_alias or bool(
-        config.get("serialize_by_alias")
-    )
+    serialize_by_alias = bool(config.get("serialize_by_alias"))
     for field_name, field_info in type(model).model_fields.items():
         serialization_alias = getattr(field_info, "serialization_alias", None)
         if serialization_alias is None:
@@ -242,44 +237,21 @@ def _model_dump_accepts_input_keys(
         ):
             return False
         if not _nested_models_accept_input_keys(
-            getattr(model, field_name),
-            visited,
-            inherited_serialize_by_alias=serialize_by_alias,
+            getattr(model, field_name), visited
         ):
             return False
     return True
 
 
-def _nested_models_accept_input_keys(
-    value: Any,
-    seen: set[int],
-    *,
-    inherited_serialize_by_alias: bool = False,
-) -> bool:
+def _nested_models_accept_input_keys(value: Any, seen: set[int]) -> bool:
     if isinstance(value, BaseModel):
-        return _model_dump_accepts_input_keys(
-            value,
-            seen,
-            inherited_serialize_by_alias=inherited_serialize_by_alias,
-        )
+        return _model_dump_accepts_input_keys(value, seen)
     if isinstance(value, Mapping):
         return all(
-            _nested_models_accept_input_keys(
-                item,
-                seen,
-                inherited_serialize_by_alias=inherited_serialize_by_alias,
-            )
-            for item in value.values()
+            _nested_models_accept_input_keys(item, seen) for item in value.values()
         )
     if isinstance(value, (list, tuple, set, frozenset)):
-        return all(
-            _nested_models_accept_input_keys(
-                item,
-                seen,
-                inherited_serialize_by_alias=inherited_serialize_by_alias,
-            )
-            for item in value
-        )
+        return all(_nested_models_accept_input_keys(item, seen) for item in value)
     return True
 
 

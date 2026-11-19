@@ -771,6 +771,43 @@ def test_sdk_tool_nested_serialize_by_alias_config_rejects_output_key(sdk_tools)
     assert "VALUE 7" not in result.text
 
 
+def test_sdk_tool_respects_nested_serialize_by_alias_override(sdk_tools):
+    if not _SERIALIZE_BY_ALIAS_CONFIG:
+        return
+
+    class _Inner(BaseModel):
+        model_config = ConfigDict(serialize_by_alias=False, extra="forbid")
+
+        value: Annotated[int, Field(serialization_alias="output_value")]
+
+        @field_validator("value")
+        @classmethod
+        def increment(cls, value):
+            return value + 1
+
+    class _Query(BaseModel):
+        model_config = ConfigDict(serialize_by_alias=True, extra="forbid")
+
+        inner: _Inner
+
+    received = []
+
+    @tool(name="nested_override_probe", min_scope="READ_ONLY", idempotent=True)
+    def operation(query: _Query) -> str:
+        received.append(query.inner.value)
+        return f"VALUE {query.inner.value}"
+
+    result = _run_alias_tool(
+        sdk_tools,
+        "nested_override_probe",
+        {"query": {"inner": {"value": 1}}},
+        operation,
+    )
+
+    assert received == [4]
+    assert "VALUE 4" in result.text
+
+
 def test_sdk_tool_validation_and_serialization_alias_top_level(sdk_tools):
     received = []
 
