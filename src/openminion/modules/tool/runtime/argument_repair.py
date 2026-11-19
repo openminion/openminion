@@ -201,6 +201,36 @@ def _model_config_accepts_field_names(model_type: Any) -> bool:
     return bool(config.get("populate_by_name"))
 
 
+def _field_accepts_input_key(
+    model_type: Any, field_name: str, field_info: Any, key: str
+) -> bool:
+    config = getattr(model_type, "model_config", {}) or {}
+    validation_alias = getattr(field_info, "validation_alias", None)
+    if validation_alias is None:
+        validation_alias = getattr(field_info, "alias", None)
+
+    if config.get("validate_by_alias") is not False and _validation_alias_contains_key(
+        validation_alias, key
+    ):
+        return True
+    if key != field_name:
+        return False
+    has_renamed_alias = validation_alias is not None and not (
+        _validation_alias_contains_key(validation_alias, field_name)
+    )
+    return not has_renamed_alias or _model_config_accepts_field_names(model_type)
+
+
+def _validation_alias_contains_key(validation_alias: Any, key: str) -> bool:
+    if validation_alias == key:
+        return True
+    choices = getattr(validation_alias, "choices", ())
+    if any(_validation_alias_contains_key(choice, key) for choice in choices):
+        return True
+    path = getattr(validation_alias, "path", ())
+    return len(path) == 1 and path[0] == key
+
+
 def _model_dump_accepts_input_keys(
     model: BaseModel, seen: set[int] | None = None
 ) -> bool:
@@ -213,32 +243,21 @@ def _model_dump_accepts_input_keys(
         return True
     visited.add(identity)
 
-    accepts_field_names = _model_config_accepts_field_names(type(model))
     config = getattr(type(model), "model_config", {}) or {}
     serialize_by_alias = bool(config.get("serialize_by_alias"))
     for field_name, field_info in type(model).model_fields.items():
-        serialization_alias = getattr(field_info, "serialization_alias", None)
-        if serialization_alias is None:
-            serialization_alias = getattr(field_info, "alias", None)
-        if (
-            serialize_by_alias
-            and serialization_alias is not None
-            and serialization_alias != field_name
+        serialized_key = field_name
+        if serialize_by_alias:
+            serialized_key = (
+                getattr(field_info, "serialization_alias", None)
+                or getattr(field_info, "alias", None)
+                or field_name
+            )
+        if not _field_accepts_input_key(
+            type(model), field_name, field_info, serialized_key
         ):
             return False
-
-        input_alias = getattr(field_info, "validation_alias", None)
-        if input_alias is None:
-            input_alias = getattr(field_info, "alias", None)
-        if (
-            input_alias is not None
-            and input_alias != field_name
-            and not accepts_field_names
-        ):
-            return False
-        if not _nested_models_accept_input_keys(
-            getattr(model, field_name), visited
-        ):
+        if not _nested_models_accept_input_keys(getattr(model, field_name), visited):
             return False
     return True
 
