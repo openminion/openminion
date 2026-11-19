@@ -712,6 +712,7 @@ def test_sdk_tool_nested_serialization_alias_is_not_an_input_key(sdk_tools):
 def test_sdk_tool_nested_serialize_by_alias_config_preserves_input_keys(sdk_tools):
     if not _SERIALIZE_BY_ALIAS_CONFIG:
         return
+
     class _Query(BaseModel):
         model_config = ConfigDict(serialize_by_alias=True, extra="forbid")
 
@@ -742,6 +743,7 @@ def test_sdk_tool_nested_serialize_by_alias_config_preserves_input_keys(sdk_tool
 def test_sdk_tool_nested_serialize_by_alias_config_rejects_output_key(sdk_tools):
     if not _SERIALIZE_BY_ALIAS_CONFIG:
         return
+
     class _Query(BaseModel):
         model_config = ConfigDict(serialize_by_alias=True, extra="forbid")
 

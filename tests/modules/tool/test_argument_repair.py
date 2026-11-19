@@ -134,6 +134,7 @@ def test_validate_model_tool_args_keeps_root_model_shapes() -> None:
 def test_tool_args_preserves_nested_serialize_by_alias_input_keys() -> None:
     if "serialize_by_alias" not in ConfigDict.__annotations__:
         return
+
     class _Query(BaseModel):
         model_config = ConfigDict(serialize_by_alias=True, extra="forbid")
 
