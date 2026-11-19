@@ -83,19 +83,6 @@ def _chain_id(web3: Any, expected_chain_id: int) -> int:
     return observed
 
 
-def _pending_nonce(web3: Any, sender: str) -> int:
-    try:
-        observed = _rpc(
-            "chain_read",
-            lambda: web3.eth.get_transaction_count(sender, "pending"),
-        )
-    except TypeError as exc:
-        raise _RpcFailure("chain_read") from exc
-    if isinstance(observed, bool) or not isinstance(observed, int) or observed < 0:
-        raise _RpcFailure("chain_read")
-    return int(observed)
-
-
 def _inspect_data(request: Any, client: Any, chain_id: int) -> dict[str, Any]:
     if request.action == "chain_summary":
         return {
@@ -219,7 +206,6 @@ def inspect_blockchain(
     client = web3 or _client(config.rpc_url)
     try:
         chain_id = _chain_id(client, cast(int, config.chain_id))
-        data = _inspect_data(request, client, chain_id)
     except _RpcFailure as exc:
         return _error(
             "RPC_UNAVAILABLE",
@@ -234,6 +220,15 @@ def inspect_blockchain(
                 "expected_chain_id": config.chain_id,
                 "observed_chain_id": exc.observed_chain_id,
             },
+        )
+
+    try:
+        data = _inspect_data(request, client, chain_id)
+    except _RpcFailure as exc:
+        return _error(
+            "RPC_UNAVAILABLE",
+            "Blockchain RPC operation failed.",
+            {"operation": exc.operation},
         )
 
     return {
@@ -265,7 +260,9 @@ def _build_prepared_transaction(
         data = "0x" if request.kind == "native_transfer" else request.data
         call_context = None
     value = int(request.value_wei)
-    nonce = _pending_nonce(client, sender)
+    nonce = int(
+        _rpc("chain_read", lambda: client.eth.get_transaction_count(sender, "pending"))
+    )
     rpc_transaction = {
         "chainId": chain_id,
         "from": sender,
@@ -498,7 +495,11 @@ def prepare_transaction(
 
 
 def _signer_unavailable() -> dict[str, Any]:
-    return _error("SIGNER_UNAVAILABLE", "Configured blockchain signer is unavailable.")
+    return _error(
+        "SIGNER_UNAVAILABLE",
+        "Configured blockchain signer is unavailable.",
+        {},
+    )
 
 
 def _rpc_transaction(transaction: Mapping[str, Any]) -> dict[str, Any]:
@@ -592,7 +593,9 @@ def _validate_send_state(
     stale_fields: list[str] = []
     if _chain_id(client, int(config.chain_id)) != int(transaction["chain_id"]):
         stale_fields.append("chain_id")
-    if _pending_nonce(client, sender) != int(transaction["nonce"]):
+    if int(client.eth.get_transaction_count(sender, "pending")) != int(
+        transaction["nonce"]
+    ):
         stale_fields.append("nonce")
     rpc_transaction = _rpc_transaction(transaction)
     if call_context is not None:
@@ -787,8 +790,7 @@ def _send_validated_transaction(
                 {"fields": ["chain_id"]},
             ),
         )
-    except (_RpcFailure, OSError, ValueError, Web3Exception) as exc:
-        operation = exc.operation if isinstance(exc, _RpcFailure) else "simulate"
+    except (OSError, ValueError, Web3Exception):
         return _send_terminal(
             context,
             transaction,
@@ -797,7 +799,7 @@ def _send_validated_transaction(
             _error(
                 "RPC_UNAVAILABLE",
                 "Blockchain RPC operation failed.",
-                {"operation": operation},
+                {"operation": "simulate"},
             ),
         )
     if stale_fields:

@@ -7,18 +7,10 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
-- `prepare_transaction` and `send_transaction` now validate `eth.get_transaction_count(sender, "pending")`
-  at the chain-read boundary (`_pending_nonce`) so boolean, floating-point, `null`, negative,
-  or non-integer RPC nonce observations fail immediately with structured `RPC_UNAVAILABLE`
-  (`{"operation": "chain_read"}`) before gas estimation, simulation, or transaction submission,
-  while preserving valid zero and positive Web3 integer nonces, canonical decimal serialization,
-  persisted preparation digests, and one-time send authorization. (Refs #663)
-
 - Preserve accepted Pydantic argument keys through SDK tool sanitizing and
   execution. Alias-only inputs remain usable, serialization aliases are not
   treated as input keys, and representation selection no longer revalidates
   already accepted arguments (Refs #454).
-
 
 - The freshness classifier is skipped only for the explicit `tool <name>` request form. Verb phrasing — including
   `use the time tool to get now`, which previously took the shortcut — is classified again, because punctuation or a
