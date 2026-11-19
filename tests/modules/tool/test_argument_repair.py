@@ -150,6 +150,7 @@ def test_tool_args_preserves_nested_serialize_by_alias_input_keys() -> None:
     assert result == provider
     assert _Args.model_validate(result).query.value == 7
 
+
 def test_transforming_validator_runs_once_in_argument_owner() -> None:
     from pydantic import field_validator
 

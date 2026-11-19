@@ -768,6 +768,7 @@ def test_sdk_tool_nested_serialize_by_alias_config_rejects_output_key(sdk_tools)
     assert received == []
     assert "VALUE 7" not in result.text
 
+
 def test_sdk_tool_validation_and_serialization_alias_top_level(sdk_tools):
     received = []
 
