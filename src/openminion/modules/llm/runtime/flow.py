@@ -481,7 +481,7 @@ def _complete_provider_attempt(
     return response
 
 
-def _emit_provider_success(
+def _emit_provider_result(
     client: Any,
     *,
     call_request: LLMRequest,
@@ -490,6 +490,7 @@ def _emit_provider_success(
     provider_name: str,
     model_name: str,
     response: LLMResponse,
+    error_code: str | None = None,
 ) -> None:
     _record_provider_attempt_result(
         attempt_extra=attempt_extra,
@@ -497,17 +498,20 @@ def _emit_provider_success(
         provider_name=provider_name,
         model_name=model_name,
         response=response,
-        outcome="ok",
+        outcome="ok" if error_code is None else "error",
+        error_code=error_code,
     )
     client._emit_operation(
         request=call_request,
-        operation="response",
+        operation="response" if error_code is None else "error",
         provider_name=provider_name,
         model_name=model_name,
+        status="ok" if error_code is None else "error",
         attempt=attempt,
+        error_code=error_code,
         extra=_extra_with_latency(attempt_extra, response=response),
     )
-    cache_hit = client._cache_hit_payload(response)
+    cache_hit = client._cache_hit_payload(response) if error_code is None else None
     if cache_hit is not None:
         client._emit_operation(
             request=call_request,
@@ -690,43 +694,24 @@ def _call_with_retries(
         if response.latency_ms <= 0:
             response = response.model_copy(update={"latency_ms": elapsed_ms})
 
-        if response.ok:
-            _emit_provider_success(
-                client,
-                call_request=call_request,
-                attempt_extra=attempt_extra,
-                attempt=attempt_number,
-                provider_name=provider_name,
-                model_name=model_name,
-                response=response,
-            )
-            return response
-
         err_code = (
             response.error.code if response.error is not None else "PROVIDER_ERROR"
         )
-        not_before = _hint_not_before(response)
-        if routes is not None:
-            routes[(provider_name, model_name)] = (not_before or -math.inf, response)
-        _record_provider_attempt_result(
+        _emit_provider_result(
+            client,
+            call_request=call_request,
             attempt_extra=attempt_extra,
             attempt=attempt_number,
             provider_name=provider_name,
             model_name=model_name,
             response=response,
-            outcome="error",
-            error_code=err_code,
+            error_code=None if response.ok else err_code,
         )
-        client._emit_operation(
-            request=call_request,
-            operation="error",
-            provider_name=provider_name,
-            model_name=model_name,
-            status="error",
-            attempt=attempt_number,
-            error_code=err_code,
-            extra=_extra_with_latency(attempt_extra, response=response),
-        )
+        if response.ok:
+            return response
+        not_before = _hint_not_before(response)
+        if routes is not None:
+            routes[(provider_name, model_name)] = (not_before or -math.inf, response)
         if err_code in RETRYABLE_CODES and attempt < max_retries:
             step = max(0.0, (backoff_ms / 1000.0) * (2**attempt))
             if not_before is not None and not _hinted_wait_fits(not_before, step):

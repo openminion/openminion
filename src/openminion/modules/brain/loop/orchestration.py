@@ -457,12 +457,13 @@ def decide(
     )
     llm_call_id = new_uuid()
     query_text = _entry_query_text(state=state, user_input=user_input)
+    act_profile = str(getattr(provisional_route, "act_profile", "") or "")
+    target_kind = str(
+        getattr(getattr(provisional_route, "execution_target", None), "kind", "") or ""
+    )
     entry_scope: dict[str, Any] = {
-        "act_profile": str(getattr(provisional_route, "act_profile", "") or ""),
-        "execution_target_kind": str(
-            getattr(getattr(provisional_route, "execution_target", None), "kind", "")
-            or ""
-        ),
+        "act_profile": act_profile,
+        "execution_target_kind": target_kind,
         "metadata": {"session_id": state.session_id},
     }
     tool_specs, supports_seed_response = build_entry_tool_specs(
@@ -510,7 +511,7 @@ def decide(
             ]
     if state.tier == "T0_direct":
         tool_specs = [spec for spec in tool_specs if spec.name == "clarify"]
-    if str(getattr(state, "run_trigger", "") or "") == "idle_tick":
+    if is_idle_tick_entry:
         tool_specs = [
             spec
             for spec in tool_specs
@@ -534,15 +535,8 @@ def decide(
             getattr(runner, "_prompt_tool_schemas_enabled", False)
         ),
         "decision_route_descriptions": decision_route_descriptions(runner.profile),
-        "entry_bootstrap_act_profile": str(
-            getattr(provisional_route, "act_profile", "") or ""
-        ).strip()
-        or None,
-        "entry_bootstrap_execution_target": str(
-            getattr(getattr(provisional_route, "execution_target", None), "kind", "")
-            or ""
-        ).strip()
-        or None,
+        "entry_bootstrap_act_profile": act_profile.strip() or None,
+        "entry_bootstrap_execution_target": target_kind.strip() or None,
         "entry_supports_seed_response": supports_seed_response,
         "entry_clarify_available": True,
     }
@@ -565,7 +559,7 @@ def decide(
             )
     if capability_category:
         hints["capability_category"] = capability_category
-    if str(getattr(state, "run_trigger", "") or "") == "idle_tick":
+    if is_idle_tick_entry:
         hints["idle_tick_entry"] = True
         hints["idle_tick_v1_actions"] = ["continue_plan", "no_op"]
     hints.update(skill_hints)
@@ -759,7 +753,7 @@ def decide(
                     code="EMPTY_PROVIDER_RESPONSE",
                 )
             if (
-                str(getattr(state, "run_trigger", "") or "") == "idle_tick"
+                is_idle_tick_entry
                 and last_detection is not None
                 and last_detection.path == "respond"
             ):
@@ -869,22 +863,13 @@ def decide(
         {
             "path": last_detection.path,
             "tool_call_names": list(last_detection.tool_call_names),
-            "bootstrap_act_profile": str(
-                getattr(provisional_route, "act_profile", "") or ""
-            ).strip()
-            or None,
-            "bootstrap_execution_target_kind": str(
-                getattr(
-                    getattr(provisional_route, "execution_target", None), "kind", ""
-                )
-                or ""
-            ).strip()
-            or None,
+            "bootstrap_act_profile": act_profile.strip() or None,
+            "bootstrap_execution_target_kind": target_kind.strip() or None,
         },
         trace_id=state.trace_id,
     )
 
-    if str(getattr(state, "run_trigger", "") or "") == "idle_tick":
+    if is_idle_tick_entry:
         coerced = _enforce_idle_tick_v1_bound(
             detection=last_detection,
             logger=logger,
