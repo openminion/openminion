@@ -478,7 +478,7 @@ def _print_report(
         if current.get(pkg, 0) <= allowed.get(pkg, 0):
             continue
         print(f"  {pkg}:", file=sys.stderr)
-        for line in _package_error_lines(lines, pkg, limit=10001):
+        for line in _package_error_lines(lines, pkg, limit=25):
             print(f"    {line}", file=sys.stderr)
         print(f"  {pkg} file counts:", file=sys.stderr)
         for path, count in _package_file_counts(lines, pkg).items():
