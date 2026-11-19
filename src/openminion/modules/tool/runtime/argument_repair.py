@@ -227,7 +227,7 @@ def _validation_alias_contains_key(validation_alias: Any, key: str) -> bool:
     choices = getattr(validation_alias, "choices", ())
     if any(_validation_alias_contains_key(choice, key) for choice in choices):
         return True
-    path = getattr(validation_alias, "path", ())
+    path: tuple[Any, ...] = getattr(validation_alias, "path", ())
     return len(path) == 1 and path[0] == key
 
 
