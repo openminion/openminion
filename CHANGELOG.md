@@ -1,11 +1,15 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-11-17
+Last updated: 2026-11-19
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
+
+- Keep `file.read` continuation offsets and returned lengths aligned with the text
+  delivered to the model when tool-message limits shorten a page, so following
+  `next_offset` reads every character.
 
 - `prepare_transaction` and `send_transaction` now validate `eth.get_transaction_count(sender, "pending")`
   at the chain-read boundary (`_pending_nonce`) so boolean, floating-point, `null`, negative,

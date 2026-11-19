@@ -55,6 +55,10 @@ from .constants import (
 
 
 _FILE_TOOL_SOURCE = "file_module"
+_FILE_READ_CONTINUATION_HINT = (
+    "pass next_offset as offset to continue, or use file.read_range for "
+    "line-based access"
+)
 
 
 def _collapse_alias_group(
@@ -505,11 +509,33 @@ def _h_read_file(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
         payload["content_sha256"] = result.content_sha256
     if result.truncated:
         payload["next_offset"] = validated.offset + result.returned_length
-        payload["hint"] = (
-            "pass next_offset as offset to continue, or use file.read_range for "
-            "line-based access"
-        )
+        payload["hint"] = _FILE_READ_CONTINUATION_HINT
     return payload
+
+
+def project_file_read_page(
+    outputs: dict[str, Any], *, max_chars: int
+) -> dict[str, Any]:
+    content = outputs.get("content")
+    if (
+        outputs.get("source") != _FILE_TOOL_SOURCE
+        or not isinstance(content, str)
+        or len(content) <= max_chars
+    ):
+        return outputs
+
+    # A complete page ends at EOF, and a partial page ends at its next offset.
+    page_end = (
+        outputs["next_offset"] if outputs["truncated"] else outputs["total_length"]
+    )
+    return {
+        **outputs,
+        "content": content[:max_chars],
+        "returned_length": max_chars,
+        "truncated": True,
+        "next_offset": page_end - len(content) + max_chars,
+        "hint": _FILE_READ_CONTINUATION_HINT,
+    }
 
 
 def _h_read_range(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:

@@ -14,6 +14,8 @@ from openminion.modules.context.input_boundaries import (
     emit_boundary_event as _pidf_emit_boundary_event,
 )
 from openminion.modules.llm.schemas import ImageContentPart, Message, TextContentPart
+from openminion.modules.tool.contracts.model_ids import MODEL_FILE_READ
+from openminion.tools.file.plugin import project_file_read_page
 
 
 def _truncate_tool_message_text(
@@ -62,8 +64,11 @@ def action_result_to_tool_message(
         "status": action_result.status,
         "summary": _truncate_tool_message_text(action_result.summary or ""),
     }
-    if action_result.outputs:
-        payload["outputs"] = _compact_tool_message_value(action_result.outputs)
+    outputs = action_result.outputs
+    if tool_name == MODEL_FILE_READ and action_result.status == "success":
+        outputs = project_file_read_page(outputs, max_chars=TOOL_MESSAGE_STRING_LIMIT)
+    if outputs:
+        payload["outputs"] = _compact_tool_message_value(outputs)
     if action_result.error:
         payload["error"] = {
             "code": action_result.error.code,
@@ -127,9 +132,7 @@ def action_result_to_tool_message(
         content_parts=content_parts,
         tool_call_id=tool_call_id,
         tool_status=status,
-        tool_output=_compact_tool_message_value(action_result.outputs)
-        if action_result.outputs
-        else None,
+        tool_output=payload.get("outputs"),
         tool_error=payload.get("error"),
         meta=meta,
     )
