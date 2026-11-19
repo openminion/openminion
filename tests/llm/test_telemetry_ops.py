@@ -584,11 +584,18 @@ def _routed(
     fallback: list[Any],
     *,
     fallback_on: tuple[str, ...] = ("RATE_LIMITED",),
+    max_retries: int = 0,
+    backoff_ms: int = 0,
 ) -> tuple[LLMCTL, _OrderedProvider, _OrderedProvider]:
     a = _OrderedProvider("provider_a", primary, order)
     b = _OrderedProvider("provider_b", fallback, order)
     runtime = _make_fallback_runtime(
-        telemetryctl=None, primary=a, fallback=b, fallback_on=fallback_on
+        telemetryctl=None,
+        primary=a,
+        fallback=b,
+        fallback_on=fallback_on,
+        max_retries=max_retries,
+        backoff_ms=backoff_ms,
     )
     return runtime, a, b
 
@@ -609,13 +616,26 @@ def test_inner_retry_waits_for_retry_after_that_fits_deadline(
     assert max(clock.sleeps) <= 0.05
 
 
-@pytest.mark.parametrize("timeout_s", [5.0, None], ids=["no-fit", "no-deadline"])
-def test_inner_retry_returns_error_when_retry_after_cannot_wait(
-    clock: _FakeClock, timeout_s: float | None
+_CANNOT_WAIT = pytest.mark.parametrize(
+    ("retry_after", "backoff_ms", "timeout_s"),
+    [
+        ("30", 100, 5.0),
+        ("30", 100, None),
+        ("1", 5000, 2.0),
+        ("9" * 309, 100, 120.0),
+        ("9" * 4301, 100, 120.0),
+    ],
+    ids=["no-fit", "no-deadline", "backoff-step", "float-overflow", "int-digit-limit"],
+)
+
+
+@_CANNOT_WAIT
+def test_hinted_retry_that_cannot_wait_returns_original_error(
+    clock: _FakeClock, retry_after: str, backoff_ms: int, timeout_s: float | None
 ) -> None:
-    provider = _SequenceProvider([_rate_limited("30"), _make_response()])
+    provider = _SequenceProvider([_rate_limited(retry_after), _make_response()])
     runtime = _make_runtime(
-        telemetryctl=None, provider=provider, max_retries=2, backoff_ms=100
+        telemetryctl=None, provider=provider, max_retries=1, backoff_ms=backoff_ms
     )
     timer = ChatPhaseTimer()
 
@@ -624,10 +644,30 @@ def test_inner_retry_returns_error_when_retry_after_cannot_wait(
     assert response.ok is False
     assert response.error is not None
     assert response.error.code == "RATE_LIMITED"
-    assert response.error.details == {"status_code": 429, "retry_after": "30"}
+    assert response.error.details == {"status_code": 429, "retry_after": retry_after}
     assert provider.calls == 1
     assert clock.sleeps == []
     assert _attempts(timer) == [("primary", "initial", "error")]
+
+
+@_CANNOT_WAIT
+def test_hinted_retry_that_cannot_wait_allows_matching_fallback(
+    clock: _FakeClock, retry_after: str, backoff_ms: int, timeout_s: float | None
+) -> None:
+    order: list[str] = []
+    runtime, _, _ = _routed(
+        order,
+        [_rate_limited(retry_after), _make_response()],
+        [_make_response()],
+        max_retries=1,
+        backoff_ms=backoff_ms,
+    )
+
+    response = _call(runtime, timeout_s=timeout_s)
+
+    assert response.ok is True
+    assert order == ["provider_a", "provider_b"]
+    assert clock.sleeps == []
 
 
 @pytest.mark.parametrize(
@@ -916,47 +956,6 @@ def test_hinted_retry_waits_for_backoff_step_longer_than_hint(
     assert max(clock.sleeps) <= 0.05
 
 
-def test_hinted_retry_returns_error_when_backoff_step_cannot_wait(
-    clock: _FakeClock,
-) -> None:
-    provider = _SequenceProvider([_rate_limited("1"), _make_response()])
-    runtime = _make_runtime(
-        telemetryctl=None, provider=provider, max_retries=1, backoff_ms=5000
-    )
-    timer = ChatPhaseTimer()
-
-    response = _call(runtime, timeout_s=2, timer=timer)
-
-    assert response.error is not None
-    assert response.error.code == "RATE_LIMITED"
-    assert response.error.details == {"status_code": 429, "retry_after": "1"}
-    assert provider.calls == 1
-    assert clock.sleeps == []
-    assert _attempts(timer) == [("primary", "initial", "error")]
-
-
-def test_hinted_retry_longer_than_deadline_allows_matching_fallback(
-    clock: _FakeClock,
-) -> None:
-    order: list[str] = []
-    a = _OrderedProvider("provider_a", [_rate_limited("1"), _make_response()], order)
-    b = _OrderedProvider("provider_b", [_make_response()], order)
-    runtime = _make_fallback_runtime(
-        telemetryctl=None,
-        primary=a,
-        fallback=b,
-        fallback_on=("RATE_LIMITED",),
-        max_retries=1,
-        backoff_ms=5000,
-    )
-
-    response = _call(runtime, timeout_s=2)
-
-    assert response.ok is True
-    assert order == ["provider_a", "provider_b"]
-    assert clock.sleeps == []
-
-
 def test_elapsed_route_hint_sends_without_waiting(clock: _FakeClock) -> None:
     provider = _SequenceProvider([_rate_limited("30"), _make_response()])
     runtime = _make_runtime(telemetryctl=None, provider=provider, max_retries=0)
@@ -968,43 +967,6 @@ def test_elapsed_route_hint_sends_without_waiting(clock: _FakeClock) -> None:
 
     assert response.ok is True
     assert provider.calls == 2
-    assert clock.sleeps == []
-
-
-_OVERSIZED = pytest.mark.parametrize(
-    "retry_after", ["9" * 309, "9" * 4301], ids=["float-overflow", "int-digit-limit"]
-)
-
-
-@_OVERSIZED
-def test_oversized_retry_after_returns_original_error(
-    clock: _FakeClock, retry_after: str
-) -> None:
-    provider = _SequenceProvider([_rate_limited(retry_after), _make_response()])
-    runtime = _make_runtime(
-        telemetryctl=None, provider=provider, max_retries=2, backoff_ms=100
-    )
-
-    response = _call(runtime, timeout_s=120)
-
-    assert response.error is not None
-    assert response.error.code == "RATE_LIMITED"
-    assert response.error.details == {"status_code": 429, "retry_after": retry_after}
-    assert provider.calls == 1
-    assert clock.sleeps == []
-
-
-@_OVERSIZED
-def test_oversized_retry_after_allows_matching_fallback(
-    clock: _FakeClock, retry_after: str
-) -> None:
-    order: list[str] = []
-    runtime, _, _ = _routed(order, [_rate_limited(retry_after)], [_make_response()])
-
-    response = _call(runtime, timeout_s=120)
-
-    assert response.ok is True
-    assert order == ["provider_a", "provider_b"]
     assert clock.sleeps == []
 
 
