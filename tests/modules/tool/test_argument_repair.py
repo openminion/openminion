@@ -135,19 +135,20 @@ if "serialize_by_alias" in ConfigDict.__annotations__:
     def test_tool_args_preserves_nested_serialize_by_alias_input_keys() -> None:
         class _Query(BaseModel):
             model_config = ConfigDict(serialize_by_alias=True, extra="forbid")
-    
+
             value: int = Field(serialization_alias="output_value")
-    
+
         class _Args(BaseModel):
             model_config = ConfigDict(extra="forbid")
-    
+
             query: _Query
-    
+
         provider = {"query": {"value": 7}}
         result = validate_model_tool_args(provider, _Args, "serialize-by-alias")
-    
+
         assert result == provider
         assert _Args.model_validate(result).query.value == 7
+
 
 def test_transforming_validator_runs_once_in_argument_owner() -> None:
     from pydantic import field_validator
