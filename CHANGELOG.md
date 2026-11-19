@@ -30,6 +30,14 @@ This file tracks package-facing release notes for `openminion`.
   the no-progress counter, so two intermittent failures spread across a turn no longer end it
   while work is still getting done (Refs #679).
 
+- Provider retries now respect a `Retry-After` hint (seconds or HTTP-date) on retryable
+  errors. A route is retried only after its hinted delay, and only when the turn has a
+  deadline with enough time left; otherwise the route's error is returned without
+  waiting, so an eligible configured fallback can run. The rule covers the inner retries
+  and the agent's entry retry loop, which no longer resends to a route before its hint.
+  Missing, malformed, zero or past hints keep the existing backoff, and attempt limits are
+  unchanged (Refs #717).
+
 
 ## Current package line - 2026-11-17
 

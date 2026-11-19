@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+from contextvars import copy_context
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Callable, Dict
 
 import pytest
 
 from openminion.modules.llm import LLMCTL
 from openminion.modules.llm.errors import LLMCtlError
+from openminion.modules.llm.runtime import flow
+from openminion.modules.runtime.sync import await_with_cancel
 from openminion.modules.llm.schemas import (
     LLMRequest,
     LLMResponse,
@@ -102,8 +107,10 @@ def _make_response(
 
 def _make_runtime(
     *,
-    telemetryctl: TelemetryCtl,
+    telemetryctl: TelemetryCtl | None,
     provider: _SequenceProvider,
+    max_retries: int = 1,
+    backoff_ms: int = 0,
 ) -> LLMCTL:
     runtime = LLMCTL.from_config(
         {
@@ -111,7 +118,7 @@ def _make_runtime(
             "llmctl": {
                 "default_provider": provider.name,
                 "default_model": "telemetry-model",
-                "retries": {"max_retries": 1, "backoff_ms": 0},
+                "retries": {"max_retries": max_retries, "backoff_ms": backoff_ms},
             },
             "providers": {provider.name: {}},
             "agents": {
@@ -130,9 +137,12 @@ def _make_runtime(
 
 def _make_fallback_runtime(
     *,
-    telemetryctl: TelemetryCtl,
+    telemetryctl: TelemetryCtl | None,
     primary: _SequenceProvider,
     fallback: _SequenceProvider,
+    fallback_on: tuple[str, ...] = ("PROVIDER_ERROR",),
+    max_retries: int = 0,
+    backoff_ms: int = 0,
 ) -> LLMCTL:
     runtime = LLMCTL.from_config(
         {
@@ -140,14 +150,14 @@ def _make_fallback_runtime(
             "llmctl": {
                 "default_provider": primary.name,
                 "default_model": "primary-model",
-                "retries": {"max_retries": 0, "backoff_ms": 0},
+                "retries": {"max_retries": max_retries, "backoff_ms": backoff_ms},
                 "routing_defaults": {
                     "primary": {"provider": primary.name, "model": "primary-model"},
                     "fallbacks": [
                         {
                             "provider": fallback.name,
                             "model": "fallback-model",
-                            "on": ["PROVIDER_ERROR"],
+                            "on": list(fallback_on),
                         }
                     ],
                 },
@@ -237,6 +247,35 @@ def test_llm_module_emits_request_response_and_cache_hit(temp_db: str) -> None:
     assert stats["operation_counts"]["request"] == 1
     assert stats["operation_counts"]["response"] == 1
     assert stats["operation_counts"]["cache_hit"] == 1
+
+
+def test_failed_attempt_emits_error_operation_with_status_and_code(
+    temp_db: str,
+) -> None:
+    response, _, summary = _run(
+        _call_and_summary(
+            temp_db,
+            session_id="sess-attempt-error",
+            request_payload=_request_payload("sess-attempt-error", "turn-1"),
+            outcomes=[LLMCtlError("INVALID_ARGUMENT", "bad request", {})],
+        )
+    )
+
+    assert response.ok is False
+    stats = [
+        (
+            event.data["operation"],
+            event.data["status"],
+            event.data.get("error_code"),
+            event.data["attempt"],
+        )
+        for event in summary.events
+        if event.event_type == "module.stats"
+    ]
+    assert stats == [
+        ("request", "ok", None, 1),
+        ("error", "error", "INVALID_ARGUMENT", 1),
+    ]
 
 
 def test_llm_module_emits_retry_and_error_for_retryable_failure(temp_db: str) -> None:
@@ -481,3 +520,497 @@ def test_llm_telemetry_helper_rejects_invalid_name_and_absent_adapter(
         await service.close()
 
     _run(_case())
+
+
+class _FakeClock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+        self.wall = datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc).timestamp()
+        self.sleeps: list[float] = []
+        self.on_sleep: Callable[[], None] | None = None
+
+    def monotonic(self) -> float:
+        return self.now
+
+    perf_counter = monotonic
+
+    def time(self) -> float:
+        return self.wall
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.now += seconds
+        self.wall += seconds
+        if self.on_sleep is not None:
+            self.on_sleep()
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> _FakeClock:
+    fake = _FakeClock()
+    monkeypatch.setattr(flow, "time", fake)
+    return fake
+
+
+class _OrderedProvider(_SequenceProvider):
+    def __init__(
+        self,
+        name: str,
+        results: list[Any],
+        order: list[str],
+        *,
+        purpose: str | None = None,
+    ) -> None:
+        super().__init__(results)
+        self.name = name
+        self._order = order
+        self._purpose = purpose
+
+    def complete(self, request: LLMRequest, config: Dict[str, Any]) -> LLMResponse:
+        if self._purpose in (None, (request.metadata or {}).get("purpose")):
+            self._order.append(self.name)
+        return super().complete(request, config)
+
+
+def _rate_limited(retry_after: str | None = None) -> LLMCtlError:
+    details: dict[str, Any] = {"status_code": 429}
+    if retry_after is not None:
+        details["retry_after"] = retry_after
+    return LLMCtlError("RATE_LIMITED", "slow down", details)
+
+
+def _call(
+    runtime: LLMCTL,
+    *,
+    timeout_s: float | None,
+    cancel_event: threading.Event | None = None,
+    timer: ChatPhaseTimer | None = None,
+) -> LLMResponse:
+    async def _go() -> LLMResponse:
+        call = runtime.client(agent_name="default").call(
+            _request_payload("sess-retry-after", "turn-1")
+        )
+        if timeout_s is None:
+            return await call
+        return await await_with_cancel(
+            call, timeout_s=timeout_s, cancel_event=cancel_event
+        )
+
+    with use_chat_phase_timer(timer or ChatPhaseTimer()):
+        return _run(_go())
+
+
+def _attempts(timer: ChatPhaseTimer) -> list[tuple[object, object, object]]:
+    return [
+        (item["route_posture"], item["attempt_posture"], item["outcome"])
+        for item in timer.build_payload().provider_attempts
+    ]
+
+
+def _routed(
+    order: list[str],
+    primary: list[Any],
+    fallback: list[Any],
+    *,
+    fallback_on: tuple[str, ...] = ("RATE_LIMITED",),
+    max_retries: int = 0,
+    backoff_ms: int = 0,
+) -> tuple[LLMCTL, _OrderedProvider, _OrderedProvider]:
+    a = _OrderedProvider("provider_a", primary, order)
+    b = _OrderedProvider("provider_b", fallback, order)
+    runtime = _make_fallback_runtime(
+        telemetryctl=None,
+        primary=a,
+        fallback=b,
+        fallback_on=fallback_on,
+        max_retries=max_retries,
+        backoff_ms=backoff_ms,
+    )
+    return runtime, a, b
+
+
+def test_inner_retry_waits_for_retry_after_that_fits_deadline(
+    clock: _FakeClock,
+) -> None:
+    provider = _SequenceProvider([_rate_limited("30"), _make_response()])
+    runtime = _make_runtime(
+        telemetryctl=None, provider=provider, max_retries=1, backoff_ms=100
+    )
+
+    response = _call(runtime, timeout_s=120)
+
+    assert response.ok is True
+    assert provider.calls == 2
+    assert sum(clock.sleeps) == pytest.approx(30.0)
+    assert max(clock.sleeps) <= 0.05
+
+
+_CANNOT_WAIT = pytest.mark.parametrize(
+    ("retry_after", "backoff_ms", "timeout_s"),
+    [
+        ("30", 100, 5.0),
+        ("30", 100, None),
+        ("1", 5000, 2.0),
+        ("9" * 309, 100, 120.0),
+        ("9" * 4301, 100, 120.0),
+    ],
+    ids=["no-fit", "no-deadline", "backoff-step", "float-overflow", "int-digit-limit"],
+)
+
+
+@_CANNOT_WAIT
+def test_hinted_retry_that_cannot_wait_returns_original_error(
+    clock: _FakeClock, retry_after: str, backoff_ms: int, timeout_s: float | None
+) -> None:
+    provider = _SequenceProvider([_rate_limited(retry_after), _make_response()])
+    runtime = _make_runtime(
+        telemetryctl=None, provider=provider, max_retries=1, backoff_ms=backoff_ms
+    )
+    timer = ChatPhaseTimer()
+
+    response = _call(runtime, timeout_s=timeout_s, timer=timer)
+
+    assert response.ok is False
+    assert response.error is not None
+    assert response.error.code == "RATE_LIMITED"
+    assert response.error.details == {"status_code": 429, "retry_after": retry_after}
+    assert provider.calls == 1
+    assert clock.sleeps == []
+    assert _attempts(timer) == [("primary", "initial", "error")]
+
+
+@_CANNOT_WAIT
+def test_hinted_retry_that_cannot_wait_allows_matching_fallback(
+    clock: _FakeClock, retry_after: str, backoff_ms: int, timeout_s: float | None
+) -> None:
+    order: list[str] = []
+    runtime, _, _ = _routed(
+        order,
+        [_rate_limited(retry_after), _make_response()],
+        [_make_response()],
+        max_retries=1,
+        backoff_ms=backoff_ms,
+    )
+
+    response = _call(runtime, timeout_s=timeout_s)
+
+    assert response.ok is True
+    assert order == ["provider_a", "provider_b"]
+    assert clock.sleeps == []
+
+
+@pytest.mark.parametrize(
+    "retry_after",
+    ["0", "Wed, 18 Nov 2026 11:59:00 GMT", "1.5", "soon", None],
+    ids=["zero", "past", "fractional", "malformed", "missing"],
+)
+def test_retry_after_without_future_delay_keeps_ordinary_backoff(
+    clock: _FakeClock, retry_after: str | None
+) -> None:
+    provider = _SequenceProvider([_rate_limited(retry_after), _make_response()])
+    runtime = _make_runtime(
+        telemetryctl=None, provider=provider, max_retries=1, backoff_ms=100
+    )
+
+    response = _call(runtime, timeout_s=None)
+
+    assert response.ok is True
+    assert provider.calls == 2
+    assert clock.sleeps == [0.1]
+
+
+def test_retry_without_hint_keeps_exponential_backoff(clock: _FakeClock) -> None:
+    provider = _SequenceProvider(
+        [_rate_limited(), _rate_limited(), _rate_limited(), _make_response()]
+    )
+    runtime = _make_runtime(
+        telemetryctl=None, provider=provider, max_retries=3, backoff_ms=100
+    )
+
+    response = _call(runtime, timeout_s=120)
+
+    assert response.ok is True
+    assert provider.calls == 4
+    assert clock.sleeps == pytest.approx([0.1, 0.2, 0.4])
+
+
+def test_zero_retries_make_one_attempt_and_reentry_respects_hint(
+    clock: _FakeClock,
+) -> None:
+    provider = _SequenceProvider([_rate_limited("30"), _make_response()])
+    runtime = _make_runtime(telemetryctl=None, provider=provider, max_retries=0)
+
+    with flow.route_admission_scope():
+        first = _call(runtime, timeout_s=None)
+        assert provider.calls == 1
+        assert clock.sleeps == []
+
+        refused = _call(runtime, timeout_s=None)
+        assert provider.calls == 1
+        assert clock.sleeps == []
+        assert refused.error is not None and first.error is not None
+        assert refused.error.details == first.error.details
+
+        admitted = _call(runtime, timeout_s=120)
+
+    assert admitted.ok is True
+    assert provider.calls == 2
+    assert sum(clock.sleeps) == pytest.approx(30.0)
+
+
+def test_hinted_wait_stops_within_one_slice_when_turn_is_cancelled(
+    clock: _FakeClock,
+) -> None:
+    provider = _SequenceProvider([_rate_limited("30"), _make_response()])
+    runtime = _make_runtime(telemetryctl=None, provider=provider, max_retries=1)
+    cancelled = threading.Event()
+    clock.on_sleep = cancelled.set
+
+    with pytest.raises((RuntimeError, asyncio.CancelledError)):
+        _call(runtime, timeout_s=120, cancel_event=cancelled)
+
+    assert provider.calls == 1
+    assert len(clock.sleeps) == 1
+
+
+def test_wall_clock_jump_does_not_shorten_http_date_hint(clock: _FakeClock) -> None:
+    provider = _SequenceProvider(
+        [_rate_limited("Wed, 18 Nov 2026 12:00:30 GMT"), _make_response()]
+    )
+    runtime = _make_runtime(telemetryctl=None, provider=provider, max_retries=0)
+
+    with flow.route_admission_scope():
+        _call(runtime, timeout_s=None)
+        clock.wall += 3600
+        response = _call(runtime, timeout_s=120)
+
+    assert response.ok is True
+    assert provider.calls == 2
+    assert sum(clock.sleeps) == pytest.approx(30.0)
+
+
+def test_route_wait_that_fits_retries_primary_before_fallback(
+    clock: _FakeClock,
+) -> None:
+    order: list[str] = []
+    runtime, _, _ = _routed(
+        order, [_rate_limited("30"), _make_response()], [_rate_limited()]
+    )
+    timer = ChatPhaseTimer()
+
+    with flow.route_admission_scope():
+        first = _call(runtime, timeout_s=120)
+        second = _call(runtime, timeout_s=120, timer=timer)
+
+    assert first.error is not None and first.error.code == "RATE_LIMITED"
+    assert second.ok is True
+    assert order == ["provider_a", "provider_b", "provider_a"]
+    assert sum(clock.sleeps) == pytest.approx(30.0)
+    assert _attempts(timer) == [("primary", "initial", "ok")]
+
+
+@pytest.mark.parametrize("timeout_s", [5.0, None], ids=["no-fit", "no-deadline"])
+def test_route_that_cannot_wait_is_skipped_for_matching_fallback(
+    clock: _FakeClock, timeout_s: float | None
+) -> None:
+    order: list[str] = []
+    runtime, _, _ = _routed(
+        order, [_rate_limited("30")], [_rate_limited(), _make_response()]
+    )
+    timer = ChatPhaseTimer()
+
+    with flow.route_admission_scope():
+        _call(runtime, timeout_s=timeout_s)
+        second = _call(runtime, timeout_s=timeout_s, timer=timer)
+
+    assert second.ok is True
+    assert order == ["provider_a", "provider_b", "provider_b"]
+    assert clock.sleeps == []
+    assert _attempts(timer) == [("fallback", "initial", "ok")]
+
+
+def test_skipped_route_keeps_fallback_error_code_filter(clock: _FakeClock) -> None:
+    order: list[str] = []
+    runtime, _, fallback = _routed(
+        order,
+        [_rate_limited("30")],
+        [_make_response()],
+        fallback_on=("PROVIDER_ERROR",),
+    )
+
+    with flow.route_admission_scope():
+        first = _call(runtime, timeout_s=None)
+        second = _call(runtime, timeout_s=None)
+
+    assert order == ["provider_a"]
+    assert fallback.calls == 0
+    assert second.error is not None and first.error is not None
+    assert second.error.code == "RATE_LIMITED"
+    assert second.error.details == first.error.details
+    assert clock.sleeps == []
+
+
+def test_route_without_hint_keeps_todays_order(clock: _FakeClock) -> None:
+    order: list[str] = []
+    runtime, _, _ = _routed(order, [_rate_limited()], [_rate_limited()])
+
+    with flow.route_admission_scope():
+        _call(runtime, timeout_s=120)
+        _call(runtime, timeout_s=120)
+
+    assert order == ["provider_a", "provider_b", "provider_a", "provider_b"]
+    assert clock.sleeps == []
+
+
+def test_route_admission_scope_resets_and_isolates_scopes() -> None:
+    assert flow._route_admission.get() is None
+    for error in (RuntimeError("boom"), asyncio.CancelledError()):
+        with pytest.raises(type(error)):
+            with flow.route_admission_scope():
+                raise error
+        assert flow._route_admission.get() is None
+
+    with flow.route_admission_scope():
+        outer = flow._route_admission.get()
+        assert outer == {}
+        outer[("a", "m")] = (1.0, _make_response())
+        with flow.route_admission_scope():
+            assert flow._route_admission.get() == {}
+        assert flow._route_admission.get() is outer
+
+        seen: dict[str, Any] = {}
+
+        def _own_scope() -> None:
+            seen["inherited"] = flow._route_admission.get()
+            with flow.route_admission_scope():
+                own = flow._route_admission.get()
+                assert own is not None
+                own[("b", "m")] = (2.0, _make_response())
+
+        def _fresh_thread() -> None:
+            seen["fresh"] = flow._route_admission.get()
+
+        for thread in (
+            threading.Thread(target=copy_context().run, args=(_own_scope,)),
+            threading.Thread(target=_fresh_thread),
+        ):
+            thread.start()
+            thread.join()
+
+        assert seen["inherited"] is outer
+        assert seen["fresh"] is None
+        assert list(outer) == [("a", "m")]
+    assert flow._route_admission.get() is None
+
+
+async def _operation_counts(
+    temp_db: str,
+    build: Callable[[TelemetryCtl], LLMCTL],
+    timeouts: list[float | None],
+) -> dict[str, int]:
+    service = TelemetryService(temp_db)
+    runtime = build(TelemetryCtl(service))
+    try:
+        for timeout_s in timeouts:
+            call = runtime.client(agent_name="default").call(
+                _request_payload("sess-retry-after-ops", "turn-1")
+            )
+            if timeout_s is None:
+                await call
+            else:
+                await await_with_cancel(call, timeout_s=timeout_s)
+        summary = await service.get_module_summary("sess-retry-after-ops")
+        return dict(summary["openminion-llm"]["operation_counts"])
+    finally:
+        await service.close()
+
+
+@pytest.mark.parametrize("timeout_s", [5.0, None], ids=["no-fit", "no-deadline"])
+def test_refused_hinted_retry_emits_no_retry_operation(
+    temp_db: str, clock: _FakeClock, timeout_s: float | None
+) -> None:
+    provider = _SequenceProvider([_rate_limited("30"), _make_response()])
+
+    counts = _run(
+        _operation_counts(
+            temp_db,
+            lambda ctl: _make_runtime(
+                telemetryctl=ctl, provider=provider, max_retries=2, backoff_ms=100
+            ),
+            [timeout_s],
+        )
+    )
+
+    assert counts == {"request": 1, "error": 1}
+
+
+def test_skipped_route_emits_no_request_operation(
+    temp_db: str, clock: _FakeClock
+) -> None:
+    order: list[str] = []
+    a = _OrderedProvider("provider_a", [_rate_limited("30")], order)
+    b = _OrderedProvider("provider_b", [_make_response()], order)
+
+    with flow.route_admission_scope():
+        counts = _run(
+            _operation_counts(
+                temp_db,
+                lambda ctl: _make_fallback_runtime(
+                    telemetryctl=ctl,
+                    primary=a,
+                    fallback=b,
+                    fallback_on=("RATE_LIMITED",),
+                ),
+                [None, None],
+            )
+        )
+
+    assert order == ["provider_a", "provider_b", "provider_b"]
+    assert counts == {"request": 3, "error": 1, "response": 2}
+
+
+def test_hinted_retry_waits_for_backoff_step_longer_than_hint(
+    clock: _FakeClock,
+) -> None:
+    provider = _SequenceProvider([_rate_limited("1"), _make_response()])
+    runtime = _make_runtime(
+        telemetryctl=None, provider=provider, max_retries=1, backoff_ms=5000
+    )
+
+    response = _call(runtime, timeout_s=120)
+
+    assert response.ok is True
+    assert provider.calls == 2
+    assert sum(clock.sleeps) == pytest.approx(5.0)
+    assert max(clock.sleeps) <= 0.05
+
+
+def test_elapsed_route_hint_sends_without_waiting(clock: _FakeClock) -> None:
+    provider = _SequenceProvider([_rate_limited("30"), _make_response()])
+    runtime = _make_runtime(telemetryctl=None, provider=provider, max_retries=0)
+
+    with flow.route_admission_scope():
+        _call(runtime, timeout_s=None)
+        clock.now += 30
+        response = _call(runtime, timeout_s=None)
+
+    assert response.ok is True
+    assert provider.calls == 2
+    assert clock.sleeps == []
+
+
+def test_fallback_route_hint_applies_only_to_the_fallback(clock: _FakeClock) -> None:
+    order: list[str] = []
+    runtime, _, _ = _routed(
+        order,
+        [_rate_limited(), _rate_limited()],
+        [_rate_limited("30"), _make_response()],
+    )
+
+    with flow.route_admission_scope():
+        _call(runtime, timeout_s=120)
+        response = _call(runtime, timeout_s=120)
+
+    assert response.ok is True
+    assert order == ["provider_a", "provider_b", "provider_a", "provider_b"]
+    assert sum(clock.sleeps) == pytest.approx(30.0)
