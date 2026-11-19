@@ -152,6 +152,32 @@ def test_tool_args_preserves_nested_serialize_by_alias_input_keys() -> None:
     assert _Args.model_validate(result).query.value == 7
 
 
+def test_tool_args_keep_serialized_alias_when_it_is_an_input_alias() -> None:
+    if "serialize_by_alias" not in ConfigDict.__annotations__:
+        return
+
+    from pydantic import field_validator
+
+    class _Query(BaseModel):
+        model_config = ConfigDict(serialize_by_alias=True, extra="forbid")
+
+        value: int = Field(alias="external_value")
+
+        @field_validator("value")
+        @classmethod
+        def increment(cls, value: int) -> int:
+            return value + 1
+
+    class _Args(BaseModel):
+        query: _Query
+
+    provider = {"query": {"external_value": 1}}
+    result = validate_model_tool_args(provider, _Args, "serialize-by-alias")
+
+    assert result == {"query": {"external_value": 2}}
+    assert _Args.model_validate(result).query.value == 3
+
+
 def test_transforming_validator_runs_once_in_argument_owner() -> None:
     from pydantic import field_validator
 
