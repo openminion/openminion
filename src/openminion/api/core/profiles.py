@@ -343,6 +343,9 @@ class RuntimeProfilesMixin:
                         ),
                         "model": model,
                         "configured_connection": configured_connections,
+                        "image_input": connection.get("image_input", {}).get(
+                            model, "unknown"
+                        ),
                         "is_default": bool(connection.get("default"))
                         and model == default_model,
                     }
@@ -427,6 +430,55 @@ class RuntimeProfilesMixin:
             updated,
             agent_id=agent_id,
             reason="model_added",
+        )
+
+    def configure_image_input(
+        self,
+        *,
+        agent_id: str,
+        mode: str,
+        connection_id: str = "",
+        model: str = "",
+        purpose: str = "describe",
+    ) -> None:
+        from openminion.base.config.image_input import ImageInputConfig
+
+        updated = OpenMinionConfig.from_dict(self.config.to_dict())
+        profile = resolve_agent_config(updated, agent_id)
+        if mode == "off":
+            profile.image_input = None
+        else:
+            connection = profile.model_connections.get(connection_id)
+            if connection is None or model not in connection.get("models", []):
+                raise ValueError("Choose a configured connection and model")
+            connection.setdefault("image_input", {})[model] = "supported"
+            connection.setdefault("provider_config_overrides", {})[
+                "enable_vision_input"
+            ] = True
+            if mode == "native":
+                from openminion.modules.llm.image_input import image_destination
+                from openminion.base.config.runtime.profile import build_runtime_config
+                from openminion.base.config.runtime.profile_overrides import (
+                    RunProfileOverrides,
+                )
+
+                profile.provider_config_overrides["enable_vision_input"] = True
+                actual = build_runtime_config(updated, agent_id=agent_id)
+                selected = build_runtime_config(
+                    updated,
+                    agent_id=agent_id,
+                    overrides=RunProfileOverrides(provider=connection_id, model=model),
+                )
+                if image_destination(actual) != image_destination(selected):
+                    raise ValueError(
+                        "Native images must use the active chat connection and model"
+                    )
+            policy = {"mode": mode}
+            if mode == "separate":
+                policy.update(connection_id=connection_id, model=model, purpose=purpose)
+            profile.image_input = ImageInputConfig.model_validate(policy)
+        self._save_and_activate_agent_config(
+            updated, agent_id=agent_id, reason="image_input_changed"
         )
 
     def apply_provider_setup(self, result: Any, *, agent_id: str) -> None:

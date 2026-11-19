@@ -4,6 +4,8 @@ from typing import Annotated, Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from openminion.modules.artifact.models import ImageInputContext
+
 from .constants import (
     LLM_TOOL_CALL_STATUS_REQUESTED,
 )
@@ -74,6 +76,7 @@ class Message(BaseModel):
     name: Optional[str] = None
     cache_control: Optional[dict[str, Any]] = None
     content_parts: list[MessageContentPart] = Field(default_factory=list)
+    image_input: ImageInputContext | None = None
     tool_calls: list[ToolCall] = Field(default_factory=list)
     tool_call_id: Optional[str] = None
     tool_status: Optional[ToolResultStatus] = None

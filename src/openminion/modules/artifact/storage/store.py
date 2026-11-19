@@ -9,6 +9,7 @@ from typing import Any, Iterable, Mapping
 from openminion.modules.artifact.models import (
     AliasRecord,
     ArtifactMeta,
+    ImageRef,
     ViewRecord,
     iso_now,
 )
@@ -82,7 +83,22 @@ def _create_artifact_schema(record_store: RecordStore) -> None:
         )
         """
     )
+    record_store.execute_count(
+        """CREATE TABLE IF NOT EXISTS session_images (
+            image_ref TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            sha256 TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            source_size_bytes INTEGER NOT NULL,
+            width INTEGER NOT NULL,
+            height INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            revoked_at TEXT
+        )"""
+    )
     for sql in (
+        "CREATE INDEX IF NOT EXISTS idx_session_images_session ON session_images(session_id, revoked_at)",
+        "CREATE INDEX IF NOT EXISTS idx_session_images_sha ON session_images(sha256, revoked_at)",
         "CREATE INDEX IF NOT EXISTS idx_artifacts_created ON artifacts(created_at)",
         "CREATE INDEX IF NOT EXISTS idx_artifacts_size ON artifacts(size_bytes)",
         "CREATE INDEX IF NOT EXISTS idx_artifacts_deleted ON artifacts(deleted_at)",
@@ -116,6 +132,58 @@ class _ArtifactIndexMixin(ArtifactIndex):
 
     def close(self) -> None:
         BaseModuleStore.close(self)
+
+    def bind_image(self, image: ImageRef, session_id: str) -> None:
+        self._record_store.execute_count(
+            """INSERT INTO session_images(image_ref, session_id, sha256, size_bytes, width, height, source_size_bytes, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                image.ref,
+                session_id,
+                image.sha256,
+                image.size_bytes,
+                image.width,
+                image.height,
+                image.source_size_bytes,
+                iso_now(),
+            ),
+        )
+
+    def get_image(self, image_ref: str, session_id: str) -> ImageRef | None:
+        rows = self._record_store.query_dicts(
+            """SELECT image_ref, sha256, size_bytes, width, height, source_size_bytes FROM session_images
+               WHERE image_ref = ? AND session_id = ? AND revoked_at IS NULL""",
+            (image_ref, session_id),
+        )
+        if not rows:
+            return None
+        row = rows[0]
+        return ImageRef(
+            str(row["image_ref"]),
+            str(row["sha256"]),
+            int(row["size_bytes"]),
+            int(row["width"]),
+            int(row["height"]),
+            int(row["source_size_bytes"]),
+        )
+
+    def revoke_image(self, image_ref: str, session_id: str) -> None:
+        self._record_store.execute_count(
+            "UPDATE session_images SET revoked_at = ? WHERE image_ref = ? AND session_id = ? AND revoked_at IS NULL",
+            (iso_now(), image_ref, session_id),
+        )
+
+    def revoke_session_images(self, session_id: str) -> None:
+        self._record_store.execute_count(
+            "UPDATE session_images SET revoked_at = ? WHERE session_id = ? AND revoked_at IS NULL",
+            (iso_now(), session_id),
+        )
+
+    def revoke_images_for_blob(self, sha256: str) -> None:
+        self._record_store.execute_count(
+            "UPDATE session_images SET revoked_at = ? WHERE sha256 = ? AND revoked_at IS NULL",
+            (iso_now(), sha256),
+        )
 
     def upsert_artifact(self, meta: ArtifactMeta) -> None:
         self._record_store.execute_count(
@@ -370,6 +438,7 @@ class _ArtifactIndexMixin(ArtifactIndex):
             SELECT DISTINCT sha256
             FROM reference_edges
             WHERE deleted_at IS NULL
+            UNION SELECT sha256 FROM session_images WHERE revoked_at IS NULL
             """
         )
         return {str(row["sha256"]) for row in rows}

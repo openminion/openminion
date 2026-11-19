@@ -324,6 +324,7 @@ class TerminalComposer:
         self._editor_command = str(editor_command or "").strip()
         self._on_editor_error = on_editor_error
         self._next_draft: str | None = None
+        self.image_paths: list[str] = []
         path = PathCompleter(only_directories=False)
         self._completer = _SlashAndAtCompleter(slash_commands, path)
         self._is_resumed = False
@@ -503,8 +504,31 @@ class TerminalComposer:
         self._multiline = True
         event.app.current_buffer.insert_text("\n")
 
+    def manage_images(self, command: str, *, working_dir: str) -> str:
+        import shlex
+        from openminion.cli.transport.images import read_selected_images
+
+        parts = shlex.split(command)[1:]
+        if parts[:1] == ["add"] and len(parts) == 2:
+            path = Path(parts[1]).expanduser()
+            if not path.is_absolute():
+                path = Path(working_dir) / path
+            read_selected_images([*self.image_paths, str(path)])
+            self.image_paths.append(str(path))
+        elif parts[:1] == ["remove"] and len(parts) == 2:
+            index = int(parts[1]) - 1
+            if not 0 <= index < len(self.image_paths):
+                raise ValueError("Choose an image number from /image")
+            self.image_paths.pop(index)
+        elif parts:
+            raise ValueError("Use /image add PATH, /image remove NUMBER or /image")
+        names = ", ".join(
+            f"{i + 1}. {Path(path).name}" for i, path in enumerate(self.image_paths)
+        )
+        return "Selected images: " + (names or "none")
+
     def _submit(self, event: Any) -> None:
-        if not event.app.current_buffer.text.strip():
+        if not event.app.current_buffer.text.strip() and not self.image_paths:
             return
         event.app.current_buffer.validate_and_handle()
 
@@ -583,6 +607,11 @@ class TerminalComposer:
         return str(text or "").rstrip("\n")
 
     def _formatted_bottom_toolbar(self):
+        if self.image_paths:
+            names = ", ".join(Path(path).name for path in self.image_paths)
+            return FormattedText(
+                [("class:bottom-toolbar", f"Images: {names} · /image remove NUMBER")]
+            )
         if self._bottom_toolbar is None:
             return None
         value = (

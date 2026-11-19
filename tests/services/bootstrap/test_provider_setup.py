@@ -281,7 +281,7 @@ def test_different_openai_compatible_service_does_not_reuse_global_model(
         existing_config=existing,
     )
 
-    assert result.model_choice.selected_model == "MiniMax-M2.7"
+    assert result.model_choice.selected_model == "MiniMax-M3.1-Flash"
     assert result.model_choice.source == "recommended"
 
 
@@ -997,3 +997,46 @@ def test_atomic_setup_save_preserves_original_on_final_mode_failure(
             atomic_save_setup_config(config, path)
 
     assert path.read_text(encoding="utf-8") == before
+
+
+@pytest.mark.parametrize("mode", ["native", "separate"])
+def test_setup_image_policy_preserves_route_and_serializes(tmp_path, mode):
+    request = ProviderSetupRequest(
+        preset_id="openai",
+        agent_id="vision",
+        model="vision-model",
+        config_path=str(tmp_path / "agents.json"),
+        home_root=tmp_path,
+        data_root=tmp_path / "data",
+        env={"OPENAI_API_KEY": "fixture-key"},
+        supports_images=True,
+        image_mode=mode,
+        image_reader_connection="openai" if mode == "separate" else "",
+        image_reader_model="vision-model" if mode == "separate" else "",
+    )
+    result = build_provider_setup(request)
+    restored = OpenMinionConfig.from_dict(result.config.to_dict())
+    profile = restored.agents["vision"]
+    assert profile.image_input.mode == mode
+    assert profile.model_connections["openai"]["image_input"] == {
+        "vision-model": "supported"
+    }
+    runtime = build_runtime_config(restored, agent_id="vision")
+    assert runtime.providers.openai.model == "vision-model"
+    assert runtime.providers.openai.enable_vision_input
+    assert runtime.providers.openai.api_key == ""
+    assert runtime.providers.openai.api_key_env == "OPENAI_API_KEY"
+
+
+def test_native_setup_rejects_ignored_reader_fields(tmp_path):
+    with pytest.raises(ProviderSetupError, match="separate image mode"):
+        build_provider_setup(
+            ProviderSetupRequest(
+                preset_id="openai",
+                agent_id="vision",
+                model="vision-model",
+                config_path=str(tmp_path / "agents.json"),
+                image_mode="native",
+                image_reader_model="other",
+            )
+        )

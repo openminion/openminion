@@ -155,6 +155,7 @@ def test_context_manifest_event_does_not_forward_legacy_identity_budget_payload(
     runner = _Runner()
     logger = _Logger()
     state = SimpleNamespace(
+        image_input=None,
         unresolved_clarify_items=[],
         clarify_responses={},
         session_id="sess-1",
@@ -188,6 +189,7 @@ def test_context_manifest_records_outcome_attribution_snapshot_for_plan_context(
     runner = _Runner()
     logger = _Logger()
     state = SimpleNamespace(
+        image_input=None,
         unresolved_clarify_items=[],
         clarify_responses={},
         session_id="sess-1",
@@ -227,6 +229,7 @@ def test_context_manifest_recalled_memory_uses_existing_attribution_state() -> N
     }
     logger = _Logger()
     state = SimpleNamespace(
+        image_input=None,
         unresolved_clarify_items=[],
         clarify_responses={},
         session_id="sess-1",
@@ -254,6 +257,7 @@ def test_non_command_context_does_not_overwrite_outcome_attribution_snapshot() -
     runner = _Runner()
     logger = _Logger()
     state = SimpleNamespace(
+        image_input=None,
         unresolved_clarify_items=[],
         clarify_responses={},
         session_id="sess-2",
@@ -282,6 +286,7 @@ def test_context_packer_applies_mode_aware_thinking_clamp() -> None:
     runner = _Runner()
     logger = _Logger()
     state = SimpleNamespace(
+        image_input=None,
         unresolved_clarify_items=[],
         clarify_responses={},
         session_id="sess-3",
@@ -309,6 +314,7 @@ def test_context_packer_surfaces_continuation_guidance_on_decide_reentry() -> No
     runner = _Runner()
     logger = _Logger()
     state = SimpleNamespace(
+        image_input=None,
         unresolved_clarify_items=[],
         clarify_responses={},
         session_id="sess-continue",
@@ -343,6 +349,7 @@ def test_context_packer_surfaces_improvement_note_overlay_from_typed_tool_contex
     runner._self_improvement_engine = _SelfImprovementEngine()  # noqa: SLF001
     logger = _Logger()
     state = SimpleNamespace(
+        image_input=None,
         unresolved_clarify_items=[],
         clarify_responses={},
         session_id="sess-4",
@@ -387,6 +394,7 @@ def test_context_packer_surfaces_strategy_outcome_overlay_without_mutating_strat
     runner.context_api.service = SimpleNamespace(_memctl=memctl)
     logger = _Logger()
     state = SimpleNamespace(
+        image_input=None,
         unresolved_clarify_items=[],
         clarify_responses={},
         session_id="sess-5",
@@ -427,6 +435,7 @@ def test_context_packer_surfaces_post_completion_critique_overlay() -> None:
     runner.context_api.service = SimpleNamespace(_memctl=memctl)
     logger = _Logger()
     state = SimpleNamespace(
+        image_input=None,
         unresolved_clarify_items=[],
         clarify_responses={},
         session_id="sess-pccm",
@@ -474,6 +483,7 @@ def test_context_packer_surfaces_low_progress_and_learning_metrics() -> None:
     )
     logger = _Logger()
     state = SimpleNamespace(
+        image_input=None,
         unresolved_clarify_items=[],
         clarify_responses={},
         session_id="sess-7",
@@ -576,6 +586,7 @@ def test_context_packer_surfaces_budget_telemetry_when_enabled() -> None:
     runner.profile.budget_telemetry = {"enabled": True, "granularity": "fine"}
     logger = _Logger()
     state = SimpleNamespace(
+        image_input=None,
         unresolved_clarify_items=[],
         clarify_responses={},
         session_id="sess-6",
@@ -625,6 +636,7 @@ def test_context_packer_omits_budget_telemetry_when_disabled() -> None:
     runner.profile.budget_telemetry = {"enabled": False, "granularity": "fine"}
     logger = _Logger()
     state = SimpleNamespace(
+        image_input=None,
         unresolved_clarify_items=[],
         clarify_responses={},
         session_id="sess-7",

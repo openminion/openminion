@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 
 @dataclass
 class OpenAIProviderConfig:
+    enable_vision_input: bool = False
     model: str = "gpt-4.1-mini"
     api_key: str = ""
     api_key_env: str = "OPENAI_API_KEY"
@@ -11,11 +12,13 @@ class OpenAIProviderConfig:
     timeout_seconds: int = 60
     http_connection_reuse_enabled: bool = True
     temperature: float = 0.2
+    max_tokens: int = 0
     tool_call_strategy: str = "hybrid"
 
 
 @dataclass
 class AnthropicProviderConfig:
+    enable_vision_input: bool = False
     model: str = "claude-sonnet-5"
     api_key: str = ""
     api_key_env: str = "ANTHROPIC_API_KEY"
@@ -30,6 +33,7 @@ class AnthropicProviderConfig:
 
 @dataclass
 class OpenRouterProviderConfig:
+    enable_vision_input: bool = False
     model: str = "openai/gpt-4.1-mini"
     api_key: str = ""
     api_key_env: str = "OPENROUTER_API_KEY"
@@ -69,6 +73,7 @@ class GroqProviderConfig:
 
 @dataclass
 class OllamaProviderConfig:
+    enable_vision_input: bool = False
     model: str = "llama3.1"
     base_url: str = "http://127.0.0.1:11434"
     provider_identity: dict[str, str] = field(default_factory=dict)

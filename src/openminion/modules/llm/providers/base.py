@@ -7,8 +7,10 @@ from .contracts import (
     ProviderResponse,
     ProviderToolCall,
     ProviderToolSpec,
+    assistant_message_meta,
     ensure_provider_response_compatibility,
     provider_response_contracts_strict,
+    response_contract_metadata,
 )
 
 
@@ -30,6 +32,8 @@ __all__ = [
     "ProviderResponse",
     "ProviderToolCall",
     "ProviderToolSpec",
+    "assistant_message_meta",
     "ensure_provider_response_compatibility",
     "provider_response_contracts_strict",
+    "response_contract_metadata",
 ]

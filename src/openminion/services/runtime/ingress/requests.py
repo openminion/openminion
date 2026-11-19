@@ -1,9 +1,11 @@
 """Request shaping and validation for runtime ingress."""
 
 from types import MappingProxyType
+from uuid import UUID
 from typing import TYPE_CHECKING, Any
 
 from openminion.base.config import combine_run_profile_overrides, resolve_agent_identity
+from openminion.modules.artifact.constants import MAX_TURN_IMAGES
 from openminion.modules.task.cron_payloads import strip_untrusted_task_context
 from openminion.services.runtime.manager import TurnRequest
 
@@ -55,6 +57,21 @@ def _security_lab_inbound_metadata(
     return metadata
 
 
+def parse_image_refs(value: object) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)) or len(value) > MAX_TURN_IMAGES:
+        raise TurnRequestError("image_refs must contain at most four selected images")
+    for ref in value:
+        if not isinstance(ref, str) or not ref.startswith("image://"):
+            raise TurnRequestError(
+                "image_refs must use session image references, not paths or URLs"
+            )
+        try:
+            UUID(ref.removeprefix("image://"))
+        except ValueError as exc:
+            raise TurnRequestError("Invalid session image reference") from exc
+    return tuple(value)
+
+
 def runtime_turn_request_from_payload(
     *,
     runtime: "RuntimeFacade",
@@ -64,7 +81,8 @@ def runtime_turn_request_from_payload(
 ) -> RuntimeTurnRequest:
     reject_reserved_subagent_fields(payload, error_factory=TurnRequestError)
     message = str(payload.get("message", "")).strip()
-    if not message:
+    image_refs = parse_image_refs(payload.get("image_refs", []))
+    if not message and not image_refs:
         raise TurnRequestError("`message` is required and must be a non-empty string.")
 
     agent_id_raw = payload.get("agent_id")
@@ -94,6 +112,7 @@ def runtime_turn_request_from_payload(
         agent_id=agent_resolution.public_agent_id,
         profile_agent_id=agent_profile.name,
         message=message,
+        image_refs=image_refs,
         channel=str(payload.get("channel", "")).strip()
         or agent_profile.default_channel,
         target=str(payload.get("target", "")).strip() or "api-user",
@@ -133,7 +152,8 @@ def build_manager_turn_request(
     input_text = str(input_text_raw).strip() if isinstance(input_text_raw, str) else ""
     if not session_id:
         raise ValueError("`session_id` is required.")
-    if not input_text and not _is_pae_idle_tick(payload):
+    image_refs = parse_image_refs(payload.get("image_refs", []))
+    if not input_text and not image_refs and not _is_pae_idle_tick(payload):
         raise ValueError("`input_text` is required.")
 
     attachments_raw = payload.get("attachments", [])
@@ -153,6 +173,7 @@ def build_manager_turn_request(
         session_id=session_id,
         input_text=input_text,
         attachments=attachments,
+        image_refs=image_refs,
         mode=mode,
         stream=bool(payload.get("stream")),
         meta=_manager_meta_from_payload(payload),
@@ -189,6 +210,7 @@ def runtime_turn_request_from_manager_request(
         agent_id=agent_resolution.public_agent_id,
         profile_agent_id=agent_profile.name,
         message=str(request.input_text or "").strip(),
+        image_refs=parse_image_refs(request.image_refs),
         channel=str(meta.get("channel", "")).strip() or agent_profile.default_channel,
         target=str(meta.get("user", "")).strip() or "api-user",
         timeout_seconds=resolve_timeout_seconds(

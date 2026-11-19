@@ -1,12 +1,16 @@
+"""Build protected trace paths without shortening their canonical metadata."""
+
 import re
 import json
 import os
 import tempfile
 from collections.abc import Iterable
+from hashlib import sha256
 from pathlib import Path
 
 from openminion.base.config.env import resolve_environment_config
 from openminion.base.config.paths import resolve_data_root, resolve_home_root
+from openminion.modules.telemetry.constants import TRACE_SEGMENT_LIMIT
 
 _SAFE_SEGMENT_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _TURN_TS_RE = re.compile(r"_(\d{10,})$")
@@ -143,8 +147,12 @@ def _safe_segment(value: str, *, fallback: str) -> str:
     token = str(value or "").strip()
     if not token:
         return fallback
-    normalized = _SAFE_SEGMENT_RE.sub("-", token).strip("-._")
-    return normalized or fallback
+    normalized = _SAFE_SEGMENT_RE.sub("-", token).strip("-._") or fallback
+    if len(normalized) <= TRACE_SEGMENT_LIMIT:
+        return normalized
+    digest = sha256(token.encode()).hexdigest()[:16]
+    prefix = normalized[: TRACE_SEGMENT_LIMIT - len(digest) - 1]
+    return f"{prefix}-{digest}"
 
 
 __all__ = [

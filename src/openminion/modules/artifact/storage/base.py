@@ -5,7 +5,12 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import BinaryIO
 
-from openminion.modules.artifact.models import AliasRecord, ArtifactMeta, ViewRecord
+from openminion.modules.artifact.models import (
+    AliasRecord,
+    ArtifactMeta,
+    ImageRef,
+    ViewRecord,
+)
 
 ArtifactFilters = dict[str, object] | None
 
@@ -37,6 +42,26 @@ class BlobStore(ABC):
 
 
 class ArtifactIndex(ABC):
+    @abstractmethod
+    def bind_image(self, image: ImageRef, session_id: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_image(self, image_ref: str, session_id: str) -> ImageRef | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def revoke_image(self, image_ref: str, session_id: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def revoke_session_images(self, session_id: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def revoke_images_for_blob(self, sha256: str) -> None:
+        raise NotImplementedError
+
     @abstractmethod
     def upsert_artifact(self, meta: ArtifactMeta) -> None:
         raise NotImplementedError

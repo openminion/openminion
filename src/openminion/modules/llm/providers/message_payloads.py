@@ -151,13 +151,30 @@ def _dedupe_thinking_blocks(
 def _extract_openai_like_thinking_blocks(message_payload: Any) -> list[dict[str, Any]]:
     if not isinstance(message_payload, Mapping):
         return []
-    reasoning_text = _extract_message_text(message_payload.get("reasoning"))
     blocks: list[dict[str, Any]] = []
-    block = _build_thinking_block(content=reasoning_text)
-    if block:
-        blocks.append(block)
+    for field in ("reasoning", "reasoning_content"):
+        block = _build_thinking_block(
+            content=_extract_message_text(message_payload.get(field))
+        )
+        if block:
+            blocks.append(block)
     blocks.extend(_extract_inline_think_blocks(message_payload.get("content")))
     return _dedupe_thinking_blocks(blocks)
+
+
+def _openai_like_assistant_messages(
+    text: str, tool_calls: list[ToolCall], message_payload: Mapping[str, Any]
+) -> list[Message]:
+    if not text and not tool_calls:
+        return []
+    reasoning_content = _extract_message_text(message_payload.get("reasoning_content"))
+    return [
+        Message(
+            role="assistant",
+            content=text,
+            meta={"reasoning_content": reasoning_content} if reasoning_content else {},
+        )
+    ]
 
 
 def _extract_ollama_thinking_blocks(message_payload: Any) -> list[dict[str, Any]]:
@@ -376,6 +393,7 @@ def _append_openai_like_message(
     supports_vision_input: bool,
     tool_name_overrides: Mapping[str, str] | None,
     preserve_tool_call_raw_arguments: bool,
+    preserve_reasoning_content: bool,
 ) -> list[ImageContentPart]:
     content = _openai_like_content(
         msg,
@@ -383,40 +401,47 @@ def _append_openai_like_message(
         supports_vision_input=supports_vision_input,
     )
     role = msg.role if msg.role in {"system", "user", "assistant", "tool"} else "user"
+    reasoning_content = (
+        str(msg.meta.get("reasoning_content") or "").strip()
+        if preserve_reasoning_content
+        else ""
+    )
     if role == "assistant" and msg.tool_calls:
-        messages.append(
-            {
-                "role": "assistant",
-                "content": content,
-                "tool_calls": [
-                    {
-                        "id": str(call.id or ""),
-                        "type": "function",
-                        "function": {
-                            "name": (
-                                str(
-                                    tool_name_overrides.get(call.name, call.name)
-                                ).strip()
-                                if tool_name_overrides
-                                else call.name
-                            ),
-                            "arguments": (
-                                call.raw_arguments
-                                if preserve_tool_call_raw_arguments
-                                and call.raw_arguments is not None
-                                else json.dumps(call.arguments, sort_keys=True)
-                            ),
-                        },
-                    }
-                    for call in msg.tool_calls
-                ],
-            }
-        )
+        assistant_message = {
+            "role": "assistant",
+            "content": content,
+            "tool_calls": [
+                {
+                    "id": str(call.id or ""),
+                    "type": "function",
+                    "function": {
+                        "name": (
+                            str(tool_name_overrides.get(call.name, call.name)).strip()
+                            if tool_name_overrides
+                            else call.name
+                        ),
+                        "arguments": (
+                            call.raw_arguments
+                            if preserve_tool_call_raw_arguments
+                            and call.raw_arguments is not None
+                            else json.dumps(call.arguments, sort_keys=True)
+                        ),
+                    },
+                }
+                for call in msg.tool_calls
+            ],
+        }
+        if reasoning_content:
+            assistant_message["reasoning_content"] = reasoning_content
+        messages.append(assistant_message)
         return []
     if isinstance(content, str) and not content:
         return []
     if role != "tool":
-        messages.append({"role": role, "content": content})
+        message_payload = {"role": role, "content": content}
+        if role == "assistant" and reasoning_content:
+            message_payload["reasoning_content"] = reasoning_content
+        messages.append(message_payload)
         return []
     _append_openai_like_tool_message(
         messages,
@@ -539,6 +564,7 @@ def _messages_openai_like(
     enable_vision_input: bool = False,
     supports_vision_input: bool = False,
     preserve_tool_call_raw_arguments: bool = False,
+    preserve_reasoning_content: bool = False,
 ) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = []
     schema_only = bool(request.tools) and is_schema_only_submit_output_tools(
@@ -568,6 +594,7 @@ def _messages_openai_like(
                 supports_vision_input=supports_vision_input,
                 tool_name_overrides=tool_name_overrides,
                 preserve_tool_call_raw_arguments=preserve_tool_call_raw_arguments,
+                preserve_reasoning_content=preserve_reasoning_content,
             )
         )
     if pending_tool_images:

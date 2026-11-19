@@ -10756,7 +10756,9 @@ def test_general_profile_forces_answer_only_finalization_after_tool_budget_denia
         for message in runtime.calls[-1]["messages"]
         if message.role == "system"
     )
-    assert "per-tool limit has been reached" in finalization_system_text
+    assert (
+        "No further tool calls are available in this turn." in finalization_system_text
+    )
     assert "write the best user-facing final answer now" in finalization_system_text
 
 
@@ -10963,6 +10965,10 @@ def test_engine_reserves_remaining_tokens_for_final_answer_after_tool_work() -> 
     assert runtime.calls[1]["tools"] == []
     assert runtime.calls[1]["tool_choice"] == "none"
     assert outcome.state.scratchpad["final_answer_token_reserve_used"] is True
+    assert loop_ctx.state.budgets_remaining.tool_calls > 0
+    prompt = "\n".join(str(message.content) for message in runtime.calls[1]["messages"])
+    assert "No further tool calls are available in this turn." in prompt
+    assert "The tool budget or a per-tool limit has been reached." not in prompt
 
 
 def test_budget_hint_injected_when_budget_below_threshold() -> None:

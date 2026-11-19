@@ -83,6 +83,9 @@ def stop_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         lambda *a, **k: DaemonEndpoint(config_path=CONFIG_PATH, host=HOST, port=PORT),
     )
     monkeypatch.setattr(daemon_cmd, "load_config", lambda path: object())
+    monkeypatch.setattr(
+        daemon_cmd, "probe_daemon_endpoint", lambda endpoint: ("unreachable", {})
+    )
     monkeypatch.setattr(daemon_mod, "resolve_daemon_pid_file", lambda *a, **k: pid_file)
     monkeypatch.setattr(
         daemon_mod,
@@ -283,7 +286,9 @@ def test_platform_python_launcher_of_this_installation_is_accepted(
     install, launcher = _framework_paths(tmp_path / "Python.framework", version)
     monkeypatch.setattr(daemon_cmd.sys, "executable", str(install))
     pid_file, state = stop_env
-    process = _install_process(state, _serve_argv(pid_file), exe=str(launcher))
+    argv = _serve_argv(pid_file)
+    argv[0] = str(launcher)
+    process = _install_process(state, argv, exe=str(launcher))
 
     assert daemon_cmd.daemon_stop(None) == 0
     assert process.terminated == 1

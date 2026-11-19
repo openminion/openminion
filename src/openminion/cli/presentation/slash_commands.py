@@ -300,6 +300,18 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
     SlashCommandMetadata(
         "/expand", "Expand one truncated tool block", ("/expand [block-number]",)
     ),
+    SlashCommandMetadata(
+        "/image",
+        "Select images for the next message",
+        (
+            "/image",
+            "/image add PATH",
+            "/image remove NUMBER",
+            "/image mode native CONNECTION MODEL",
+            "/image mode separate CONNECTION MODEL [describe|text]",
+            "/image mode off",
+        ),
+    ),
     SlashCommandMetadata("/export", "Show the transcript export command", ("/export",)),
     SlashCommandMetadata(
         "/editor",

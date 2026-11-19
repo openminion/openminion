@@ -178,6 +178,7 @@ def normalize_provider_response(
         finish_reason=finish_reason,
         normalization=normalization,
         thinking=thinking,
+        assistant_meta=dict(canonical_response.assistant_meta),
     )
 
 
@@ -247,6 +248,7 @@ def _coerce_provider_response(raw_response: ProviderResponse | Any) -> ProviderR
         finish_reason=str(getter("finish_reason", "") or ""),
         normalization=dict(normalization) if isinstance(normalization, dict) else {},
         thinking=_coerce_thinking_blocks(thinking),
+        assistant_meta=dict(getter("assistant_meta", {}) or {}),
     )
 
 

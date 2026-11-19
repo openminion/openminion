@@ -86,7 +86,7 @@ def _merge_system_segments(
     merged_system_segment_ids: dict[str, list[str]] = {}
     merged_system_refs: dict[str, list[str]] = {}
     for segment in ordered:
-        if not segment.content.strip():
+        if not segment.content.strip() and segment.image_input is None:
             continue
         if segment.role in {"user", "assistant", "tool"}:
             continue
@@ -140,7 +140,7 @@ def segments_to_messages(segments: list[ContextSegment]) -> list[RenderMessage]:
     result: list[RenderMessage] = []
     seen_buckets: set[str] = set()
     for segment in ordered:
-        if not segment.content.strip():
+        if not segment.content.strip() and segment.image_input is None:
             continue
         if segment.bucket in merged_system and segment.bucket not in seen_buckets:
             seen_buckets.add(segment.bucket)
@@ -171,6 +171,7 @@ def segments_to_messages(segments: list[ContextSegment]) -> list[RenderMessage]:
                 RenderMessage(
                     role=segment.role,  # type: ignore[arg-type]
                     content=segment.content,
+                    image_input=segment.image_input,
                     meta={
                         "block_kind": segment.bucket,
                         "cache_eligible": bool(segment.is_cacheable),

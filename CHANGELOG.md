@@ -1,7 +1,7 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-11-11
+Last updated: 2026-11-19
 
 This file tracks package-facing release notes for `openminion`.
 
@@ -10,6 +10,109 @@ This file tracks package-facing release notes for `openminion`.
 - Keep `file.read` continuation offsets and returned lengths aligned with the text
   delivered to the model when tool-message limits shorten a page, so following
   `next_offset` reads every character.
+
+- `prepare_transaction` and `send_transaction` now validate `eth.get_transaction_count(sender, "pending")`
+  at the chain-read boundary (`_pending_nonce`) so boolean, floating-point, `null`, negative,
+  or non-integer RPC nonce observations fail immediately with structured `RPC_UNAVAILABLE`
+  (`{"operation": "chain_read"}`) before gas estimation, simulation, or transaction submission,
+  while preserving valid zero and positive Web3 integer nonces, canonical decimal serialization,
+  persisted preparation digests, and one-time send authorization. (Refs #663)
+
+- The freshness classifier is skipped only for the explicit `tool <name>` request form. Verb phrasing — including
+  `use the time tool to get now`, which previously took the shortcut — is classified again, because punctuation or a
+  dotted token cannot distinguish a real invocation from prose such as `use file.read documentation to explain its
+  latest behavior`. (Refs #784)
+
+- The agent loop's stall rule now counts consecutive failures: a productive batch clears
+  the no-progress counter, so two intermittent failures spread across a turn no longer end it
+  while work is still getting done (Refs #679).
+
+
+## Current package line - 2026-11-17
+
+- The Playwright browser provider now creates its artifact directories (downloads,
+  screenshots, PDFs, traces) on the first `instance_start` instead of at construction,
+  so unused browser artifact directory creation no longer blocks runtime startup;
+  errors creating the required directories still surface on instance start, before
+  the browser launches, with the existing paths and containment check unchanged.
+  (Refs #769)
+
+- A turn whose accepted answer was truncated or filtered now reports the provider's
+  termination (`finish_reason: length`, `content_filter`, …) instead of an unconditional
+  `stop`, and keeps `stop` when the answer was replaced (Refs #602).
+
+
+- `openminion config diff <file>` shows what importing that file would change: per-leaf added, removed and changed values for the merge mode (or `--replace` for `config import --force`), with `--json` and exit code 1 when the config would differ, and no write in any case. The comparison is of the config the parser resolves (stored file plus environment overrides); credential values and URL passwords are redacted, so a secret-only change is reported without its value. (Refs #767)
+
+- Bare `openminion replay`, with no subcommand, now exits 2 with a usage line naming
+  `replay_command` instead of raising `AttributeError: 'Namespace' object has no attribute
+  'task_db'` from the group handler; the group requires one of `checkpoints`, `replay`,
+  `compare`, `rewind` or `branch`, and every existing subcommand invocation is unchanged.
+  (Refs #752)
+
+- `resolve_database_path` now treats a literal empty `storage.path` (`""`) like an
+  omitted value (`<data_root>/state/openminion.db`) instead of resolving to the
+  `data_root` directory and failing SQLite bootstrap, while keeping filenames
+  containing whitespace, explicit relative/absolute/`Path` values, and data-root
+  containment unchanged (Refs #766).
+
+- Configuration compatibility guidance now identifies accepted but inert
+  `self_improvement.max_applied_notes` and `self_improvement.min_token_overlap`
+  settings, explains the effective six-note context limit, and recommends leaving
+  both settings unset (Refs #779).
+
+## Current package line - 2026-11-15
+
+- MiniMax's OpenAI-compatible profile now targets MiniMax-M3.1-Flash and preserves
+  `reasoning_content` across provider normalization, tool rounds, and recovered tool
+  calls without changing reasoning behavior for other providers.
+
+- OpenAI-compatible providers now honor the configured maximum output-token cap while
+  preserving explicit per-request limits, so deployments can bound generated output
+  without overriding a caller's narrower request.
+
+- Brain finalization continues through the existing answer and quality-ratchet owners.
+  The experimental terminal read-result shortcut was removed after its frozen live
+  candidate failed the exact-output acceptance check.
+
+- `_tool_result_from_payload` now normalizes Pydantic `BaseModel` values across direct
+  results, nested collections, and `error.details` payloads with `model_dump(mode="json")`
+  so `ToolExecutionBatch.to_metadata_payload()` and tool-result summaries emit JSON
+  without altering tool-envelope fields or ordinary mapping-key serialization.
+
+- The README's Python `Agent` snippet now declares `lookup_order` as
+  `@tool(min_scope="READ_ONLY", idempotent=True)`, matching
+  `examples/sdk/tool_agent.py`: the bare `@tool` was classified as a write with
+  unknown reversibility, so under the default action policy the snippet ended at
+  a confirmation prompt instead of the answer. The `tool()` docstring and
+  `docs/runtime-surfaces.md` now describe how `min_scope`, `idempotent` and
+  `dangerous` map to approval; `tags` and `capabilities` do not declare risk.
+  Policy behavior is unchanged (Refs #745).
+
+- `docs/turn-budgets.md` now documents automatic fact extraction: the supported
+  top-level `brain.auto_fact_extraction` switch and its six defaults, model
+  selection from the effective agent profile, the auxiliary structured call it
+  adds when it runs, and the conditions that skip it. It also notes that an
+  `auto_fact_extraction` key under `agents.<id>` currently has no effect.
+  Behavior is unchanged (Refs #746).
+
+## Current package line - 2026-11-13
+
+- `examples/sdk/delegation.py --mode handoff --approval deny` now reports a denial only
+  when the run actually ended at the handoff confirmation; an ordinary answer with no
+  confirmation is printed unchanged, and the pause guidance is no longer shown after a
+  denial. Pause, allow_once and the approval callback are unchanged (Refs #526).
+
+- `build_delegate_tool` now dumps Pydantic `BaseModel` outputs from `Handoff` target
+  agents with `model_dump(mode="json")` so delegated structured results serialize cleanly
+  in `ToolExecutionBatch.to_metadata_payload()` while leaving non-model outputs and run
+  metadata unchanged.
+
+- `daemon start` now creates the `state/` and `logs/` parents under the storage
+  private-directory contract instead of the process umask: the startup owner made them
+  first at 0755, so the later storage helper preserved them and the daemon database and
+  its WAL stayed reachable through a world-readable directory. A caller-owned directory
+  keeps its own mode (Refs #618).
 
 - The published wheel and sdist now carry the approval criteria resources: the four
   `modules/brain/runtime/approval/criteria/*.md` files were present in the release tree

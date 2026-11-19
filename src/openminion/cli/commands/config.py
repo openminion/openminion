@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import copy
+import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
@@ -130,11 +132,22 @@ def _strip_secrets_in_place(
         secret_map_entry = bool(
             path and path[-1] in {"env", "headers"}
         ) and _is_sensitive_env_key(str(key))
-        if not credential_field and not secret_map_entry:
+        if credential_field or secret_map_entry:
+            env_name = _secret_env_name_for_path(
+                payload, key=str(key), path=current_path
+            )
+            comments.append(f"# {'.'.join(current_path)}: <stripped — set {env_name}>")
+            payload.pop(key, None)
             continue
-        env_name = _secret_env_name_for_path(payload, key=str(key), path=current_path)
-        comments.append(f"# {'.'.join(current_path)}: <stripped — set {env_name}>")
-        payload.pop(key, None)
+        if isinstance(value, str):
+            masked_value = re.sub(
+                r"(?<=://)[^/@:\s]+:[^/@\s]*@",
+                lambda match: match.group(0).split(":", 1)[0] + ":***@",
+                value,
+            )
+            if masked_value != value:
+                payload[key] = masked_value
+                comments.append(f"# {'.'.join(current_path)}: <URL credentials masked>")
 
 
 def _secret_env_name_for_path(
@@ -304,6 +317,184 @@ def config_import(args) -> int:
     return 0
 
 
+def _diff_leaves(
+    before: dict[str, object],
+    after: dict[str, object],
+    prefix: tuple[str, ...],
+    missing: object,
+) -> list[dict[str, object]]:
+    changes: list[dict[str, object]] = []
+    for key in sorted({str(k) for k in before} | {str(k) for k in after}):
+        path = prefix + (key,)
+        old = before.get(key, missing)
+        new = after.get(key, missing)
+        if isinstance(old, dict) and isinstance(new, dict):
+            changes.extend(_diff_leaves(old, new, path, missing))
+            continue
+        dotted = ".".join(path)
+        segments = list(path)
+        if old is missing:
+            changes.append(
+                {"path": dotted, "segments": segments, "kind": "added", "after": new}
+            )
+        elif new is missing:
+            changes.append(
+                {"path": dotted, "segments": segments, "kind": "removed", "before": old}
+            )
+        elif old != new:
+            changes.append(
+                {
+                    "path": dotted,
+                    "segments": segments,
+                    "kind": "changed",
+                    "before": old,
+                    "after": new,
+                }
+            )
+    return changes
+
+
+def _redacted_leaf(segments: list[str], value: object) -> object:
+    snippet: dict[str, object] = {}
+    cursor = snippet
+    for part in segments[:-1]:
+        child: dict[str, object] = {}
+        cursor[part] = child
+        cursor = child
+    cursor[segments[-1]] = copy.deepcopy(value)
+    _strip_secrets_in_place(snippet, comments=[], path=())
+    node: object = snippet
+    for part in segments:
+        if not isinstance(node, dict):
+            return "<redacted>"
+        node = node.get(part, "<redacted>")
+    return node
+
+
+def _display_change(change: dict[str, object]) -> dict[str, object]:
+    segments = cast("list[str]", change["segments"])
+    shown = {key: value for key, value in change.items() if key != "segments"}
+    hidden = False
+    for field in ("before", "after"):
+        if field in change:
+            redacted = _redacted_leaf(segments, change[field])
+            if redacted != change[field]:
+                hidden = True
+            shown[field] = redacted
+    if hidden:
+        shown["redacted"] = True
+    return shown
+
+
+def config_diff(args: argparse.Namespace) -> int:
+    roots = resolve_cli_roots(
+        config_path=args.config or None,
+        home_root=getattr(args, "home_root", None),
+        data_root=getattr(args, "data_root", None),
+    )
+    active_path = resolve_config_path(
+        getattr(args, "config", None),
+        home_root=roots.home_root,
+    )
+    candidate_path = resolve_config_import_path(
+        str(getattr(args, "input", "") or ""),
+        home_root=roots.home_root,
+    )
+    replace = bool(getattr(args, "replace", False))
+    active = load_cli_config(
+        str(active_path),
+        home_root=roots.home_root,
+        data_root=roots.data_root,
+    )
+    candidate = load_config_import(
+        candidate_path,
+        target_path=active_path,
+        home_root=roots.home_root,
+        data_root=roots.data_root,
+        merge_existing=not replace,
+    )
+    changes = [
+        _display_change(change)
+        for change in _diff_leaves(active.to_dict(), candidate.to_dict(), (), object())
+    ]
+    mode = "replace" if replace else "merge"
+    payload: dict[str, object] = {
+        "active": str(active_path),
+        "candidate": str(candidate_path),
+        "mode": mode,
+        "secret_values_redacted": True,
+        "env_overrides_applied": True,
+        "changed": len(changes),
+        "changes": changes,
+    }
+    if bool(getattr(args, "json", False)):
+        print_json_payload(payload)
+        return 0 if not changes else 1
+    footer = (
+        "Values are the ones the config parser resolves (stored file plus "
+        "environment overrides, so an env-overridden setting compares equal); "
+        "credential values and URL passwords are redacted, and a secret-only "
+        "change is reported without its values."
+    )
+    if not changes:
+        print(
+            f"No changes: importing {candidate_path} into {active_path} "
+            f"({mode}) would leave the resolved config identical."
+        )
+        print(footer)
+        return 0
+    print(
+        f"{len(changes)} change(s) if {candidate_path} is imported into "
+        f"{active_path} ({mode}):"
+    )
+    for change in changes:
+        if change["kind"] == "changed":
+            if change.get("redacted") and change["before"] == change["after"]:
+                print(f"  ~ {change['path']}: <redacted> (changed; value not shown)")
+            else:
+                print(
+                    f"  ~ {change['path']}: {change['before']!r} -> {change['after']!r}"
+                )
+        elif change["kind"] == "added":
+            print(f"  + {change['path']}: {change['after']!r}")
+        else:
+            print(f"  - {change['path']}: {change['before']!r}")
+    print(footer)
+    return 1
+
+
+def _register_diff(
+    subcommands: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    config_diff_cmd = subcommands.add_parser(
+        "diff",
+        help="Show what importing a config file would change, without writing",
+    )
+    config_diff_cmd.add_argument(
+        "input",
+        nargs="?",
+        default="",
+        help="Path to the YAML or JSON config file to compare against the active config",
+    )
+    config_diff_cmd.add_argument(
+        "--replace",
+        action="store_true",
+        help="Compare as `config import --force` would (replace instead of merge)",
+    )
+    config_diff_cmd.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a JSON payload instead of text",
+    )
+    config_diff_cmd.epilog = (
+        "Compares the config the parser resolves (stored file plus environment "
+        "overrides) with the config the import would store. Credential values and "
+        "URL passwords are redacted; a secret-only change is reported without its "
+        "values. Nothing is written. Exit 0 identical, 1 different."
+    )
+    config_diff_cmd.set_defaults(handler=config_diff, needs_app=False)
+
+
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     config = subparsers.add_parser("config", help="Config operations")
     config_subcommands = config.add_subparsers(dest="config_command")
@@ -392,3 +583,4 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         help="Overwrite config if it exists",
     )
     config_import_cmd.set_defaults(handler=config_import, needs_app=False)
+    _register_diff(config_subcommands)
