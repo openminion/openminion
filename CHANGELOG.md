@@ -7,6 +7,13 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Cached reads inside one adaptive loop are now dropped when a tool call could have changed the tree: a known
+  file writer invalidates by path containment (a cached read of `.` or `src` covers the files below it, and a
+  failed or timed-out write still counts, because a write can fail after touching the file), any other tool has
+  unknown reach and clears the cache, and only a pre-dispatch denial (`blocked`, `needs_user`) leaves it intact.
+  Paths are read from the tool schemas' own keys (`path`, `file_path`, `filename`, `destination`, `target`).
+  (Refs #783)
+
 - `prepare_transaction` and `send_transaction` now validate `eth.get_transaction_count(sender, "pending")`
   at the chain-read boundary (`_pending_nonce`) so boolean, floating-point, `null`, negative,
   or non-integer RPC nonce observations fail immediately with structured `RPC_UNAVAILABLE`
@@ -19,7 +26,6 @@ This file tracks package-facing release notes for `openminion`.
   are reused only when they are valid input keys for the model, and transformed
   values are retained without an extra validation pass (Refs #454).
 
-
 - The freshness classifier is skipped only for the explicit `tool <name>` request form. Verb phrasing — including
   `use the time tool to get now`, which previously took the shortcut — is classified again, because punctuation or a
   dotted token cannot distinguish a real invocation from prose such as `use file.read documentation to explain its
@@ -28,6 +34,14 @@ This file tracks package-facing release notes for `openminion`.
 - The agent loop's stall rule now counts consecutive failures: a productive batch clears
   the no-progress counter, so two intermittent failures spread across a turn no longer end it
   while work is still getting done (Refs #679).
+
+- Provider retries now respect a `Retry-After` hint (seconds or HTTP-date) on retryable
+  errors. A route is retried only after its hinted delay, and only when the turn has a
+  deadline with enough time left; otherwise the route's error is returned without
+  waiting, so an eligible configured fallback can run. The rule covers the inner retries
+  and the agent's entry retry loop, which no longer resends to a route before its hint.
+  Missing, malformed, zero or past hints keep the existing backoff, and attempt limits are
+  unchanged (Refs #717).
 
 
 ## Current package line - 2026-11-17
