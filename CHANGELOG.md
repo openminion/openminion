@@ -7,6 +7,9 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Preserve answers grounded in local dated sources for local-only exact-date
+  requests. Explicit live-data requests still require structured freshness evidence.
+
 - `prepare_transaction` and `send_transaction` now validate `eth.get_transaction_count(sender, "pending")`
   at the chain-read boundary (`_pending_nonce`) so boolean, floating-point, `null`, negative,
   or non-integer RPC nonce observations fail immediately with structured `RPC_UNAVAILABLE`
