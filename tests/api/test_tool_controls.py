@@ -740,7 +740,7 @@ def test_sdk_tool_nested_serialize_by_alias_config_preserves_input_keys(sdk_tool
     assert "VALUE 7" in result.text
 
 
-def test_sdk_tool_nested_serialize_by_alias_config_keeps_valid_alias_transform(sdk_tools):
+def test_sdk_tool_nested_serialize_alias_input_preserves_transform(sdk_tools):
     if not _SERIALIZE_BY_ALIAS_CONFIG:
         return
 
