@@ -200,7 +200,15 @@ def emit_pack_manifest_event(
         "pack_policy_used": manifest.pack_policy_used if manifest else "",
         "retrievers_used": manifest.retrievers_used if manifest else [],
         "compressors_used": manifest.compressors_used if manifest else [],
-        "identity_budget": {},
+        "identity_budget": (
+            {
+                "truncated": manifest.identity.budget_truncated,
+                "cap_tokens": manifest.identity.budget_cap_tokens,
+                "used_tokens": manifest.identity.budget_used_tokens,
+            }
+            if manifest
+            else {}
+        ),
     }
     token_budget_buckets = _token_budget_buckets_payload(report)
     if token_budget_buckets:

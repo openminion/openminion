@@ -18,6 +18,11 @@ class IdentityManifest(BaseModel):
     agent_id: str
     profile_version: str
     render_version: str
+    # Identity budget outcome for this pack (counts only, never the text): whether the
+    # rendered identity, which includes caller instructions, was cut to fit the budget.
+    budget_truncated: bool = False
+    budget_cap_tokens: int = 0
+    budget_used_tokens: int = 0
 
 
 class SessionManifest(BaseModel):
