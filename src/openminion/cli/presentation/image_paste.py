@@ -71,7 +71,7 @@ def store_image_bytes(
     *,
     data_root: Path,
     session_id: str,
-    turn_index: int,
+    name: str,
     format_hint: str | None = None,
 ) -> Path:
     fmt = format_hint or detect_image_bytes(data)
@@ -79,7 +79,7 @@ def store_image_bytes(
         raise ValueError("data does not look like a recognized image format")
     images_dir = Path(data_root) / "images" / str(session_id)
     images_dir.mkdir(parents=True, exist_ok=True)
-    target = images_dir / f"{int(turn_index)}.{fmt}"
+    target = images_dir / f"{name}.{fmt}"
     target.write_bytes(bytes(data))
     return target
 

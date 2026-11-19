@@ -30,12 +30,12 @@ load_config = load_cli_config_from_args
 def run_openminion(args: Any) -> int:
     message = _resolve_message(args)
     image_paths = list(getattr(args, "image", None) or [])
-    if not message and not image_paths:
-        raise RuntimeError("Provide a prompt, --file or --image.")
+    clipboard = bool(getattr(args, "image_clipboard", False))
+    if not message and not image_paths and not clipboard:
+        raise RuntimeError("Provide a prompt, --file, --image or --image-clipboard.")
     from openminion.cli.transport.images import read_selected_images
 
-    images = read_selected_images(image_paths)
-
+    images = read_selected_images(image_paths, include_clipboard=clipboard)
     config = _load_run_config(args)
     workspace_root = _resolve_workspace_root(args, config)
     if getattr(args, "config", None):
@@ -311,6 +311,11 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         default=[],
         metavar="PATH",
         help="Attach a PNG, JPEG or WebP image; repeat up to four times",
+    )
+    run.add_argument(
+        "--image-clipboard",
+        action="store_true",
+        help="Attach one PNG, JPEG or WebP image from the system clipboard",
     )
     run.add_argument("--stream", action="store_true", help="Use /v1/turn/stream")
     run.add_argument(

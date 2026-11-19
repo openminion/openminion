@@ -157,9 +157,7 @@ def test_store_image_bytes_writes_tempfile_with_correct_extension(
     tmp_path: Path,
 ) -> None:
     png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
-    target = store_image_bytes(
-        png, data_root=tmp_path, session_id="sess-1", turn_index=3
-    )
+    target = store_image_bytes(png, data_root=tmp_path, session_id="sess-1", name="3")
     assert target.exists()
     assert target.suffix == ".png"
     assert target.name == "3.png"
@@ -173,7 +171,7 @@ def test_store_image_bytes_uses_format_hint_when_detection_fails(
         b"arbitrary bytes",
         data_root=tmp_path,
         session_id="sess-2",
-        turn_index=1,
+        name="1",
         format_hint="png",
     )
     assert target.name == "1.png"
@@ -185,13 +183,13 @@ def test_store_image_bytes_raises_on_unknown_format(tmp_path: Path) -> None:
             b"not-an-image",
             data_root=tmp_path,
             session_id="sess-3",
-            turn_index=1,
+            name="1",
         )
 
 
 def test_store_image_bytes_creates_nested_directories(tmp_path: Path) -> None:
     nested = tmp_path / "deeply" / "nested" / "data"
     png = b"\x89PNG\r\n\x1a\n"
-    target = store_image_bytes(png, data_root=nested, session_id="sess-x", turn_index=0)
+    target = store_image_bytes(png, data_root=nested, session_id="sess-x", name="0")
     assert target.exists()
     assert (nested / "images" / "sess-x").is_dir()

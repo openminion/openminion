@@ -1,3 +1,4 @@
+from openminion.cli.interactive.terminal.shell.images import paste_clipboard_image
 from openminion.cli.transport.images import configure_images
 import asyncio
 from collections.abc import Callable
@@ -559,15 +560,19 @@ class _TerminalFocusLoop:
                 return None
             if text == "/image" or text.startswith("/image "):
                 try:
-                    self._push_system_message(
-                        configure_images(
+                    if text == "/image paste":
+                        message = paste_clipboard_image(
+                            self.runtime, self.composer, self.working_dir
+                        )
+                    elif text.startswith("/image mode "):
+                        message = configure_images(
                             self.runtime, text.removeprefix("/image mode ")
                         )
-                        if text.startswith("/image mode ")
-                        else self.composer.manage_images(
+                    else:
+                        message = self.composer.manage_images(
                             text, working_dir=self.working_dir
                         )
-                    )
+                    self._push_system_message(message)
                 except (ValueError, OSError) as exc:
                     self._push_system_message(str(exc))
                 self.start_read_task()
