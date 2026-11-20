@@ -309,12 +309,58 @@ def check_purge_soft_deleted(
     )
 
 
+def check_purge_expiry_instants(
+    target: Any, store: Any, sink: InMemoryMemoryAuditSink
+) -> None:
+    now = datetime.datetime.now(datetime.timezone.utc)
+    minus_12 = datetime.timezone(datetime.timedelta(hours=-12))
+    plus_14 = datetime.timezone(datetime.timedelta(hours=14))
+    cases = {
+        "future-neg": (now + datetime.timedelta(hours=4))
+        .astimezone(minus_12)
+        .isoformat(),
+        "past-pos": (now - datetime.timedelta(hours=4)).astimezone(plus_14).isoformat(),
+        "past-z": (now - datetime.timedelta(minutes=10))
+        .isoformat()
+        .replace("+00:00", "Z"),
+        "non-expiry": "!",
+        "invalid-date": "2020-02-30T00:00:00+00:00",
+        "invalid-clock": "2020-01-01T24:59:00+00:00",
+        "no-expiry": None,
+    }
+    for record_id, expires_at in cases.items():
+        store.put(
+            dataclasses.replace(_record(record_id), expires_at=expires_at),
+        )
+
+    result = purge_soft_deleted(target)
+
+    present = {record_id: store.get(record_id) is not None for record_id in cases}
+    _check(
+        (result.deleted_records, present, sink.events),
+        (
+            2,
+            {
+                "future-neg": True,
+                "past-pos": False,
+                "past-z": False,
+                "non-expiry": True,
+                "invalid-date": True,
+                "invalid-clock": True,
+                "no-expiry": True,
+            },
+            [],
+        ),
+    )
+
+
 RETENTION_SCENARIOS = (
     pytest.param(check_confidence_decay, id="decay"),
     pytest.param(check_summary_compression, id="summaries"),
     pytest.param(check_scope_capacity, id="capacity"),
     pytest.param(check_stale_insight_eviction, id="insights"),
     pytest.param(check_purge_soft_deleted, id="purge"),
+    pytest.param(check_purge_expiry_instants, id="purge_expiry"),
 )
 
 

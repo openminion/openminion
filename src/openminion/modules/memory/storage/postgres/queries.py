@@ -38,7 +38,7 @@ _EXPIRY_INSTANT = (
     r"(Z|[+-](0[0-9]:[0-5][0-9]|1[0-3]:[0-5][0-9]|14:00))?"
 )
 _EXPIRY_OFFSET = r"(Z|[+-][0-9]{2}:[0-9]{2})$"
-_EXPIRY_CLAUSE = (
+EXPIRY_CLAUSE = (
     "(expires_at IS NULL OR CASE WHEN expires_at ~ '^" + _EXPIRY_INSTANT + "$'"
     " THEN CAST(expires_at || CASE WHEN expires_at ~ '" + _EXPIRY_OFFSET + "'"
     " THEN '' ELSE 'Z' END AS timestamptz)"
@@ -57,7 +57,7 @@ def _active_record_clause(*, include_invalidated: bool) -> list[str]:
         # Expiry is enforced on read as well as by the purge run, and compared as an
         # instant so a stored offset cannot change readability. A value that is not a
         # calendar-valid instant is not an expiry, so the record stays visible.
-        clauses.append(_EXPIRY_CLAUSE)
+        clauses.append(EXPIRY_CLAUSE)
     return clauses
 
 
@@ -242,7 +242,7 @@ def retrieve_by_entities(
          WHERE r.is_deleted = FALSE
            AND (r.valid_to IS NULL OR r.valid_to > :query_now)
         """
-        + f"AND {_EXPIRY_CLAUSE}",
+        + f"AND {EXPIRY_CLAUSE}",
         f"AND e.entity IN ({entities_sql})",
         f"AND r.scope IN ({scopes_sql})",
     ]
@@ -266,6 +266,7 @@ def retrieve_by_entities(
 
 
 __all__ = [
+    "EXPIRY_CLAUSE",
     "_tsquery_candidates",
     "get",
     "list_records",
