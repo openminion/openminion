@@ -82,6 +82,17 @@ This file tracks package-facing release notes for `openminion`.
   Missing, malformed, zero or past hints keep the existing backoff, and attempt limits are
   unchanged (Refs #717).
 
+- `action_result_to_tool_message` now attaches bounded `truncation` metadata (`field_count`,
+  capped per-field `kept`/`total` bounds across string, sequence, mapping and depth limits, plus
+  canonical CAS `artifact_refs` or `file_module` `path` reference hints when present on the
+  result) to serialized tool messages whenever compaction truncates `summary`, `outputs`,
+  `error.message` or `error.details`. Untruncated ordinary, error, approval and file-path
+  screenshot payloads remain unchanged; truncated error or approval payloads record the same
+  bounded `truncation` facts while keeping `tool_status` and `tool_error` intact; browser
+  screenshots keep their separate `ImageContentPart` vision attachment path; and any attached
+  `artifact_refs` or `path` values are reference hints only rather than a guarantee of later
+  retrieval. (Refs #790)
+
 - `AgentOutputValidationError` now reports why a recovered JSON object failed: when a reply
   wraps a JSON object in prose and that object fails schema validation, the error carries that
   object's `ValidationError` (for example the missing field) instead of the raw text's
