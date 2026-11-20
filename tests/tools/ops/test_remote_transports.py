@@ -3,9 +3,13 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+import yaml
 from pydantic import ValidationError
 
+from openminion.modules.policy.models import PolicyConfig
+from openminion.modules.policy.runtime.service import PolicyCtl
 from openminion.modules.runtime.credentials import resolve_credential_ref
+from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.tools.ops.contracts import (
     KubernetesTarget,
     OperationRequest,
@@ -13,7 +17,10 @@ from openminion.tools.ops.contracts import (
     SsmTarget,
     WinrmTarget,
 )
+from openminion.tools.ops.jobs import OperationJobStore
 from openminion.tools.ops.profiles import build_argv
+from openminion.tools.ops.registry import TargetRegistry
+from openminion.tools.ops.service import OpsService
 from openminion.tools.ops.transports import (
     KubernetesTransport,
     SsmTransport,
@@ -299,6 +306,366 @@ def test_kubernetes_transport_reports_timeout_and_closes_stream() -> None:
 
     assert result.return_code == 124
     assert result.timed_out is True
+    assert response.closed is True
+
+
+class _StatusChannelResponse:
+    def __init__(
+        self,
+        error_channel: str,
+        *,
+        stdout: str = "",
+        stderr: str = "",
+    ) -> None:
+        self._error_channel = error_channel
+        self._stdout = stdout
+        self._stderr = stderr
+        self._returncode: int | None = None
+        self.closed = False
+
+    def run_forever(self, timeout: float) -> None:
+        del timeout
+
+    def is_open(self) -> bool:
+        return False
+
+    def read_stdout(self) -> str:
+        return self._stdout
+
+    def read_stderr(self) -> str:
+        return self._stderr
+
+    @property
+    def returncode(self) -> int | None:
+        if self._returncode is None:
+            parsed = yaml.safe_load(self._error_channel)
+            if parsed["status"] == "Success":
+                self._returncode = 0
+            else:
+                self._returncode = int(parsed["details"]["causes"][0]["message"])
+        return self._returncode
+
+    def close(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.parametrize(
+    ("error_channel", "expected_code"),
+    [
+        ('{"status": "Success"}', 0),
+        (
+            '{"status": "Failure", "details": {"causes": [{"reason": "ExitCode", "message": "7"}]}}',
+            7,
+        ),
+    ],
+)
+def test_kubernetes_transport_preserves_zero_and_nonzero_status_exits(
+    error_channel: str,
+    expected_code: int,
+) -> None:
+    class Client:
+        connect_get_namespaced_pod_exec = object()
+
+    response = _StatusChannelResponse(error_channel, stdout="done\n")
+    target = _target(
+        {
+            "target_id": "pod",
+            "kind": "kubernetes",
+            "credential_ref": _credential(),
+            "context": "staging",
+            "namespace": "agents",
+            "pod": "worker-0",
+        }
+    )
+    transport = KubernetesTransport(
+        lambda _ref: "/tmp/kubeconfig",
+        client_factory=lambda _target, _path: Client(),
+        stream_call=lambda *_args, **_kwargs: response,
+    )
+
+    result = transport.run(
+        target,
+        ("printf", "done"),
+        timeout_seconds=3,
+        operation_id="op-ok",
+    )
+
+    assert result.return_code == expected_code
+    assert result.stdout == "done\n"
+    assert result.timed_out is False
+    assert response.closed is True
+    assert transport._active == {}
+
+
+@pytest.mark.parametrize(
+    ("error_channel", "expected_cause"),
+    [
+        ("", TypeError),
+        (": [\n", yaml.YAMLError),
+        ('{"status": "Failure"}', KeyError),
+        ('{"status": "Failure", "details": {"causes": []}}', IndexError),
+        (
+            '{"status": "Failure", "details": {"causes": [{"message": "container-gone"}]}}',
+            ValueError,
+        ),
+    ],
+)
+def test_kubernetes_transport_rejects_missing_or_malformed_status_channel(
+    error_channel: str,
+    expected_cause: type[BaseException],
+) -> None:
+    class Client:
+        connect_get_namespaced_pod_exec = object()
+
+    response = _StatusChannelResponse(error_channel, stdout="partial")
+    sink_chunks: list[tuple[str, str]] = []
+    target = _target(
+        {
+            "target_id": "pod",
+            "kind": "kubernetes",
+            "credential_ref": _credential(),
+            "context": "staging",
+            "namespace": "agents",
+            "pod": "worker-0",
+        }
+    )
+    transport = KubernetesTransport(
+        lambda _ref: "/tmp/kubeconfig",
+        client_factory=lambda _target, _path: Client(),
+        stream_call=lambda *_args, **_kwargs: response,
+    )
+
+    with pytest.raises(
+        RuntimeError, match="Kubernetes exec terminal status invalid:"
+    ) as exc_info:
+        transport.run(
+            target,
+            ("printf", "partial"),
+            timeout_seconds=3,
+            operation_id="op-missing-status",
+            output_sink=lambda stream, chunk: sink_chunks.append((stream, chunk)),
+        )
+
+    assert isinstance(exc_info.value.__cause__, expected_cause)
+    assert response.closed is True
+    assert transport._active == {}
+    assert sink_chunks == []
+
+
+@pytest.mark.parametrize(
+    ("raw_returncode", "expected_detail"),
+    [
+        (None, "missing"),
+        (False, "bool"),
+        (True, "bool"),
+        ("0", "str"),
+    ],
+)
+def test_kubernetes_transport_does_not_invent_exit_code_for_invalid_returncode(
+    raw_returncode: Any,
+    expected_detail: str,
+) -> None:
+    class Client:
+        connect_get_namespaced_pod_exec = object()
+
+    class Response:
+        returncode = raw_returncode
+        closed = False
+
+        def run_forever(self, timeout: float) -> None:
+            del timeout
+
+        def is_open(self) -> bool:
+            return False
+
+        def read_stdout(self) -> str:
+            return "out"
+
+        def read_stderr(self) -> str:
+            return ""
+
+        def close(self) -> None:
+            self.closed = True
+
+    response = Response()
+    target = _target(
+        {
+            "target_id": "pod",
+            "kind": "kubernetes",
+            "credential_ref": _credential(),
+            "context": "staging",
+            "namespace": "agents",
+            "pod": "worker-0",
+        }
+    )
+    transport = KubernetesTransport(
+        lambda _ref: "/tmp/kubeconfig",
+        client_factory=lambda _target, _path: Client(),
+        stream_call=lambda *_args, **_kwargs: response,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=f"Kubernetes exec terminal status invalid: {expected_detail}",
+    ):
+        transport.run(target, ("true",), timeout_seconds=3, operation_id="op-none")
+
+    assert response.closed is True
+    assert transport._active == {}
+
+
+def test_kubernetes_missing_exit_status_finishes_dispatched_plan_attempt_once(
+    tmp_path,
+) -> None:
+    class Client:
+        connect_get_namespaced_pod_exec = object()
+
+    dispatched: list[_StatusChannelResponse] = []
+
+    def stream_call(*_args: object, **_kwargs: object) -> _StatusChannelResponse:
+        response = _StatusChannelResponse("", stdout="before-drop")
+        dispatched.append(response)
+        return response
+
+    target = _target(
+        {
+            "target_id": "pod",
+            "kind": "kubernetes",
+            "environment": "staging",
+            "credential_ref": _credential(),
+            "context": "staging",
+            "namespace": "agents",
+            "pod": "worker-0",
+        }
+    )
+    transport = KubernetesTransport(
+        lambda _ref: "/tmp/kubeconfig",
+        client_factory=lambda _target, _path: Client(),
+        stream_call=stream_call,
+    )
+    service = OpsService(
+        targets=TargetRegistry((target,)),
+        transports={"kubernetes": transport},
+        jobs=OperationJobStore(tmp_path / "jobs.db"),
+        action_policy=PolicyCtl.with_sqlite(
+            tmp_path / "policy.db", config=PolicyConfig(mode="enforce")
+        ),
+    )
+    plan = service.plan_command(
+        target_id="pod",
+        argv=("printf", "hello"),
+        session_id="session-k8s",
+    )
+
+    with pytest.raises(ToolRuntimeError, match="confirmation") as pending:
+        service.run_plan(
+            plan_id=plan.plan_id,
+            plan_hash=plan.plan_hash,
+            session_id="session-k8s",
+        )
+    assert dispatched == []
+
+    approval_id = str(pending.value.details["approval_id"])
+    service.action_policy.resolve_confirmation(approval_id, "allow_once")
+
+    job = service.run_plan(
+        plan_id=plan.plan_id,
+        plan_hash=plan.plan_hash,
+        session_id="session-k8s",
+    )
+    repeated = service.run_plan(
+        plan_id=plan.plan_id,
+        plan_hash=plan.plan_hash,
+        session_id="session-k8s",
+    )
+    persisted = service.inspect_job(job.job_id)
+    service.close()
+
+    assert len(dispatched) == 1
+    assert dispatched[0].closed is True
+    assert transport._active == {}
+    assert job.status == "failed"
+    assert job.attempt_phase == "terminal"
+    assert job.claim_token == ""
+    assert job.remote_outcome == "unknown"
+    assert job.evidence_id == ""
+    assert job.error == "Kubernetes exec terminal status invalid: TypeError"
+    assert repeated.job_id == job.job_id
+    assert persisted == job
+
+
+@pytest.mark.parametrize(
+    ("error_channel", "expected_status", "expected_code"),
+    [
+        ('{"status": "Success"}', "succeeded", 0),
+        (
+            '{"status": "Failure", "details": {"causes": [{"reason": "ExitCode", "message": "7"}]}}',
+            "failed",
+            7,
+        ),
+    ],
+)
+def test_kubernetes_plan_execution_records_zero_and_nonzero_exits(
+    tmp_path,
+    error_channel: str,
+    expected_status: str,
+    expected_code: int,
+) -> None:
+    class Client:
+        connect_get_namespaced_pod_exec = object()
+
+    response = _StatusChannelResponse(error_channel, stdout="observed\n")
+    target = _target(
+        {
+            "target_id": "pod",
+            "kind": "kubernetes",
+            "environment": "staging",
+            "credential_ref": _credential(),
+            "context": "staging",
+            "namespace": "agents",
+            "pod": "worker-0",
+        }
+    )
+    transport = KubernetesTransport(
+        lambda _ref: "/tmp/kubeconfig",
+        client_factory=lambda _target, _path: Client(),
+        stream_call=lambda *_args, **_kwargs: response,
+    )
+    service = OpsService(
+        targets=TargetRegistry((target,)),
+        transports={"kubernetes": transport},
+        jobs=OperationJobStore(tmp_path / "jobs.db"),
+        action_policy=PolicyCtl.with_sqlite(
+            tmp_path / "policy.db", config=PolicyConfig(mode="enforce")
+        ),
+    )
+    plan = service.plan_command(
+        target_id="pod",
+        argv=("printf", "observed"),
+        session_id="session-k8s",
+    )
+    with pytest.raises(ToolRuntimeError) as pending:
+        service.run_plan(
+            plan_id=plan.plan_id,
+            plan_hash=plan.plan_hash,
+            session_id="session-k8s",
+        )
+    service.action_policy.resolve_confirmation(
+        str(pending.value.details["approval_id"]), "allow_once"
+    )
+
+    job = service.run_plan(
+        plan_id=plan.plan_id,
+        plan_hash=plan.plan_hash,
+        session_id="session-k8s",
+    )
+    evidence = service.inspect_evidence(job.evidence_id)
+    service.close()
+
+    assert job.status == expected_status
+    assert job.attempt_phase == "terminal"
+    assert job.remote_outcome == "exit_observed"
+    assert evidence.return_code == expected_code
     assert response.closed is True
 
 
