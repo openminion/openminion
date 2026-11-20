@@ -7,6 +7,15 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- The shared `PromptBlockKind` literal now includes `self_awareness` and `memory`,
+  `segments_to_messages` merges `cache_invalidation_refs` across combined system
+  segments in a bucket, and brain runtime context assembly forwards `self_awareness`
+  hints to the context service without dropping them, so rendered `self_awareness`
+  and `memory` system segments pass LLM request adaptation and `Agent.run` before
+  the final user `turn_input` while keeping bucket ordering, roles, cache/provenance
+  metadata, secret redaction, and budget caps intact (Refs #483).
+
+
 - Memory retrieval honours `expires_at`: search, listing and entity lookups skip expired
   records instead of serving them until someone runs `memory gc`, on both SQLite and
   PostgreSQL. Expiry is compared as an instant, so a stored offset does not by itself change

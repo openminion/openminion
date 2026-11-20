@@ -80,11 +80,13 @@ def _merge_system_segments(
     dict[str, dict[str, Any]],
     dict[str, list[str]],
     dict[str, list[str]],
+    dict[str, list[str]],
 ]:
     merged_system: dict[str, list[str]] = {}
     merged_system_cache_control: dict[str, dict[str, Any]] = {}
     merged_system_segment_ids: dict[str, list[str]] = {}
     merged_system_refs: dict[str, list[str]] = {}
+    merged_system_invalidation_refs: dict[str, list[str]] = {}
     for segment in ordered:
         if not segment.content.strip() and segment.image_input is None:
             continue
@@ -98,6 +100,12 @@ def _merge_system_segments(
         for ref in segment.refs:
             if ref not in refs:
                 refs.append(ref)
+        invalidation_refs = merged_system_invalidation_refs.setdefault(
+            segment.bucket, []
+        )
+        for ref in segment.cache_invalidation_refs:
+            if ref not in invalidation_refs:
+                invalidation_refs.append(ref)
         if segment.is_cacheable:
             merged_system_cache_control.setdefault(
                 segment.bucket, {"type": "ephemeral"}
@@ -107,6 +115,7 @@ def _merge_system_segments(
         merged_system_cache_control,
         merged_system_segment_ids,
         merged_system_refs,
+        merged_system_invalidation_refs,
     )
 
 
@@ -135,6 +144,7 @@ def segments_to_messages(segments: list[ContextSegment]) -> list[RenderMessage]:
         merged_system_cache_control,
         merged_system_segment_ids,
         merged_system_refs,
+        merged_system_invalidation_refs,
     ) = _merge_system_segments(ordered)
 
     result: list[RenderMessage] = []
@@ -159,6 +169,9 @@ def segments_to_messages(segments: list[ContextSegment]) -> list[RenderMessage]:
                         ),
                         "refs": list(merged_system_refs.get(segment.bucket, [])),
                         **segment_render_cache_metadata(segment),
+                        "cache_invalidation_refs": list(
+                            merged_system_invalidation_refs.get(segment.bucket, [])
+                        ),
                     },
                 )
             )
