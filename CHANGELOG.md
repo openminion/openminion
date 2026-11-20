@@ -35,6 +35,13 @@ This file tracks package-facing release notes for `openminion`.
   Paths are read from the tool schemas' own keys (`path`, `file_path`, `filename`, `destination`, `target`).
   (Refs #783)
 
+- `BlobStoreFS._resolve_path` now resolves digest strings via `_owned_payload_paths`, so
+  `exists`, `open`, `stat`, `verify`, and `path_for` ignore unrelated shard files that
+  merely share a digest prefix (such as `<digest>backup` or `<digest>-backup`) both
+  before and after `delete`, while preserving legacy owned siblings, caller-owned
+  `BlobRef` paths, shard-local lookup/deletion, and first-write metadata idempotency.
+  (Refs #484)
+
 - `prepare_transaction` and `send_transaction` now validate `eth.get_transaction_count(sender, "pending")`
   at the chain-read boundary (`_pending_nonce`) so boolean, floating-point, `null`, negative,
   or non-integer RPC nonce observations fail immediately with structured `RPC_UNAVAILABLE`

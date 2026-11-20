@@ -3,7 +3,11 @@ import json
 import os
 import time
 
+import pytest
+
+from openminion.modules.artifact.storage.fs_cas import FileSystemCASBlobStore
 from openminion.modules.storage.backends.blob_store import BlobStoreFS
+from openminion.modules.storage.models import BlobRef
 
 
 def _payload_dir(tmp_path, digest):
@@ -305,3 +309,90 @@ def test_put_file_repeat_preserves_first_write_metadata(tmp_path):
     meta = json.loads(sidecar.read_text(encoding="utf-8"))
     assert meta["created_at"] == ref1.created_at
     assert meta["meta"] == {"note": "first"}
+
+
+def test_digest_lookup_ignores_unrelated_prefix_files_before_and_after_delete(tmp_path):
+    store = BlobStoreFS(tmp_path)
+    data = b"hello world"
+    ref = store.put_bytes(data, media_type="text/plain", ext="txt")
+    digest = ref.hash
+    payload_dir = _payload_dir(tmp_path, digest)
+    unrelated_suffix = payload_dir / f"{digest}backup"
+    unrelated_hyphen = payload_dir / f"{digest}-backup"
+    unrelated_suffix.write_bytes(b"unrelated-suffix")
+    unrelated_hyphen.write_bytes(b"unrelated-hyphen")
+
+    assert store.exists(digest) is True
+    with store.open(digest) as fh:
+        assert fh.read() == data
+    assert store.stat(digest)["path"] == str(payload_dir / f"{digest}.txt")
+    assert store.verify(digest)["matches"] is True
+    assert store.path_for(digest) == str(payload_dir / f"{digest}.txt")
+
+    store.delete(digest)
+
+    assert not (payload_dir / f"{digest}.txt").exists()
+    assert not (payload_dir / f"{digest}.meta.json").exists()
+    assert unrelated_suffix.read_bytes() == b"unrelated-suffix"
+    assert unrelated_hyphen.read_bytes() == b"unrelated-hyphen"
+    assert store.exists(digest) is False
+    assert store.path_for(digest) == str(payload_dir / digest)
+    with pytest.raises(FileNotFoundError):
+        store.open(digest)
+    with pytest.raises(FileNotFoundError):
+        store.stat(digest)
+    with pytest.raises(FileNotFoundError):
+        store.verify(digest)
+
+
+def test_artifact_cas_consumer_ignores_unrelated_prefix_file_after_delete(tmp_path):
+    cas = FileSystemCASBlobStore(tmp_path)
+    data = b"cas payload"
+    digest = hashlib.sha256(data).hexdigest()
+    cas.put_bytes(digest, data)
+    unrelated = _payload_dir(tmp_path, digest) / f"{digest}backup"
+    unrelated.write_bytes(b"foreign")
+
+    cas.delete(digest)
+
+    assert unrelated.read_bytes() == b"foreign"
+    assert cas.exists(digest) is False
+    with pytest.raises(FileNotFoundError):
+        cas.get_stream(digest)
+
+
+def test_caller_owned_blob_ref_and_shard_local_lookup(tmp_path):
+    store_root = tmp_path / "store"
+    store = BlobStoreFS(store_root)
+    caller_file = tmp_path / "caller" / "external.bin"
+    caller_file.parent.mkdir(parents=True, exist_ok=True)
+    data = b"external payload"
+    caller_file.write_bytes(data)
+    digest = hashlib.sha256(data).hexdigest()
+    caller_ref = BlobRef(
+        algo="sha256",
+        hash=digest,
+        path=str(caller_file),
+        size=len(data),
+        media_type="application/octet-stream",
+        created_at="2026-01-01T00:00:00Z",
+    )
+
+    assert store.exists(caller_ref) is True
+    with store.open(caller_ref) as fh:
+        assert fh.read() == data
+    assert store.stat(caller_ref)["path"] == str(caller_file)
+
+    stored = store.put_bytes(b"shard local", media_type="text/plain", ext="txt")
+    foreign_prefix = "00" if stored.hash[:2] != "00" else "ff"
+    foreign_shard = store.blob_root / foreign_prefix
+    foreign_shard.mkdir(parents=True, exist_ok=True)
+    foreign_shard.chmod(0o000)
+    try:
+        assert store.exists(stored.hash) is True
+        with store.open(stored.hash) as fh:
+            assert fh.read() == b"shard local"
+        store.delete(stored.hash)
+        assert store.exists(stored.hash) is False
+    finally:
+        foreign_shard.chmod(0o700)
