@@ -53,6 +53,12 @@ This file tracks package-facing release notes for `openminion`.
   Missing, malformed, zero or past hints keep the existing backoff, and attempt limits are
   unchanged (Refs #717).
 
+- `AgentOutputValidationError` now reports why a recovered JSON object failed: when a reply
+  wraps a JSON object in prose and that object fails schema validation, the error carries that
+  object's `ValidationError` (for example the missing field) instead of the raw text's
+  `json_invalid` error. Non-JSON replies keep their parse error, and `raw_text` is unchanged
+  (Refs #803).
+
 
 ## Current package line - 2026-11-17
 
