@@ -200,13 +200,14 @@ def emit_pack_manifest_event(
         "pack_policy_used": manifest.pack_policy_used if manifest else "",
         "retrievers_used": manifest.retrievers_used if manifest else [],
         "compressors_used": manifest.compressors_used if manifest else [],
+        # Context-budget stage estimates for the identity; {} when the manifest predates them.
         "identity_budget": (
             {
                 "truncated": manifest.identity.budget_truncated,
                 "cap_tokens": manifest.identity.budget_cap_tokens,
                 "used_tokens": manifest.identity.budget_used_tokens,
             }
-            if manifest
+            if manifest and manifest.identity.budget_truncated is not None
             else {}
         ),
     }

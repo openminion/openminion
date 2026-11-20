@@ -484,9 +484,9 @@ def _build_context_manifest(
             agent_id=request.agent_id,
             profile_version=identity.profile_version,
             render_version=identity.render_version,
-            budget_truncated=bool(identity_budget.truncated),
-            budget_cap_tokens=int(identity_budget.cap_tokens),
-            budget_used_tokens=int(identity_budget.used_tokens),
+            budget_truncated=identity_budget.truncated,
+            budget_cap_tokens=identity_budget.cap_tokens,
+            budget_used_tokens=identity_budget.used_tokens,
         ),
         session=SessionManifest(
             slice_version=session_slice.slice_version,
