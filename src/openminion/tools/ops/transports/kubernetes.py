@@ -4,6 +4,8 @@ import threading
 from collections.abc import Callable, Mapping
 from typing import Any, Protocol, cast
 
+import yaml
+
 from ..contracts import (
     KubernetesTarget,
     OperationTarget,
@@ -104,6 +106,8 @@ class KubernetesTransport:
             stderr, stderr_cut = bounded(response.read_stderr())
         except (OSError, RuntimeError, ValueError) as exc:
             raise RuntimeError(f"Kubernetes exec failed: {type(exc).__name__}") from exc
+        else:
+            return_code = 124 if timed_out else _read_return_code(response)
         finally:
             if operation_id:
                 with self._lock:
@@ -116,7 +120,7 @@ class KubernetesTransport:
                 output_sink("stderr", stderr)
         return TransportResult(
             argv=argv,
-            return_code=124 if timed_out else int(response.returncode or 0),
+            return_code=return_code,
             stdout=stdout,
             stderr=stderr,
             timed_out=timed_out,
@@ -230,6 +234,27 @@ class KubernetesTransport:
 
 
 __all__ = ["KubernetesTransport"]
+
+
+def _read_return_code(response: ExecResponse) -> int:
+    try:
+        return_code = response.returncode
+    except (
+        IndexError,
+        KeyError,
+        OSError,
+        RuntimeError,
+        TypeError,
+        ValueError,
+        yaml.YAMLError,
+    ) as exc:
+        raise RuntimeError(
+            f"Kubernetes exec terminal status invalid: {type(exc).__name__}"
+        ) from exc
+    if isinstance(return_code, bool) or not isinstance(return_code, int):
+        detail = "missing" if return_code is None else type(return_code).__name__
+        raise RuntimeError(f"Kubernetes exec terminal status invalid: {detail}")
+    return return_code
 
 
 def _workload_readers(core: Any, apps: Any, kind: str) -> tuple[Any, Any]:

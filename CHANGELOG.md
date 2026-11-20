@@ -18,6 +18,13 @@ This file tracks package-facing release notes for `openminion`.
   `state="denied"`; each fact is read and compared on its own, so a non-string value falls back to
   `error` instead of raising, and the legacy reason-code/error-code branches are unchanged (Refs #639).
 
+- `KubernetesTransport.run` now validates the closed exec stream's terminal `returncode`
+  at the result-read boundary and raises a chained `RuntimeError` when the status frame
+  is missing or malformed instead of inventing exit code `0` or letting `WSClient`
+  parsing errors (`TypeError`, `KeyError`, `IndexError`, `ValueError`, `yaml.YAMLError`)
+  escape an active `OpsService` attempt unfinished (`remote_outcome="unknown"`).
+  (Refs #654)
+
 
 - The turn's tool-result projection now records a security event only for a real policy decision:
   it keeps the producer's `blocked_kind`/`denial_source`, recognises the concrete legacy decision
