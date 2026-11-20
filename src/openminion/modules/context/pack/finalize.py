@@ -727,7 +727,6 @@ def finalize_context_pack(
         segments=segments,
         prompt_tool_schemas=prompt_tool_schemas,
     )
-    messages = segments_to_messages_fn(segments)
     included = _included_pack_items(
         segments=segments,
         decision_log=decision_log,
@@ -792,7 +791,7 @@ def finalize_context_pack(
             agent_id=request.agent_id,
             purpose=request.purpose,
             segments=segments,
-            messages=messages,
+            messages=segments_to_messages_fn(segments),
             profile_version=identity.profile_version,
             render_version=identity.render_version,
             slice_version=session_slice.slice_version,

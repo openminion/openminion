@@ -18,11 +18,8 @@ class IdentityManifest(BaseModel):
     agent_id: str
     profile_version: str
     render_version: str
-    # Outcome of the context-budget stage for the rendered identity (which includes caller
-    # instructions), as that stage's own token estimates; counts only, never the text.
-    # Not the identity renderer's earlier cut, nor the size of the final request.
-    # None means "not measured" (manifests written before these fields existed), so a
-    # missing observation is never reported as an untruncated one.
+    # Context-budget stage estimates for the rendered identity (counts, never text).
+    # None = not measured (older manifests), never "untruncated".
     budget_truncated: bool | None = None
     budget_cap_tokens: int | None = None
     budget_used_tokens: int | None = None
