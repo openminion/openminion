@@ -200,12 +200,12 @@ def emit_pack_manifest_event(
         "pack_policy_used": manifest.pack_policy_used if manifest else "",
         "retrievers_used": manifest.retrievers_used if manifest else [],
         "compressors_used": manifest.compressors_used if manifest else [],
-        "identity_budget": {
-            key: getattr(manifest.identity, f"budget_{key}")
-            for key in ("truncated", "cap_tokens", "used_tokens")
-            if manifest and manifest.identity.budget_truncated is not None
-        },
+        "identity_budget": {},
     }
+    if manifest and (identity := manifest.identity).budget_truncated is not None:
+        payload["identity_budget"] = {"truncated": identity.budget_truncated}
+        payload["identity_budget"]["cap_tokens"] = identity.budget_cap_tokens
+        payload["identity_budget"]["used_tokens"] = identity.budget_used_tokens
     token_budget_buckets = _token_budget_buckets_payload(report)
     if token_budget_buckets:
         payload["token_budget_buckets"] = token_budget_buckets
