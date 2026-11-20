@@ -70,6 +70,15 @@ This file tracks package-facing release notes for `openminion`.
   dotted token cannot distinguish a real invocation from prose such as `use file.read documentation to explain its
   latest behavior`. (Refs #784)
 
+- Interrupted or timed-out turns now close unresolved canonical `tool.call.requested` events
+  in that turn scope with bounded `tool.call.blocked` records (`TURN_TIMEOUT` or
+  `TURN_INTERRUPTED`) while preserving the original failure, existing telemetry/research
+  lifecycle cleanup, concurrent terminal winners, structural-only redaction, and late-worker
+  cancellation checks so later runs on the session do not fail `validate_tool_transcript`;
+  when transcript recovery itself hits a SQLite, PostgreSQL/SQLAlchemy, or session-storage
+  error, it records bounded `error_type` and `closed` diagnostics without copying raw
+  exception text or replacing an active turn failure. (Refs #797)
+
 - The agent loop's stall rule now counts consecutive failures: a productive batch clears
   the no-progress counter, so two intermittent failures spread across a turn no longer end it
   while work is still getting done (Refs #679).
