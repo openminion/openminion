@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- A tool result that the policy/budget producers stamped with an explicit denial fact
+  (`denial_source` `policy`/`budget`, `blocked_kind` `policy_denied`/`approval_required`) now records
+  `state="denied"`; each fact is read and compared on its own, so a non-string value falls back to
+  `error` instead of raising, and the legacy reason-code/error-code branches are unchanged (Refs #639).
+
+
 - The turn's tool-result projection now records a security event only for a real policy decision:
   it keeps the producer's `blocked_kind`/`denial_source`, recognises the concrete legacy decision
   codes (`require_approval`, `confirm_required`, `approval_denied`, `policy_denied`,
