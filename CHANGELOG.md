@@ -79,6 +79,13 @@ This file tracks package-facing release notes for `openminion`.
   the final user `turn_input` while keeping bucket ordering, roles, cache/provenance
   metadata, secret redaction, and budget caps intact (Refs #483).
 
+- `memctl` now derives the default configuration when the implicit default
+  `memory.yaml` is absent, instead of failing with `FileNotFoundError` on a fresh
+  home where nothing has created the file. The derivation covers the CLI's own
+  default invocation only: it does not open or imply any other configured runtime
+  memory store. An explicit path or `MEMCTL_CONFIG` naming a missing file still
+  fails, and a present file is parsed exactly as before (Refs #805).
+
 - PostgreSQL runtime and in-place module schema ownership checks now verify base-schema
   storage engine tables (`core_events`, `core_sidecar_rows`, `sidecar_ingest_log`) before
   any DDL runs, refusing foreign or unowned base-schema engine tables without adding
