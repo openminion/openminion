@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Memory retrieval honours `expires_at`: search, listing and entity lookups skip expired
+  records instead of serving them until someone runs `memory gc`, on both SQLite and
+  PostgreSQL. Expiry is compared as an instant, so a stored offset does not by itself change
+  readability, and stored values are read exactly as the caller supplied them (Refs #677).
+
+
 - A tool result that the policy/budget producers stamped with an explicit denial fact
   (`denial_source` `policy`/`budget`, `blocked_kind` `policy_denied`/`approval_required`) now records
   `state="denied"`; each fact is read and compared on its own, so a non-string value falls back to
