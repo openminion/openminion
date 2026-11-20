@@ -106,21 +106,27 @@ class TestHomeRootPathResolution:
 class TestConfigPathResolution:
     def test_resolve_config_path_with_home_root(self, tmp_path: Path):
         env = {}
-        result = _resolve_config_path("config/memory.yaml", env, home_root=tmp_path)
+        result, entry_exists = _resolve_config_path(
+            "config/memory.yaml", env, home_root=tmp_path
+        )
         expected = tmp_path / "config" / "memory.yaml"
         assert result == expected
+        assert entry_exists is False
 
     def test_resolve_config_path_absolute(self, tmp_path: Path):
         env = {}
         absolute_path = tmp_path / "absolute" / "memory.yaml"
         absolute_path.parent.mkdir(parents=True)
 
-        result = _resolve_config_path(str(absolute_path), env, home_root=Path("/other"))
+        result, entry_exists = _resolve_config_path(
+            str(absolute_path), env, home_root=Path("/other")
+        )
         assert result == absolute_path
+        assert entry_exists is False
 
     def test_resolve_config_path_legacy(self):
         env = {}
-        result = _resolve_config_path("memory.yaml", env)
+        result, _entry_exists = _resolve_config_path("memory.yaml", env)
         expected = Path.home() / "memory.yaml"
         assert result == expected
 
