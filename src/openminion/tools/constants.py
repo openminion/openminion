@@ -14,3 +14,6 @@ __all__ = [
     "TOOL_REASON_STORAGE_UNAVAILABLE",
     "TOOL_REASON_STORAGE_UNCONFIGURED",
 ]
+
+FEE_CAP_MESSAGE = "Transaction fee exceeds the configured cap."
+VALUE_CAP_MESSAGE = "Native value exceeds the configured cap."

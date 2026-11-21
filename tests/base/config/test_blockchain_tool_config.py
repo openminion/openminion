@@ -41,10 +41,12 @@ def test_blockchain_config_defaults_round_trip_when_present() -> None:
             "signer_secret_namespace": "blockchain",
             "writes_enabled": False,
             "max_total_fee_wei": "10000000000000000",
+            "max_value_wei": "",
             "receipt_timeout_seconds": 60,
             "confirmation_depth": 1,
         }
     }
+    assert coerce_tool_runtime_config(tool_runtime_config_to_dict(config)) == config
 
 
 def test_omitted_blockchain_config_stays_omitted() -> None:
@@ -137,3 +139,24 @@ def test_enabled_blockchain_config_allows_no_configured_network() -> None:
         signer_secret_key="local-signer",
         confirmation_depth=2,
     )
+
+
+def test_an_agent_override_carries_the_value_cap() -> None:
+    from openminion.base.config.runtime.tools import merge_tool_runtime_overrides
+
+    merged = merge_tool_runtime_overrides(
+        system_tools={"blockchain": _enabled_config(max_value_wei="5")},
+        agent_tools={"blockchain": _enabled_config(max_value_wei="7")},
+    )
+
+    assert merged.blockchain is not None
+    assert merged.blockchain.max_value_wei == "7"
+
+
+def test_a_value_cap_never_rejects_a_value_it_counts_in_wei() -> None:
+    """Large values are compared as integers, not as floats or strings."""
+    config = coerce_tool_runtime_config(
+        {"blockchain": _enabled_config(max_value_wei="1000000000000000000000")}
+    )
+    assert config.blockchain is not None
+    assert config.blockchain.max_value_wei == "1000000000000000000000"
