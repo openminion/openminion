@@ -77,6 +77,7 @@ def dispatch_request(
             runtime_bootstrap_error=runtime_bootstrap_error,
             request_headers=request_headers,
             request_id=resolved_request_id,
+            request_id_supplied=request_id is not None,
         ),
         method_name=method_name,
         path=path,
