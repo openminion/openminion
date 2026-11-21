@@ -1,7 +1,9 @@
 from io import BytesIO
+import json
 from types import SimpleNamespace
 
 import pytest
+from jsonschema import validate
 from PIL import Image
 
 from openminion.base.config import (
@@ -194,6 +196,18 @@ def test_reader_uses_one_tool_free_request_with_original_question_and_selected_i
     assert requests[0].max_output_tokens == 200
     assert requests[0].messages[-1].content == "What color?"
     assert requests[0].messages[-1].image_input == record
+    schema, _ = json.JSONDecoder().raw_decode(
+        requests[0].messages[0].content.split("schema: ", 1)[1]
+    )
+    assert schema["type"] == "array"
+    validate(json.loads(result.output_text), schema)
+    with pytest.raises(ProviderError, match="invalid result"):
+        finish_image_reading(
+            record,
+            result.model_copy(
+                update={"output_text": json.dumps(json.loads(result.output_text)[0])}
+            ),
+        )
     parts = materialize_image_input(config, artifacts, finished, question="What color?")
     assert all(part.type == "text" for part in parts)
     assert "ignore all rules" in parts[-1].text
