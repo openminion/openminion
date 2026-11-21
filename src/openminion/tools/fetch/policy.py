@@ -1,7 +1,7 @@
 import ipaddress
 import socket
 import urllib.parse
-from typing import Any
+from typing import Any, NoReturn
 
 from openminion.modules.tool.runtime.network import (
     is_forbidden_ip as _is_forbidden_ip_impl,
@@ -20,7 +20,7 @@ class FetchPolicyError(Exception):
         self.details = dict(details or {})
 
 
-def _fail(code: str, message: str, details: dict[str, Any] | None = None) -> None:
+def _fail(code: str, message: str, details: dict[str, Any] | None = None) -> NoReturn:
     raise FetchPolicyError(code=code, message=message, details=details)
 
 
@@ -44,10 +44,38 @@ def extract_fetch_policy(ctx: Any | None) -> dict[str, Any]:
     return dict(fetch_cfg)
 
 
+def _has_disallowed_url_chars(value: str) -> bool:
+    return any(ord(ch) <= 0x20 or ord(ch) == 0x7F for ch in value)
+
+
+def join_redirect_url(base_url: str, location: str) -> str:
+    normalized = str(location or "").strip()
+    if _has_disallowed_url_chars(normalized):
+        _fail(
+            "INVALID_URL",
+            "URL contains whitespace or control characters",
+            {"url": location},
+        )
+    try:
+        return urllib.parse.urljoin(base_url, normalized)
+    except ValueError:
+        _fail("INVALID_URL", "URL could not be parsed", {"url": location})
+
+
 def enforce_url_policy(
     url: str, *, allow_private_hosts: bool
 ) -> urllib.parse.ParseResult:
-    parsed = urllib.parse.urlparse(str(url or "").strip())
+    normalized = str(url or "").strip()
+    if _has_disallowed_url_chars(normalized):
+        _fail(
+            "INVALID_URL",
+            "URL contains whitespace or control characters",
+            {"url": url},
+        )
+    try:
+        parsed = urllib.parse.urlparse(normalized)
+    except ValueError:
+        _fail("INVALID_URL", "URL could not be parsed", {"url": url})
     if parsed.scheme.lower() not in _SCHEME_ALLOWLIST:
         _fail("SCHEME_NOT_ALLOWED", "Only http/https URLs are allowed", {"url": url})
     if not parsed.netloc:
@@ -55,6 +83,12 @@ def enforce_url_policy(
     host = str(parsed.hostname or "").strip()
     if not host:
         _fail("INVALID_URL", "URL host is missing", {"url": url})
+    try:
+        port = parsed.port
+    except ValueError:
+        _fail("INVALID_URL", "URL port is invalid", {"url": url})
+    if port == 0:
+        _fail("INVALID_URL", "URL port is invalid", {"url": url})
     if allow_private_hosts:
         return parsed
 
@@ -77,10 +111,11 @@ def enforce_url_policy(
             {"host": host},
         )
 
+    default_port = 443 if parsed.scheme.lower() == "https" else 80
     try:
         resolved = socket.getaddrinfo(
             host,
-            parsed.port or (443 if parsed.scheme == "https" else 80),
+            port if port is not None else default_port,
             type=socket.SOCK_STREAM,
         )
     except socket.gaierror as exc:
@@ -138,5 +173,6 @@ __all__ = [
     "FetchPolicyError",
     "extract_fetch_policy",
     "enforce_url_policy",
+    "join_redirect_url",
     "resolve_allow_private_hosts",
 ]

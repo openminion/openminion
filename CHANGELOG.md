@@ -111,6 +111,13 @@ This file tracks package-facing release notes for `openminion`.
   `artifact_refs` or `path` values are reference hints only rather than a guarantee of later
   retrieval. (Refs #790)
 
+- `enforce_url_policy` and `CoreHttpFetchProvider` redirect resolution (`join_redirect_url`)
+  now reject embedded whitespace or ASCII control characters, malformed bracketed IPv6 URLs,
+  non-numeric or out-of-range TCP ports, and port `0` with `INVALID_URL` before SSRF DNS
+  resolution or `urllib.request` connection setup, while preserving outer whitespace
+  trimming, percent-encoded paths, empty trailing port colons, valid ports `1..65535`, and
+  existing SSRF checks (Refs #821).
+
 - `AgentOutputValidationError` now reports why a recovered JSON object failed: when a reply
   wraps a JSON object in prose and that object fails schema validation, the error carries that
   object's `ValidationError` (for example the missing field) instead of the raw text's
