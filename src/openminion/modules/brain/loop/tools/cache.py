@@ -7,6 +7,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from .path_overlap import paths_overlap
+
 
 _READ_CACHEABLE_TOOLS = frozenset(
     {
@@ -29,6 +31,14 @@ _WRITE_TOOLS = frozenset(
     }
 )
 
+# Path argument names taken from the tool schemas (``tools/file``:
+# ``path`` with aliases ``file_path`` / ``filename`` / ``destination``;
+# ``tools/code``: ``path`` with alias ``target``). No other name is accepted.
+_PATH_ARG_KEYS = ("path", "file_path", "filename", "destination", "target")
+
+# Statuses that mean the call never reached the tool, so nothing can have changed.
+_NO_EFFECT_STATUSES = frozenset({"blocked", "needs_user"})
+
 
 def _args_hash(tool_name: str, args: dict[str, Any]) -> str:
     canonical = json.dumps(
@@ -38,11 +48,12 @@ def _args_hash(tool_name: str, args: dict[str, Any]) -> str:
 
 
 def _extract_paths(args: dict[str, Any]) -> set[str]:
-    return {
-        value
-        for key in ("path", "file", "directory", "target")
-        if isinstance((value := args.get(key)), str) and value
-    }
+    paths: set[str] = set()
+    for key in _PATH_ARG_KEYS:
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            paths.add(value)
+    return paths
 
 
 @dataclass(slots=True)
@@ -77,17 +88,42 @@ class LoopCache:
         self._entries[key] = result
         self._path_map[key] = _extract_paths(args)
 
-    def invalidate_for_write(self, tool_name: str, args: dict[str, Any]) -> None:
-        if tool_name not in _WRITE_TOOLS:
+    def invalidate_for_tool(
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+        result: Any,
+    ) -> None:
+        """Drop cached reads that this tool call could have invalidated.
+
+        A failed call is not proof that nothing changed — a write can fail after
+        touching the file — so only a pre-dispatch denial (``blocked`` /
+        ``needs_user``) is treated as no effect. A known file writer invalidates
+        the reads it can overlap, including directory reads and pathless reads;
+        any other tool has unknown reach and clears the cache.
+        """
+
+        if tool_name in _READ_CACHEABLE_TOOLS:
+            return
+        action_result = getattr(result, "action_result", None)
+        status = getattr(action_result, "status", None)
+        if status in _NO_EFFECT_STATUSES:
             return
         write_paths = _extract_paths(args)
-        if not write_paths:
+        if tool_name in _WRITE_TOOLS and write_paths:
+            to_remove = [
+                key
+                for key, cached_paths in self._path_map.items()
+                if not cached_paths
+                or any(
+                    paths_overlap(cached, write)
+                    for cached in cached_paths
+                    for write in write_paths
+                )
+            ]
+            for key in to_remove:
+                self._entries.pop(key, None)
+                self._path_map.pop(key, None)
             return
-        to_remove = [
-            key
-            for key, cached_paths in self._path_map.items()
-            if cached_paths & write_paths
-        ]
-        for key in to_remove:
-            self._entries.pop(key, None)
-            self._path_map.pop(key, None)
+        self._entries.clear()
+        self._path_map.clear()

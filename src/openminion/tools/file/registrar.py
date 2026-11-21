@@ -8,9 +8,11 @@ from openminion.modules.tool.contracts import (
     ToolBindingManifest,
 )
 from openminion.modules.tool.contracts.model_ids import (
+    MODEL_FILE_COPY,
     MODEL_FILE_EDIT,
     MODEL_FILE_FIND,
     MODEL_FILE_LIST_DIR,
+    MODEL_FILE_MKDIR,
     MODEL_FILE_READ,
     MODEL_FILE_READ_RANGE,
     MODEL_FILE_SEARCH,
@@ -18,9 +20,11 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_FILE_WRITE,
 )
 from openminion.modules.tool.contracts.runtime_ids import (
+    RUNTIME_FILE_COPY,
     RUNTIME_FILE_EDIT,
     RUNTIME_FILE_FIND,
     RUNTIME_FILE_LIST_DIR,
+    RUNTIME_FILE_MKDIR,
     RUNTIME_FILE_READ,
     RUNTIME_FILE_READ_RANGE,
     RUNTIME_FILE_SEARCH,
@@ -73,6 +77,16 @@ FILE_MODEL_TOOLS = (
         parameters={},
     ),
     ModelToolDef(
+        model_tool_id=MODEL_FILE_MKDIR,
+        description="Create a directory",
+        parameters={},
+    ),
+    ModelToolDef(
+        model_tool_id=MODEL_FILE_COPY,
+        description="Copy a file to a new path",
+        parameters={},
+    ),
+    ModelToolDef(
         model_tool_id=MODEL_FILE_SEARCH,
         description="Search file contents by query or regex",
         parameters={},
@@ -114,6 +128,16 @@ FILE_RUNTIME_BINDINGS = (
         runtime_binding_id=RUNTIME_FILE_TRASH,
         model_tool_id=MODEL_FILE_TRASH,
         runtime_candidates=("file.trash",),
+    ),
+    RuntimeBindingDef(
+        runtime_binding_id=RUNTIME_FILE_MKDIR,
+        model_tool_id=MODEL_FILE_MKDIR,
+        runtime_candidates=("file.mkdir",),
+    ),
+    RuntimeBindingDef(
+        runtime_binding_id=RUNTIME_FILE_COPY,
+        model_tool_id=MODEL_FILE_COPY,
+        runtime_candidates=("file.copy",),
     ),
     RuntimeBindingDef(
         runtime_binding_id=RUNTIME_FILE_SEARCH,

@@ -141,7 +141,7 @@ def _select_first_batch_result(loop_ctx, ordered_results):
         iter_batch_parallel_count=0,
         initial_batch_had_progress=False,
         loop_cache=SimpleNamespace(
-            invalidate_for_write=lambda *args, **kwargs: None,
+            invalidate_for_tool=lambda *args, **kwargs: None,
             put=lambda *args, **kwargs: None,
         ),
         loop_profiler=SimpleNamespace(record_tool_call=lambda *args, **kwargs: None),

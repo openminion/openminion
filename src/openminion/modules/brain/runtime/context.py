@@ -53,6 +53,7 @@ _COMMON_HINT_KEYS = {
     "clarification_responses",
     "gateway_system_context",
     "model_capability_overrides",
+    "self_awareness",
 }
 _THINKING_CTL = ThinkingCtl()
 

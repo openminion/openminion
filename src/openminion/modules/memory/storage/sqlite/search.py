@@ -9,7 +9,12 @@ from typing import Any
 
 from ...models import MemoryRecord, MemoryType
 from ..base import SearchQueryOptions, record_matches_namespaces
-from .queries import is_fts_query_parse_error, sanitize_fts_query
+from .queries import (
+    expiry_bind_params,
+    expiry_clause,
+    is_fts_query_parse_error,
+    sanitize_fts_query,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +46,11 @@ def search(store: Any, options: SearchQueryOptions) -> list[MemoryRecord]:
         query += f" AND r.scope IN ({placeholders_scopes})"
         params.extend(options.scopes)
     if not options.include_invalidated:
+        # Expiry is enforced on read too, not only by the purge run.
+        now = datetime.datetime.now(datetime.timezone.utc)
         query += " AND (r.valid_to IS NULL OR r.valid_to > ?)"
-        params.append(datetime.datetime.now(datetime.timezone.utc).isoformat())
+        query += f" AND {expiry_clause()}"
+        params.extend([now.isoformat(), *expiry_bind_params(now)])
 
     if options.types:
         placeholders_types = ",".join("?" * len(options.types))
@@ -144,14 +152,12 @@ def retrieve_by_entities(
         JOIN memory_entities e ON r.id = e.record_id
         WHERE (r.is_deleted = 0 OR r.superseded_by_id IS NOT NULL)
         AND (r.valid_to IS NULL OR r.valid_to > ?)
+        AND {expiry_clause()}
         AND e.entity IN ({placeholders_entities})
         AND r.scope IN ({placeholders_scopes})
     """
-    params = (
-        [datetime.datetime.now(datetime.timezone.utc).isoformat()]
-        + list(entities)
-        + list(scopes)
-    )
+    now = datetime.datetime.now(datetime.timezone.utc)
+    params = [now.isoformat(), *expiry_bind_params(now)] + list(entities) + list(scopes)
 
     if types:
         placeholders_types = ",".join("?" * len(types))

@@ -455,17 +455,52 @@ def _facts(
     return "; ".join(facts)
 
 
+def _bad_engine_tables(layout: SchemaLayout) -> list[str]:
+    engine_tables = _catalog().engine_tables
+    return sorted(
+        t
+        for t, sig in layout.tables.items()
+        if t in engine_tables and sig not in engine_tables[t]
+    )
+
+
 def runtime_refusal(layout: SchemaLayout) -> str | None:
     """None when runtime storage can use the base schema, else the refusal message."""
-    if not _owned_tables(RUNTIME, layout):
+    owned = _owned_tables(RUNTIME, layout)
+    engine_present = sorted(t for t in layout.tables if t in _catalog().engine_tables)
+    bad_engine = _bad_engine_tables(layout)
+    if not owned and not engine_present:
         return None
+    if not owned:
+        detail = (
+            f"{', '.join(bad_engine)} has other columns than this code's storage engine creates"
+            if bad_engine
+            else f"{', '.join(engine_present)} matches no recorded runtime storage ledger"
+        )
+        return (
+            f"Runtime storage will not use PostgreSQL schema {_quote(layout.name)}: tables it "
+            "creates or reads there are not provably its own: no runtime storage ledger is "
+            f"recorded there; {detail}. {_NOTHING_WRITTEN} {_GUIDANCE}"
+        )
     attribution = _attribution(layout)
     if _proven(RUNTIME, layout, attribution) is not None:
-        return None
+        if not bad_engine:
+            return None
+        return (
+            f"Runtime storage will not use PostgreSQL schema {_quote(layout.name)}: "
+            f"holds {', '.join(bad_engine)} with other columns than this code's "
+            f"storage engine creates. {_NOTHING_WRITTEN} {_GUIDANCE}"
+        )
+    facts = _facts(RUNTIME, layout, attribution)
+    if bad_engine:
+        facts = (
+            f"{facts}; {', '.join(bad_engine)} has other columns than this code's "
+            "storage engine creates"
+        )
     return (
         f"Runtime storage will not use PostgreSQL schema {_quote(layout.name)}: tables it "
         f"creates or reads there are not provably its own: "
-        f"{_facts(RUNTIME, layout, attribution)}. {_NOTHING_WRITTEN} {_GUIDANCE}"
+        f"{facts}. {_NOTHING_WRITTEN} {_GUIDANCE}"
     )
 
 
@@ -566,6 +601,13 @@ def decide_module_schema(
                 f"<base>__<module id>. {_NOTHING_WRITTEN} {_GUIDANCE}"
             )
         if _proven(module_id, base, attribution) is not None:
+            bad_engine = _bad_engine_tables(base)
+            if bad_engine:
+                raise SchemaOwnershipError(
+                    f"Module {module_id!r}: PostgreSQL schema {_quote(base.name)} holds "
+                    f"{', '.join(bad_engine)} with other columns than this code's "
+                    f"storage engine creates. {_NOTHING_WRITTEN} {_GUIDANCE}"
+                )
             return ModuleSchema(
                 module_id, base.name, base.name, ledger=base.ledger(module_id)
             )
@@ -670,11 +712,7 @@ def _derived_refusal(module_id: str, layout: SchemaLayout, *, role: str) -> str 
             f"{where} is not provably {module_id}'s: "
             f"{_facts(module_id, layout, attribution)}. {_NOTHING_WRITTEN} {_GUIDANCE}"
         )
-    engine = sorted(
-        t
-        for t, sig in layout.tables.items()
-        if t in catalog.engine_tables and sig not in catalog.engine_tables[t]
-    )
+    engine = _bad_engine_tables(layout)
     if engine:
         return (
             f"{where} holds {', '.join(engine)} with other columns than this code's "
@@ -737,7 +775,9 @@ def check_module_connection(engine: Engine, module_id: str) -> ModuleSchema:
         role = str(connection.execute(_sql("SELECT current_user")).scalar_one())
         layout = read_schema(connection, name)
     ledger = layout.ledger(module_id)
-    if _proven(module_id, layout, _attribution(layout)) is not None:
+    if _proven(
+        module_id, layout, _attribution(layout)
+    ) is not None and not _bad_engine_tables(layout):
         return ModuleSchema(module_id, name, name, ledger=ledger)
     refusal = _derived_refusal(module_id, layout, role=role)
     if refusal is None:
@@ -797,10 +837,38 @@ def _require_landing(url: str, schema: str) -> None:
         )
 
 
+def _is_competing_schema_create_error(exc: Any) -> bool:
+    orig = getattr(exc, "orig", exc)
+    code = str(getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None) or "")
+    if code == "42P06":
+        return True
+    if code != "23505":
+        return False
+    diag = getattr(orig, "diag", None)
+    return getattr(diag, "constraint_name", None) == "pg_namespace_nspname_index"
+
+
+def _competing_schema_refusal(module_id: str, schema: str) -> str:
+    return (
+        f"Module {module_id!r}: PostgreSQL schema {_quote(schema)} is being initialized "
+        "by another concurrent process; start again once the first initialization "
+        f"finishes. {_NOTHING_WRITTEN}"
+    )
+
+
 def enter_module_schema(connection: Connection, selection: ModuleSchema) -> None:
     """Inside a migration transaction: create the derived schema if selected, then use it."""
+    from sqlalchemy.exc import DBAPIError
+
     if selection.create:
-        connection.execute(_sql(f"CREATE SCHEMA {_quote(selection.schema)}"))
+        try:
+            connection.execute(_sql(f"CREATE SCHEMA {_quote(selection.schema)}"))
+        except DBAPIError as exc:
+            if _is_competing_schema_create_error(exc):
+                raise SchemaOwnershipError(
+                    _competing_schema_refusal(selection.module_id, selection.schema)
+                ) from exc
+            raise
     connection.execute(_sql(f"SET LOCAL search_path TO {_quote(selection.schema)}"))
 
 
@@ -814,6 +882,7 @@ def select_postgres_module_schema(
     transaction, which makes the choice again and rolls the schema back if that refuses.
     """
     from sqlalchemy import create_engine
+    from sqlalchemy.exc import DBAPIError
     from sqlalchemy.pool import NullPool
 
     probe = create_engine(url, poolclass=NullPool)
@@ -824,9 +893,16 @@ def select_postgres_module_schema(
         _require_landing(selection.url(url), selection.schema)
         if create and selection.create:
             with probe.begin() as connection:
-                connection.execute(
-                    _sql(f"CREATE SCHEMA IF NOT EXISTS {_quote(selection.schema)}")
-                )
+                try:
+                    connection.execute(
+                        _sql(f"CREATE SCHEMA IF NOT EXISTS {_quote(selection.schema)}")
+                    )
+                except DBAPIError as exc:
+                    if _is_competing_schema_create_error(exc):
+                        raise SchemaOwnershipError(
+                            _competing_schema_refusal(module_id, selection.schema)
+                        ) from exc
+                    raise
                 # Another process may have created and used it meanwhile.
                 selection = _select_on(connection, module_id)
     finally:

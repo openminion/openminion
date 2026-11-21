@@ -6,6 +6,8 @@ RUNTIME_FILE_FIND = "runtime.file.find"
 RUNTIME_FILE_TRASH = "runtime.file.trash"
 RUNTIME_FILE_SEARCH = "runtime.file.search"
 RUNTIME_FILE_EDIT = "runtime.file.edit"
+RUNTIME_FILE_MKDIR = "runtime.file.mkdir"
+RUNTIME_FILE_COPY = "runtime.file.copy"
 
 RUNTIME_CODE_PATCH = "runtime.code.patch"
 RUNTIME_CODE_GREP = "runtime.code.grep"
@@ -191,6 +193,8 @@ ALL_RUNTIME_BINDING_IDS: tuple[str, ...] = (
     RUNTIME_FILE_TRASH,
     RUNTIME_FILE_SEARCH,
     RUNTIME_FILE_EDIT,
+    RUNTIME_FILE_MKDIR,
+    RUNTIME_FILE_COPY,
     RUNTIME_CODE_PATCH,
     RUNTIME_CODE_GREP,
     RUNTIME_CODE_REPO_MAP,

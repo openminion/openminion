@@ -18,6 +18,7 @@ def _runtime(tmp_path: Path, *, profile: object) -> SimpleNamespace:
     return SimpleNamespace(
         config_path=tmp_path / "openminion.json",
         home_root=tmp_path,
+        data_root=tmp_path / "nondefault data",
         config=SimpleNamespace(agents={"agent-1": profile}),
     )
 
@@ -212,8 +213,16 @@ def test_skills_report_discloses_catalog_truncation(
     assert "showing 20 of 21 skills" in controls.skills_report()
 
 
+@pytest.mark.parametrize(
+    ("observations", "pending"), [(0, 0), (1, 0), (2, 0), (0, 3), (2, 3)]
+)
+@pytest.mark.parametrize("config_path", ["runtime config.json", None])
 def test_skills_report_includes_read_only_learning_status(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    observations: int,
+    pending: int,
+    config_path: str | None,
 ) -> None:
     instances = []
 
@@ -232,11 +241,15 @@ def test_skills_report_includes_read_only_learning_status(
             self, *, agent_id: str
         ) -> list[dict[str, object]]:
             assert agent_id == "agent-1"
-            return [{"id": "obs-1"}, {"id": "obs-2"}]
+            return [{"id": f"obs-{index}"} for index in range(observations)]
 
         def list_workflow_shapes(self, *, agent_id: str) -> list[object]:
             assert agent_id == "agent-1"
-            return [SimpleNamespace(success_count=2, explicit_save_count=0)]
+            return (
+                [SimpleNamespace(success_count=observations, explicit_save_count=0)]
+                if observations
+                else []
+            )
 
         def close(self) -> None:
             self.closed = True
@@ -249,7 +262,7 @@ def test_skills_report_includes_read_only_learning_status(
     )
     monkeypatch.setattr(
         "openminion.cli.interactive.runtime.skill_status.suggestion_status",
-        lambda _store: SimpleNamespace(pending_count=3),
+        lambda _store: SimpleNamespace(pending_count=pending),
     )
     controls = _RuntimeControls(
         _runtime(
@@ -257,14 +270,41 @@ def test_skills_report_includes_read_only_learning_status(
             profile=SimpleNamespace(skill=None, skill_catalog=[]),
         )
     )
+    controls._rt.config_path = tmp_path / config_path if config_path else None
 
     report = controls.skills_report()
 
-    assert "Skills:\n  (none)" in report
-    assert "Learning:" in report
-    assert "observations       2 · active agent" in report
-    assert "authoring ready    1 · active agent" in report
-    assert "pending proposals  3 · catalog-wide" in report
+    if not observations and not pending:
+        assert report == "(no skills)"
+    else:
+        from shlex import split
+
+        assert "Skills:\n  (none)" in report
+        assert "Learning:" in report
+        assert f"observations       {observations} · active agent" in report
+        assert f"authoring ready    {int(observations >= 2)} · active agent" in report
+        assert f"pending proposals  {pending} · catalog-wide" in report
+        commands = [
+            split(line)
+            for line in report.splitlines()
+            if line.startswith("  skillctl ")
+        ]
+        prefix = [
+            "skillctl",
+            "--config",
+            str(tmp_path / config_path) if config_path else "SKILL_CONFIG",
+            "--home-root",
+            str(tmp_path),
+            "--data-root",
+            str(tmp_path / "nondefault data"),
+        ]
+        assert commands == [
+            [*prefix, "learning-observation-list", "--agent-id", "agent-1"],
+            [*prefix, "learning-shape-list", "--agent-id", "agent-1"],
+            [*prefix, "proposal-list"],
+        ]
+        assert "this runtime's config and roots" in report
+        assert "docs/guides/verified-learning-and-responsibility.md" in report
     assert all(instance.closed for instance in instances)
 
 

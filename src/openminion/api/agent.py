@@ -259,6 +259,7 @@ class Agent(Generic[InputT, OutputT]):
             try:
                 return cast(OutputT, self.output_type.model_validate_json(text))
             except ValidationError as exc:
+                error = exc
                 # Some providers wrap JSON answers in prose; recover the first
                 # balanced object before failing validation.
                 stripped = _extract_json_object(text)
@@ -268,13 +269,13 @@ class Agent(Generic[InputT, OutputT]):
                             OutputT,
                             self.output_type.model_validate_json(stripped),
                         )
-                    except ValidationError:
-                        pass
+                    except ValidationError as recovered_exc:
+                        error = recovered_exc
                 raise AgentOutputValidationError(
-                    f"Reply did not validate against {self.output_type.__name__}: {exc}",
+                    f"Reply did not validate against {self.output_type.__name__}: {error}",
                     raw_text=text,
-                    validation_error=exc,
-                ) from exc
+                    validation_error=error,
+                ) from error
         try:
             return self.output_type(text)  # type: ignore[call-arg]
         except Exception as exc:  # noqa: BLE001

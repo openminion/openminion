@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import PurePath
 from typing import Any
+
+from .path_overlap import paths_overlap
 
 
 _WRITE_TOOL_NAMES = frozenset(
@@ -43,16 +44,6 @@ def _is_write(tool_call: Any) -> bool:
     return _tool_name(tool_call) in _WRITE_TOOL_NAMES
 
 
-def _paths_overlap(left: str, right: str) -> bool:
-    if not left or not right:
-        return False
-    left_path = PurePath(left)
-    right_path = PurePath(right)
-    if left_path == right_path:
-        return True
-    return left_path in right_path.parents or right_path in left_path.parents
-
-
 def _requires_order(left: Any, right: Any) -> bool:
     left_path = _tool_path(left)
     right_path = _tool_path(right)
@@ -61,7 +52,7 @@ def _requires_order(left: Any, right: Any) -> bool:
     left_write = _is_write(left)
     right_write = _is_write(right)
     if left_write or right_write:
-        return _paths_overlap(left_path, right_path)
+        return paths_overlap(left_path, right_path)
     return False
 
 

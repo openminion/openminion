@@ -1742,32 +1742,73 @@ class StructuralNoopPersistenceTests(unittest.TestCase):
 
         self.assertIn("pae.idle_tick.noop", _KNOWN_CANONICAL_EVENT_TYPES)
 
-    def test_idle_tick_empty_response_bypasses_retry_loop(self) -> None:
-        import inspect
-        from openminion.modules.brain.loop import orchestration as orch_mod
-
-        src = inspect.getsource(orch_mod.decide)
-        # The break-out branch exists.
-        self.assertIn("_is_empty_entry_response(response)", src)
-        self.assertIn("idle_tick_noop", src)
-        # The break-out precedes the retry `continue` so empty-on-
-        # idle_tick falls through to the enforcement block instead
-        # of retrying.
-        retry_idx = src.find("if attempt < max_retries:")
-        idle_tick_breakout_idx = src.find('str(getattr(state, "run_trigger"')
-        # First idle_tick check in decide() is the resume-fast-path
-        # gate (line 144). We want the SECOND one (inside the retry
-        # loop).
-        second_idle_tick_idx = src.find(
-            'str(getattr(state, "run_trigger"',
-            idle_tick_breakout_idx + 1,
+    def _decide_on_empty_entry(
+        self, run_trigger: str
+    ) -> tuple[Any, Any, list[tuple[str, dict]]]:
+        from tests.brain.runner_test_support import (
+            BrainRunner,
+            BudgetCounters,
+            SimpleNamespace,
+            WorkingState,
+            _profile,
+            fake_context_builder,
+            fake_session_api,
+            patch,
         )
-        self.assertGreater(second_idle_tick_idx, 0)
-        # Break-out appears before the retry's `continue`.
-        self.assertLess(second_idle_tick_idx, retry_idx)
-        # Break-out emits the structural telemetry marker so
-        # operators see why the retry didn't fire.
-        self.assertIn("llm.call.empty_response_accepted", src)
+        from tests.brain.test_runner_decision import (
+            _StaticEntryLLM,
+            _empty_entry_response,
+        )
+
+        llm_api = _StaticEntryLLM(_empty_entry_response())
+        runner = BrainRunner(
+            profile=_profile(),
+            session_api=fake_session_api(),
+            llm_api=llm_api,
+            context_api=fake_context_builder(),
+            tool_api=SimpleNamespace(registry=SimpleNamespace(_tools={})),
+        )
+        state = WorkingState(
+            session_id=f"s-empty-entry-{run_trigger}",
+            agent_id="router-agent",
+            budgets_remaining=BudgetCounters(
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
+            ),
+            run_trigger=run_trigger,
+        )
+        events: list[tuple[str, dict]] = []
+        logger = SimpleNamespace(
+            emit=lambda name, payload=None, **_kw: events.append((name, payload or {}))
+        )
+        with (
+            patch.object(runner, "_estimate_tokens", return_value=1),
+            patch.object(runner, "_debit_tokens", return_value=None),
+        ):
+            decision = runner._decide(state=state, user_input="", logger=logger)
+        return llm_api, decision, events
+
+    def test_idle_tick_empty_response_bypasses_retry_loop(self) -> None:
+        llm_api, decision, events = self._decide_on_empty_entry("idle_tick")
+
+        self.assertEqual(llm_api.call_count, 1)
+        self.assertEqual(decision.mode, "respond")
+        self.assertEqual(decision.reason_code, "pae_idle_tick_noop")
+        names = [name for name, _ in events]
+        self.assertNotIn("llm.call.retry", names)
+        accepted = [
+            p for name, p in events if name == "llm.call.empty_response_accepted"
+        ]
+        self.assertEqual(len(accepted), 1)
+        self.assertEqual(accepted[0]["reason"], "idle_tick_noop")
+
+    def test_non_idle_empty_response_keeps_entry_retry(self) -> None:
+        llm_api, decision, events = self._decide_on_empty_entry("user_input")
+
+        self.assertEqual(llm_api.call_count, 3)
+        self.assertEqual(decision.reason_code, "llm_empty_response")
+        names = [name for name, _ in events]
+        self.assertEqual(names.count("llm.call.retry"), 2)
+        self.assertNotIn("llm.call.empty_response_accepted", names)
 
     def test_response_suppressed_canonical_event_registered(self) -> None:
         from openminion.modules.session.storage.replay import (

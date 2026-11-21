@@ -29,9 +29,11 @@ from .model_ids import (
     MODEL_EXEC_RUN,
     MODEL_EXEC_SEND_KEYS,
     MODEL_EXEC_SUBMIT,
+    MODEL_FILE_COPY,
     MODEL_FILE_EDIT,
     MODEL_FILE_FIND,
     MODEL_FILE_LIST_DIR,
+    MODEL_FILE_MKDIR,
     MODEL_FILE_READ,
     MODEL_FILE_READ_RANGE,
     MODEL_FILE_SEARCH,
@@ -172,6 +174,8 @@ _RUNTIME_PREFIX = "runtime."
 
 MODEL_TOOL_DISPLAY_NAME_MAP: dict[str, str] = {
     MODEL_FILE_LIST_DIR: "List Directory",
+    MODEL_FILE_MKDIR: "Create Directory",
+    MODEL_FILE_COPY: "Copy File",
     MODEL_FILE_READ: "Read File",
     MODEL_FILE_READ_RANGE: "Read File Range",
     MODEL_FILE_WRITE: "Write File",

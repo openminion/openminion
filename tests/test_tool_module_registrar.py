@@ -139,6 +139,8 @@ def test_file_module_registrar_returns_manifest() -> None:
         "file.trash",
         "file.search",
         "file.edit",
+        "file.mkdir",
+        "file.copy",
     }
     model_ids = {t.model_tool_id for t in manifest.model_tools}
     binding_tool_ids = {binding.model_tool_id for binding in manifest.runtime_bindings}
