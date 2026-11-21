@@ -3,6 +3,9 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from openminion.modules.llm.client_call import usage_payload_from_response_usage
+from openminion.modules.llm.schemas import LLMResponse
+
 from ....diagnostics.events import CanonicalEventLogger
 from ....retry import call_structured_with_retry
 from ....schemas import UserMessageCandidateReport, WorkingState, new_uuid
@@ -195,6 +198,16 @@ def _run_afe_reflection(
         "reflect",
         config_data.model,
     )
+
+    def debit_response(response: LLMResponse) -> None:
+        _runner_delegate(
+            "_debit_tokens",
+            runner,
+            state,
+            {"usage": usage_payload_from_response_usage(response.usage)},
+            logger,
+        )
+
     try:
         context = _runner_delegate(
             "_build_context",
@@ -211,10 +224,9 @@ def _run_afe_reflection(
             purpose="reflect",
             context=context,
             schema=UserMessageCandidateReport,
+            on_response=debit_response,
         )
         state.llm_calls_used += 1
-        if isinstance(raw, dict):
-            _runner_delegate("_debit_tokens", runner, state, raw, logger)
         return UserMessageCandidateReport.model_validate(raw)
     except Exception as exc:  # noqa: BLE001
         return _emit_afe_skipped(

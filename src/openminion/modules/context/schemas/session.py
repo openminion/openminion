@@ -1,8 +1,11 @@
+from openminion.modules.artifact.models import ImageInputContext
+
 # ruff: noqa: F403,F405
 from .common import *
 
 
 class SessionTurn(BaseModel):
+    image_input: ImageInputContext | None = None
     turn_id: str
     role: str
     content: str

@@ -132,6 +132,13 @@ def _add_skill_cli_subcommands(sub: Any) -> None:
     show.add_argument("skill_id")
     show.add_argument("--version", default=None)
 
+    export = sub.add_parser(
+        "export", help="Export retained content of an admitted version"
+    )
+    export.add_argument("skill_id")
+    export.add_argument("--version", required=True)
+    export.add_argument("--destination", required=True)
+
     list_cmd = sub.add_parser("list", help="List skills")
     list_cmd.add_argument("--status", default=None, help="Comma-separated statuses")
     list_cmd.add_argument("--scope", default=None)
@@ -191,9 +198,7 @@ def _add_skill_cli_subcommands(sub: Any) -> None:
     debug_cmd.add_argument("skill_id")
     debug_cmd.add_argument("--version", default=None)
 
-    inspect_cmd = sub.add_parser(
-        "inspect", help="Inspect a skill package (SLV2-04 alias for show)"
-    )
+    inspect_cmd = sub.add_parser("inspect", help="Inspect a skill (alias for show)")
     inspect_cmd.add_argument("skill_id")
     inspect_cmd.add_argument("--version", default=None)
 
@@ -208,10 +213,7 @@ def _add_skill_cli_subcommands(sub: Any) -> None:
     disable_cmd.add_argument(
         "--reason",
         required=True,
-        help=(
-            "Operator-supplied justification for disabling the skill. "
-            "Recorded with the disable event."
-        ),
+        help="Operator-supplied justification recorded with the disable event.",
     )
 
     remove_cmd = sub.add_parser(
@@ -225,10 +227,7 @@ def _add_skill_cli_subcommands(sub: Any) -> None:
     remove_cmd.add_argument(
         "--reason",
         required=True,
-        help=(
-            "Operator-supplied justification for removing the skill. "
-            "Recorded with the remove event."
-        ),
+        help="Operator-supplied justification recorded with the remove event.",
     )
     remove_cmd.add_argument("--version", default=None)
     remove_cmd.add_argument(
@@ -369,6 +368,14 @@ def _add_suggestion_subcommands(sub: Any) -> None:
 
 
 def _dispatch_skill_command(ctl: Skill, args: argparse.Namespace) -> None:
+    if args.cmd in {"disable", "remove"}:
+        reason = str(getattr(args, "reason", "") or "").strip()
+        if not reason:
+            raise SkillError(
+                "INVALID_ARGUMENT",
+                f"--reason is required for {args.cmd}",
+            )
+
     if args.cmd == "ingest":
         skill_id, version_hash, warnings = ctl.ingest_file(
             args.file,
@@ -406,6 +413,10 @@ def _dispatch_skill_command(ctl: Skill, args: argparse.Namespace) -> None:
     if args.cmd in {"show", "inspect"}:
         package = ctl.get_skill(args.skill_id, args.version)
         _print_json({"ok": True, "skill": package.to_dict()})
+        return
+
+    if args.cmd == "export":
+        _print_json(ctl.export_bundle(args.skill_id, args.version, args.destination))
         return
 
     if args.cmd == "list":
@@ -505,12 +516,6 @@ def _dispatch_skill_command(ctl: Skill, args: argparse.Namespace) -> None:
         return
 
     if args.cmd == "disable":
-        reason = str(getattr(args, "reason", "") or "").strip()
-        if not reason:
-            raise SkillError(
-                "INVALID_ARGUMENT",
-                "--reason is required for disable",
-            )
         package = ctl.get_skill(args.skill_id, None)
         updated = ctl.set_skill_status(
             skill_id=package.skill_id,
@@ -535,12 +540,6 @@ def _dispatch_skill_command(ctl: Skill, args: argparse.Namespace) -> None:
         return
 
     if args.cmd == "remove":
-        reason = str(getattr(args, "reason", "") or "").strip()
-        if not reason:
-            raise SkillError(
-                "INVALID_ARGUMENT",
-                "--reason is required for remove",
-            )
         package = ctl.get_skill(args.skill_id, args.version)
         if not args.apply:
             _print_json(

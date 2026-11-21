@@ -285,6 +285,13 @@ def _build_interactive_setup(
             env=env_snapshot,
             add_model=bool(getattr(args, "add_model", False)),
             connection_id=str(getattr(args, "connection", "") or ""),
+            supports_images=bool(getattr(args, "supports_images", False)),
+            image_mode=str(getattr(args, "image_mode", "") or ""),
+            image_reader_connection=str(
+                getattr(args, "image_reader_connection", "") or ""
+            ),
+            image_reader_model=str(getattr(args, "image_reader_model", "") or ""),
+            image_purpose=str(getattr(args, "image_purpose", "describe")),
         )
     )
 
@@ -333,6 +340,13 @@ def _build_non_interactive_setup(
                 env=resolve_environment_config().snapshot(),
                 add_model=bool(getattr(args, "add_model", False)),
                 connection_id=str(getattr(args, "connection", "") or ""),
+                supports_images=bool(getattr(args, "supports_images", False)),
+                image_mode=str(getattr(args, "image_mode", "") or ""),
+                image_reader_connection=str(
+                    getattr(args, "image_reader_connection", "") or ""
+                ),
+                image_reader_model=str(getattr(args, "image_reader_model", "") or ""),
+                image_purpose=str(getattr(args, "image_purpose", "describe")),
             )
         )
     except SetupCatalogError as exc:
@@ -356,6 +370,16 @@ def _print_preview(result: ProviderSetupResult) -> None:
         print(f"  base URL: {preview.base_url}")
     if preview.shared_adapter_isolated:
         print("  repair: existing agents remain unchanged")
+    profile = result.config.agents[preview.agent_id]
+    policy = profile.image_input
+    print(f"  image input: {policy.mode if policy else 'disabled'}")
+    if policy and policy.mode == "separate":
+        print(
+            f"  image reader: {policy.connection_id}/{policy.model} ({policy.purpose})"
+        )
+    connection = profile.model_connections.get(result.preset.preset_id, {})
+    if connection.get("image_input", {}).get(preview.model) == "supported":
+        print("  image capability: declared, not provider-verified")
     _print_capability_note(result.preset)
 
 
@@ -710,5 +734,29 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         "--check-provider",
         action="store_true",
         help="Authorize one bounded provider validation request after setup",
+    )
+    setup.add_argument(
+        "--supports-images",
+        action="store_true",
+        help="Declare image support for the selected model (not a live verification)",
+    )
+    setup.add_argument(
+        "--image-mode",
+        choices=("native", "separate", "off"),
+        help="Use the chat model or a separate model to read images",
+    )
+    setup.add_argument(
+        "--image-reader-connection",
+        default="",
+        help="Existing image reader connection id",
+    )
+    setup.add_argument(
+        "--image-reader-model", default="", help="Exact image reader model id"
+    )
+    setup.add_argument(
+        "--image-purpose",
+        choices=("describe", "text"),
+        default="describe",
+        help="Separate reader: visual context or text extraction",
     )
     setup.set_defaults(handler=run_setup, needs_app=False)

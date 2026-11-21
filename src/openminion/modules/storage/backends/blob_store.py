@@ -452,13 +452,7 @@ class BlobStoreFS(BlobStore):
         if isinstance(ref, BlobRef):
             return Path(ref.path)
         hash_value = _normalize_hash(ref)
-        prefix = hash_value[:2]
-        root = self.blob_root / prefix
-        matches = sorted(
-            path
-            for path in root.glob(f"{hash_value}*")
-            if path.is_file() and not path.name.endswith(".meta.json")
-        )
+        matches = self._owned_payload_paths(hash_value)
         if not matches:
             raise FileNotFoundError(f"blob not found: {hash_value}")
         return matches[0]

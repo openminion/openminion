@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 from typing import Any, Mapping
 
+from openminion.modules.skill.constants import SKILL_BUNDLE_MAX_RESOURCE_BYTES
 from openminion.modules.skill.models import normalize_text_list
 
 try:
@@ -135,6 +136,7 @@ def load_companion_metadata(
     bundle_root: Path | None,
     *,
     trust: str | None = None,
+    warnings: list[str] | None = None,
 ) -> dict[str, Any]:
     """Load companion metadata and carry an explicit source enum."""
     normalized_trust = resolve_bundle_metadata_trust(trust, remote=False)
@@ -144,14 +146,34 @@ def load_companion_metadata(
             trust=normalized_trust,
         )
 
-    companion_path = Path(bundle_root) / _OPENAI_COMPANION_PATH
-    if not companion_path.exists():
+    root = Path(bundle_root).resolve()
+    companion_path = root / _OPENAI_COMPANION_PATH
+    skip_reason = ""
+    content = b""
+    if companion_path.parent.is_symlink() or companion_path.is_symlink():
+        skip_reason = "symlink"
+    elif not companion_path.exists():
         return _empty_companion_metadata(
             BUNDLE_METADATA_SOURCE_NONE,
             trust=normalized_trust,
         )
+    elif not companion_path.is_file():
+        skip_reason = "non_regular"
+    elif companion_path.stat().st_size > SKILL_BUNDLE_MAX_RESOURCE_BYTES:
+        skip_reason = "file_size_limit"
+    else:
+        with companion_path.open("rb") as stream:
+            content = stream.read(SKILL_BUNDLE_MAX_RESOURCE_BYTES + 1)
+        if len(content) > SKILL_BUNDLE_MAX_RESOURCE_BYTES:
+            skip_reason = "file_size_limit"
+    if skip_reason:
+        if warnings is not None:
+            warnings.append(f"parse.warning:companion_metadata_skipped:{skip_reason}")
+        return _empty_companion_metadata(
+            BUNDLE_METADATA_SOURCE_NONE, trust=normalized_trust
+        )
 
-    payload = _load_yaml_mapping(companion_path)
+    payload = _load_yaml_mapping(content)
     interface_raw = payload.get("interface")
     interface: dict[str, Any] = interface_raw if isinstance(interface_raw, dict) else {}
     dependencies_raw = payload.get("dependencies")
@@ -184,10 +206,27 @@ def companion_metadata_unavailable_warning(
     return None
 
 
-def _load_yaml_mapping(path: Path) -> dict[str, Any]:
+def invocation_policy_warnings(
+    front_matter: Mapping[str, Any], companion_metadata: dict[str, Any]
+) -> list[str]:
+    warnings: list[str] = []
+    payload = companion_metadata["bundle_metadata"].get("payload", {})
+    policy = payload.get("policy")
+    if isinstance(policy, Mapping) and "allow_implicit_invocation" in policy:
+        warnings.append(
+            "parse.warning:unsupported_invocation_policy:openai.policy.allow_implicit_invocation"
+        )
+    if "disable-model-invocation" in front_matter:
+        warnings.append(
+            "parse.warning:unsupported_invocation_policy:claude.disable-model-invocation"
+        )
+    return warnings
+
+
+def _load_yaml_mapping(content: bytes) -> dict[str, Any]:
     if yaml is None:
         return {}
-    parsed = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    parsed = yaml.safe_load(content.decode("utf-8")) or {}
     return parsed if isinstance(parsed, dict) else {}
 
 

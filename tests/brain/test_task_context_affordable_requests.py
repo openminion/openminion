@@ -11,6 +11,7 @@ from openminion.modules.brain.loop.context.task_context import (
     updated_task_context,
 )
 from openminion.modules.brain.loop.entry import clarify_tool_spec
+from openminion.modules.brain.constants import TASK_CONTEXT_MAX_CHARS
 from openminion.modules.llm.schemas import Message, ToolSpec
 from tests.brain.test_unified_turn_entry import _build_runner, _state, _tool_response
 
@@ -51,6 +52,72 @@ def context_with_optional_descriptions(**kwargs):
             Message(role="user", content=hints["user_input"]),
         ]
     }
+
+
+@pytest.mark.parametrize(
+    "oversized,include_patch", [(False, False), (True, False), (True, True)]
+)
+def test_first_input_requests_compact_model_task_without_truncation(
+    tmp_path, monkeypatch, oversized, include_patch
+):
+    from openminion.modules.brain.loop import orchestration
+
+    provider = Provider(active=False)
+    arguments = {"path": "report.json"}
+    if include_patch:
+        arguments["task_update"] = {
+            "operation": "start",
+            "expected_revision": 0,
+            "user_quote": "Read report.json",
+            "objective": "Inspect the report",
+            "set_conditions": [{"key": "filename", "quote": "report.json"}],
+        }
+    provider.call = Mock(return_value=_tool_response("file.read", arguments))
+    runner = _build_runner(tmp_path, llm_api=provider)
+    runner.profile.budgets.max_total_llm_tokens = 50000
+    state = _state()
+    state.budgets_remaining.tokens = 50000
+    monkeypatch.setattr(runner, "_build_context", context_with_optional_descriptions)
+    tool = ToolSpec(
+        name="file.read",
+        input_schema={
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+            "additionalProperties": False,
+        },
+    )
+    monkeypatch.setattr(
+        orchestration, "build_entry_tool_specs", lambda *a, **k: ([tool], True)
+    )
+    user_input = "Read report.json"
+    if oversized:
+        user_input += "\nUntrusted evidence: " + "x" * TASK_CONTEXT_MAX_CHARS
+    decision = runner._decide(
+        state=state, user_input=user_input, logger=Mock(), forced_tools=["file.read"]
+    )
+    provider.call.assert_called_once()
+    request = provider.call.call_args.args[0]
+    assert any(message.content == user_input for message in request.messages)
+    assert (
+        any(
+            "This first input exceeds the task-state size limit" in message.content
+            for message in request.messages
+        )
+        == oversized
+    )
+    assert "task_update" not in request.tools[0].input_schema["required"]
+    if oversized and not include_patch:
+        assert decision.reason_code == "invalid_task_context_update"
+        assert state.resolved_task_context is None and state.task_context_needs_update
+        return
+    assert decision.route == "act"
+    task = state.resolved_task_context
+    assert task.revision == 1
+    assert task.objective == ("Inspect the report" if include_patch else user_input)
+    assert task.objective_kind == ("resolved" if include_patch else "verbatim")
+    assert task.conditions == ({"filename": "report.json"} if include_patch else {})
+    assert decision._entry_response.tool_calls[0].arguments == {"path": "report.json"}
 
 
 @pytest.mark.parametrize("active", [False, True])

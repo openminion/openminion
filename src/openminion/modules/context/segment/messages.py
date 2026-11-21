@@ -80,13 +80,15 @@ def _merge_system_segments(
     dict[str, dict[str, Any]],
     dict[str, list[str]],
     dict[str, list[str]],
+    dict[str, list[str]],
 ]:
     merged_system: dict[str, list[str]] = {}
     merged_system_cache_control: dict[str, dict[str, Any]] = {}
     merged_system_segment_ids: dict[str, list[str]] = {}
     merged_system_refs: dict[str, list[str]] = {}
+    merged_system_invalidation_refs: dict[str, list[str]] = {}
     for segment in ordered:
-        if not segment.content.strip():
+        if not segment.content.strip() and segment.image_input is None:
             continue
         if segment.role in {"user", "assistant", "tool"}:
             continue
@@ -98,6 +100,12 @@ def _merge_system_segments(
         for ref in segment.refs:
             if ref not in refs:
                 refs.append(ref)
+        invalidation_refs = merged_system_invalidation_refs.setdefault(
+            segment.bucket, []
+        )
+        for ref in segment.cache_invalidation_refs:
+            if ref not in invalidation_refs:
+                invalidation_refs.append(ref)
         if segment.is_cacheable:
             merged_system_cache_control.setdefault(
                 segment.bucket, {"type": "ephemeral"}
@@ -107,6 +115,7 @@ def _merge_system_segments(
         merged_system_cache_control,
         merged_system_segment_ids,
         merged_system_refs,
+        merged_system_invalidation_refs,
     )
 
 
@@ -135,12 +144,13 @@ def segments_to_messages(segments: list[ContextSegment]) -> list[RenderMessage]:
         merged_system_cache_control,
         merged_system_segment_ids,
         merged_system_refs,
+        merged_system_invalidation_refs,
     ) = _merge_system_segments(ordered)
 
     result: list[RenderMessage] = []
     seen_buckets: set[str] = set()
     for segment in ordered:
-        if not segment.content.strip():
+        if not segment.content.strip() and segment.image_input is None:
             continue
         if segment.bucket in merged_system and segment.bucket not in seen_buckets:
             seen_buckets.add(segment.bucket)
@@ -159,6 +169,9 @@ def segments_to_messages(segments: list[ContextSegment]) -> list[RenderMessage]:
                         ),
                         "refs": list(merged_system_refs.get(segment.bucket, [])),
                         **segment_render_cache_metadata(segment),
+                        "cache_invalidation_refs": list(
+                            merged_system_invalidation_refs.get(segment.bucket, [])
+                        ),
                     },
                 )
             )
@@ -171,6 +184,7 @@ def segments_to_messages(segments: list[ContextSegment]) -> list[RenderMessage]:
                 RenderMessage(
                     role=segment.role,  # type: ignore[arg-type]
                     content=segment.content,
+                    image_input=segment.image_input,
                     meta={
                         "block_kind": segment.bucket,
                         "cache_eligible": bool(segment.is_cacheable),

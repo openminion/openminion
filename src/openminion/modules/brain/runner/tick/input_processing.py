@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from openminion.modules.llm.schemas import LLMRequest, LLMResponse
+
 from ...constants import (
     BRAIN_STATE_ACTIVE,
     BRAIN_STATE_DONE,
@@ -41,6 +43,8 @@ def handle_pending_replay(
     logger,
     tick_ctx: TickRunContext,
 ):
+    if tick_ctx.image_input is not None:
+        return None
     if (
         tick_ctx.user_input is not None
         and tick_ctx.user_input.strip()
@@ -248,7 +252,8 @@ def _capture_user_message(runner: Any, raw_user_message: str) -> bool:
 
 def process_user_input(*, runner, state, logger, tick_ctx: TickRunContext):
     user_input = tick_ctx.user_input
-    if user_input is not None and user_input.strip():
+    if tick_ctx.has_new_user_input:
+        user_input = user_input or ""
         previous_status = str(getattr(state, "status", "") or "").strip().lower()
         if (
             getattr(state, "pending_llm_clarify_context", None) is not None
@@ -263,7 +268,7 @@ def process_user_input(*, runner, state, logger, tick_ctx: TickRunContext):
             )
         if not tick_ctx.skip_initial_append and state.trace_id is None:
             state.trace_id = tick_ctx.trace_id or new_uuid()
-        if not tick_ctx.skip_initial_append:
+        if not tick_ctx.skip_initial_append and tick_ctx.image_input is None:
             runner.session_api.append_turn(
                 tick_ctx.session_id,
                 "user",
@@ -291,6 +296,9 @@ def process_user_input(*, runner, state, logger, tick_ctx: TickRunContext):
                 tick_ctx=tick_ctx,
                 user_input=user_input,
             )
+        prepare_image_input(
+            runner=runner, state=state, logger=logger, tick_ctx=tick_ctx
+        )
         set_status_unchecked(state, BRAIN_STATE_ACTIVE, reason="new_turn")
 
         if _runner_delegate(
@@ -398,3 +406,91 @@ def process_user_input(*, runner, state, logger, tick_ctx: TickRunContext):
                 status=BRAIN_STATE_WAITING_USER,
             )
     return None
+
+
+def prepare_image_input(
+    *, runner: Any, state: Any, logger: Any, tick_ctx: TickRunContext
+) -> None:
+    from openminion.modules.brain.diagnostics.usage import record_llm_response
+    from openminion.modules.llm.client_call import usage_payload_from_response_usage
+    from openminion.modules.llm.image_input import finish_image_reading
+    from openminion.modules.llm.providers.contracts import ProviderError
+    from openminion.modules.runtime.sync import raise_if_cancelled
+
+    record = tick_ctx.image_input
+    state.image_input = record
+    if record is None:
+        return
+    if record.mode == "separate":
+        if (
+            state.llm_calls_used >= state.llm_calls_max
+            or state.budgets_remaining.tokens <= 0
+            or state.budgets_remaining.time_ms <= 0
+        ):
+            raise ProviderError(
+                "Not enough turn budget to read images",
+                code="IMAGE_READER_BUDGET_EXHAUSTED",
+            )
+        runner._emit_phase_status(
+            state=state,
+            source_phase="interpret",
+            detail_text="Reading selected images",
+            payload={
+                "image_stage": "reader",
+                "connection_id": record.connection_id,
+                "model": record.model,
+            },
+        )
+        state.llm_calls_used += 1
+
+        def record_response(response: LLMResponse) -> None:
+            record_llm_response(purpose="image_reader", response=response)
+            _runner_delegate(
+                "_debit_tokens",
+                runner,
+                state,
+                {"usage": usage_payload_from_response_usage(response.usage)},
+                logger,
+            )
+
+        def before_request(request: LLMRequest) -> LLMRequest:
+            from openminion.modules.brain.loop.context.task_budget import (
+                task_request_output_limit,
+            )
+            from openminion.modules.brain.loop.context.task_context import (
+                TaskContextBudgetError,
+            )
+            from openminion.modules.llm.errors import LLMCtlError
+
+            try:
+                limit = task_request_output_limit(
+                    state,
+                    runner.llm_api,
+                    messages=request.messages,
+                    tools=[],
+                    model=request.model,
+                    requested_output=request.max_output_tokens,
+                )
+            except TaskContextBudgetError as exc:
+                raise LLMCtlError("POLICY_DENIED", str(exc)) from exc
+            return request.model_copy(update={"max_output_tokens": limit})
+
+        response = runner.llm_api.read_images(
+            record,
+            question=tick_ctx.original_user_input or "",
+            max_output_tokens=min(4096, state.budgets_remaining.tokens),
+            on_response=record_response,
+            before_request=before_request,
+        )
+        raise_if_cancelled()
+        record = finish_image_reading(record, response)
+        state.image_input = record
+        tick_ctx.image_input = record
+    raise_if_cancelled()
+    runner.session_api.append_turn(
+        tick_ctx.session_id,
+        "user",
+        tick_ctx.original_user_input or "",
+        meta={"ts": iso_now(), "image_input": record.model_dump()},
+    )
+    tick_ctx.skip_initial_append = True

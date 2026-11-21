@@ -21,6 +21,7 @@ def _messages_from_context(context: dict[str, Any]) -> list[Any]:
         content = ""
         attachments: list[str] = []
         if isinstance(turn, dict):
+            image_input = turn.get("image_input")
             role = str(turn.get("role", "")).strip().lower()
             content = str(turn.get("content", "")).strip()
             raw_attachments = turn.get("attachments", [])
@@ -29,6 +30,7 @@ def _messages_from_context(context: dict[str, Any]) -> list[Any]:
                     str(item).strip() for item in raw_attachments if str(item).strip()
                 ]
         else:
+            image_input = getattr(turn, "image_input", None)
             role = str(getattr(turn, "role", "")).strip().lower()
             content = str(getattr(turn, "content", "")).strip()
             raw_attachments = getattr(turn, "attachments", [])
@@ -61,12 +63,13 @@ def _messages_from_context(context: dict[str, Any]) -> list[Any]:
                     block_kind="turn_input",
                 )
             )
-        if content_parts:
+        if content_parts or image_input:
             turn_messages.append(
                 Message(
                     role=cast(_MessageRole, role),
                     content=content,
                     content_parts=content_parts,
+                    image_input=image_input,
                 )
             )
 
@@ -115,7 +118,11 @@ def _messages_from_context(context: dict[str, Any]) -> list[Any]:
             for message in messages
             if str(getattr(message, "role", "")).strip().lower() != "system"
         ]
-        if turn_messages and len(conversational_messages) <= 1:
+        if (
+            turn_messages
+            and len(conversational_messages) <= 1
+            and not any(message.image_input for message in conversational_messages)
+        ):
             return [*system_messages, *turn_messages]
         return messages
 

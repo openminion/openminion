@@ -14,7 +14,7 @@ from .models import (
 
 SESSION_COLUMNS = (
     "id, session_key, channel, target, metadata_json, created_at, updated_at, "
-    "status, last_activity_at, closed_at, expires_at, active_agent_id"
+    "status, last_activity_at, closed_at, expires_at, active_agent_id, image_generation"
 )
 MESSAGE_COLUMNS = (
     "id, session_id, conversation_id, thread_id, attach_id, role, body, "
@@ -142,6 +142,7 @@ def row_to_session(row: Mapping[str, Any]) -> SessionRecord:
         closed_at=normalize_nullable_text(row["closed_at"]),
         expires_at=normalize_nullable_text(row["expires_at"]),
         active_agent_id=normalize_nullable_text(row.get("active_agent_id")),
+        image_generation=str(row["image_generation"]),
     )
 
 

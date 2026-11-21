@@ -3045,7 +3045,12 @@ def test_postprocess_turn_attaches_tool_and_security_metadata() -> None:
     )
     action_result = SimpleNamespace(
         status="error",
-        outputs={"error": "tool_budget_cost_exceeded"},
+        outputs={
+            "error": "tool_budget_cost_exceeded",
+            "error_code": "tool_budget_cost_exceeded",
+            "denial_source": "budget",
+            "blocked_kind": "policy_denied",
+        },
         summary="budget denied",
         error=action_error,
         command_id="cmd-1",

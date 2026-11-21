@@ -30,15 +30,20 @@ def _print_error(console: Console, message: str) -> None:
     console.print(Text(message, style=token_rich_style(StyleToken.ERROR)))
 
 
-def _render_preview(console: Console, preview: Any) -> None:
-    console.print(Text("Review", style="bold"))
-    console.print(f"  Connection: {preview.display_label} ({preview.connection_id})")
-    console.print(f"  API format: {preview.api_format_label}")
-    console.print(f"  Model: {preview.model}")
-    console.print(f"  Base URL: {preview.base_url or 'provider default'}")
-    console.print(f"  Credential: {preview.credential}")
-    console.print(f"  Config: {preview.config_path}")
-    console.print("  Current agent default: unchanged")
+def _save_confirm_prompt(preview: Any) -> str:
+    return "\n".join(
+        (
+            "Review",
+            f"  Connection: {preview.display_label} ({preview.connection_id})",
+            f"  API format: {preview.api_format_label}",
+            f"  Model: {preview.model}",
+            f"  Base URL: {preview.base_url or 'provider default'}",
+            f"  Credential: {preview.credential}",
+            f"  Config: {preview.config_path}",
+            "  Current agent default: unchanged",
+            "Save and use this connection now?",
+        )
+    )
 
 
 async def _prompt_setup_selection(
@@ -193,8 +198,7 @@ async def handle_model_setup(
             return
         break
 
-    _render_preview(console, result.preview)
-    if not await overlay.present_confirm_async("Save and use this connection now?"):
+    if not await overlay.present_confirm_async(_save_confirm_prompt(result.preview)):
         _cancel(console)
         return
 

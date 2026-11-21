@@ -195,7 +195,7 @@ def test_sqlite_metadata_strings_migration_backfills_existing_history(
     result = migrate_database(
         path, migrations=recorded_metadata_backfill_migrations(batches)
     )
-    assert result.applied_versions == (15,)
+    assert result.applied_versions == (15, 16)
     # 2,346 sessions: three batches of up to 1,000.
     assert batches == [1000, 1000, 346, 0]
     with closing(connect_database(path)) as connection:
@@ -254,7 +254,7 @@ def test_sqlite_metadata_strings_migration_rolls_back_whole_and_reruns(
             migrate_database(path)
     assert_not_applied()
 
-    assert migrate_database(path).applied_versions == (15,)
+    assert migrate_database(path).applied_versions == (15, 16)
     with closing(connect_database(path)) as connection:
         store = SessionStore(connection)
         assert stored_metadata(store) == before

@@ -1,5 +1,62 @@
+import datetime
+import math
 import re
 import sqlite3
+
+
+def expiry_bind_params(moment: datetime.datetime) -> tuple[int, int, int]:
+    """Positional values for the three ``expiry_clause`` placeholders.
+
+    Returns ``(second, second, microsecond)``: the clause tests "later second" and
+    "same second, later fraction" against one instant, so the second is bound twice.
+    All three values must come from one ``moment``; splitting the instant would compare
+    against a clock that never existed.
+    """
+    second = math.floor(moment.timestamp())
+    return second, second, moment.microsecond
+
+
+def expiry_clause(prefix: str = "r.") -> str:
+    """SQL predicate that keeps a record while its expiry instant is in the future.
+
+    ``expires_at`` holds caller-supplied text, so this predicate decides what counts
+    as an expiry: the date must round-trip and a supplied clock must be in range, or
+    the value is not an expiry and never hides the record. SQLite's parser would
+    otherwise normalise an impossible time (``24:59`` becomes the next day) or date
+    (``02-30`` becomes March), so both are checked here before any arithmetic. The
+    instant is the offset-adjusted ``strftime('%s', ...)`` cast to INTEGER - it
+    returns TEXT, which sorts above every number - plus the fraction scaled to
+    microseconds, because no built-in date function keeps enough sub-second precision
+    (``julianday`` stops at milliseconds). Equivalent spellings (``+14:00``, ``.1``)
+    therefore compare equal, and ``.100001`` stays one microsecond later than
+    ``.100000``.
+    """
+    column = f"{prefix}expires_at"
+    seconds = f"CAST(strftime('%s', {column}) AS INTEGER)"
+    micros = (
+        f"CASE WHEN instr({column}, '.') = 0 THEN 0 "
+        f"ELSE CAST(round(CAST(substr({column}, instr({column}, '.')) AS REAL)"
+        f" * 1000000) AS INTEGER) END"
+    )
+    readable = (
+        f"date(substr({column}, 1, 10)) = substr({column}, 1, 10) "
+        f"AND substr({column}, 1, 4) >= '0001' "
+        f"AND (substr({column}, 11, 1) = '' "
+        f"OR (substr({column}, 11, 1) IN ('T', ' ') "
+        f"AND (substr({column}, 12, 2) GLOB '[01][0-9]' "
+        f"OR substr({column}, 12, 2) GLOB '2[0-3]') "
+        f"AND substr({column}, 14, 1) = ':' "
+        f"AND substr({column}, 15, 2) GLOB '[0-5][0-9]' "
+        f"AND substr({column}, 17, 1) = ':' "
+        f"AND substr({column}, 18, 2) GLOB '[0-5][0-9]')) "
+        f"AND strftime('%s', {column}) IS NOT NULL"
+    )
+    return (
+        f"({column} IS NULL OR CASE WHEN ({readable}) "
+        f"THEN ({seconds} > ? OR ({seconds} = ? AND {micros} > ?)) "
+        f"ELSE 1 END)"
+    )
+
 
 MIGRATION_V1 = """
 CREATE TABLE IF NOT EXISTS memory_records (

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 
 from openminion.modules.brain.adapters.a2a import LocalA2AAdapter
 from openminion.modules.brain.adapters.context import LocalContextAdapter
@@ -17,10 +18,19 @@ from openminion.modules.brain.schemas import (
     AutoFactExtractionConfig,
     LLMProfiles,
 )
+from openminion.modules.llm.schemas import LLMResponse
 
 
 class _AFEIntegrationLLM(LocalLLMAdapter):
-    def call_structured(self, *, model: str, purpose: str, context: dict, schema: type):
+    def call_structured(
+        self,
+        *,
+        model: str,
+        purpose: str,
+        context: dict,
+        schema: type,
+        on_response: Callable[[LLMResponse], None] | None = None,
+    ):
         if schema.__name__ == "UserMessageCandidateReport":
             return {
                 "items": [
@@ -45,6 +55,7 @@ class _AFEIntegrationLLM(LocalLLMAdapter):
             purpose=purpose,
             context=context,
             schema=schema,
+            on_response=on_response,
         )
 
 
