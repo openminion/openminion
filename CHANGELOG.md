@@ -7,6 +7,15 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- The ordinary brain tool caller now awaits an async `@tool` handler: `run_tool_spec`
+  runs a returned coroutine through the existing `run_async_compat` bridge instead of
+  shaping it as data, so the body executes once, the synchronous path and argument order
+  are untouched, `ToolRuntimeError` and the `EXEC_ERROR`/event mapping are unchanged, and
+  turn cancellation or an inherited turn deadline interrupt the await rather than only
+  being checked before it. The shared execution-path fix is separate and already
+  released; this closes the caller it did not cover (Refs #612).
+
+
 - The PostgreSQL pool options are emitted as the factory's own `pool_size` and
   `pool_max_overflow`, so `storage.postgres_pool_min` / `postgres_pool_max` reach the pool
   instead of being silently dropped, with the 5 retained / 15 total default preserved

@@ -1,9 +1,10 @@
+import inspect
 import json
 import time
 from collections.abc import Mapping
 from typing import Any, cast
 
-from openminion.modules.runtime.sync import raise_if_cancelled
+from openminion.modules.runtime.sync import raise_if_cancelled, run_async_compat
 from openminion.base.config.env import resolve_environment_config
 from openminion.base.logging import get_logger
 from openminion.modules.brain.constants import (
@@ -172,15 +173,9 @@ def run_tool_spec(
     try:
         raise_if_cancelled()
         data = spec.handler(validated_args, context)
+        if inspect.iscoroutine(data):
+            data = run_async_compat(data)
         raise_if_cancelled()
-    except ToolRuntimeError:
-        emit_tool_execution_event(
-            ctx=context,
-            event_type="tool.execution.failed",
-            status="failed",
-            payload=event_payload,
-        )
-        raise
     except Exception as exc:
         emit_tool_execution_event(
             ctx=context,
@@ -188,6 +183,8 @@ def run_tool_spec(
             status="failed",
             payload=event_payload,
         )
+        if isinstance(exc, ToolRuntimeError):
+            raise
         return _error_envelope(
             status=BRAIN_STATE_ERROR,
             summary="Tool execution failed",
