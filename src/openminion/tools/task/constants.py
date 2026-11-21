@@ -53,6 +53,8 @@ WATCH_EPHEMERAL_METADATA_KEYS = frozenset(
         "watch_turn_kind",
         "watch_description",
         "watch_alert_condition",
+        "watch_previous_summary",
+        "watch_previous_condition_met",
         "watch_profile_id",
         "watch_target_id",
         "watch_allowed_tools",

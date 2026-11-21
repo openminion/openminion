@@ -7,6 +7,13 @@ Purpose: give maintainers a compact package-local release smoke checklist for
 the public `openminion` package surface on the active alpha line defined by
 `openminion.base.version.OPENMINION_VERSION`.
 
+`task.schedule` can defer a bounded instruction, but scheduling success is not
+release authorization or release completion. An unattended release still
+requires the project/autonomy checkpoints, exact grants, protected-branch and
+hosted-CI checks, publication approvals, and readback evidence below. Do not
+use a generic scheduled task to bypass those owners or to claim a CLI or
+Desktop release succeeded.
+
 ## Release floor
 
 Runtime metadata is separate from source or CLI behavior. The

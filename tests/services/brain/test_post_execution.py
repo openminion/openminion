@@ -26,6 +26,7 @@ from openminion.services.agent.constants import PRIOR_TURN_CONTEXT_CHAR_LIMIT
 from openminion.services.brain.post_execution import BrainBridgeTurnMixin
 from openminion.services.security.policy import SecurityPolicyEngine
 from openminion.services.brain.post_execution.context import (
+    _attach_watch_resume_context,
     _recalled_memory_count_from_runner,
 )
 from openminion.modules.brain.loop.services import turn_tool_allowlist
@@ -41,6 +42,27 @@ class DummyBridge(BrainBridgeTurnMixin):
 
 class _NoArgs(BaseModel):
     pass
+
+
+def test_watch_resume_context_attaches_atomic_previous_observation() -> None:
+    state_inline: dict[str, object] = {}
+
+    _attach_watch_resume_context(
+        state_inline=state_inline,
+        inbound_metadata={
+            "watch_job": "true",
+            "watch_alert_condition": "status changes",
+            "watch_previous_summary": "status was ready",
+            "watch_previous_condition_met": "false",
+        },
+        cron_job_id="job-watch",
+    )
+
+    subscription = state_inline["module_state"]["watch_subscription"]
+    assert subscription["previous_observation"] == {
+        "summary": "status was ready",
+        "condition_met": False,
+    }
 
 
 def test_tool_policy_adapter_includes_configured_internal_actor_scopes() -> None:

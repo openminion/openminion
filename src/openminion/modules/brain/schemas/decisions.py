@@ -14,6 +14,7 @@ from pydantic import (
     model_validator,
 )
 from pydantic_core import PydanticCustomError
+from openminion.modules.brain.constants import WATCH_OUTCOME_SUMMARY_MAX_CHARS
 from openminion.modules.brain.runtime.recovery import TCRPContext, validate_payload
 
 from .commands import Command, DelegationReviewResult
@@ -306,7 +307,10 @@ class WatchOutcome(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     condition_met: bool = False
-    summary: str = ""
+    summary: str = Field(
+        min_length=1,
+        max_length=WATCH_OUTCOME_SUMMARY_MAX_CHARS,
+    )
 
     @field_validator("summary", mode="before")
     @classmethod

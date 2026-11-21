@@ -18,7 +18,10 @@ DECIDE_STYLE_OVERRIDES: dict[str, str] = {
         "or durable project handoff request needs no repository inspection before "
         "this proposal. Otherwise start the work directly. Use "
         "respond(answer=..., freshness=...) for a direct "
-        "answer; include freshness in every entry control call."
+        "answer; include freshness in every entry control call. Classify freshness "
+        "against current external facts: local runtime actions such as scheduling "
+        "tasks and relative delays are local_only unless they depend on current "
+        "external evidence."
     ),
     "entry_tool_rule": (
         "If execution is already authorized and a visible tool can help, call "

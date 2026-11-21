@@ -16,7 +16,11 @@ from openminion.modules.brain.schemas import (
     AdaptiveBudgetConfig,
     BudgetCounters,
     WorkingState,
+    WatchOutcome,
     new_uuid,
+)
+from openminion.modules.brain.loop.tools.iteration.setup import (
+    _ensure_profile_guidance,
 )
 from openminion.modules.llm.providers.base import ProviderError
 from openminion.modules.brain.loop.tools.engine import (
@@ -356,6 +360,116 @@ def _profile(
         tool_choice="auto" if allowed_tools else "none",
         provider_parallel_tool_capacity=1,
         adaptive_budget_config=adaptive_budget_config,
+    )
+
+
+def test_watch_outcome_summary_is_bounded() -> None:
+    with pytest.raises(ValueError):
+        WatchOutcome(condition_met=True, summary="   ")
+    with pytest.raises(ValueError):
+        WatchOutcome(condition_met=False, summary="x" * 1001)
+
+
+def test_watch_context_is_user_role_not_system_instruction() -> None:
+    profile = _profile(
+        allowed_tools=frozenset({"file.read"}),
+        profile_name="watch_check_v1",
+    )
+    loop_state = AdaptiveToolLoopState(messages=[])
+    loop_ctx = SimpleNamespace(
+        state=SimpleNamespace(
+            module_state={
+                "watch_subscription": {
+                    "enabled": True,
+                    "alert_condition": "status changes from ready to blocked",
+                    "previous_observation": {
+                        "summary": "status was ready",
+                        "condition_met": False,
+                    },
+                }
+            }
+        )
+    )
+
+    _ensure_profile_guidance(
+        profile,
+        loop_state,
+        lambda _profile: "",
+        loop_ctx=loop_ctx,
+    )
+
+    user_messages = [message for message in loop_state.messages if message.role == "user"]
+    assert len(user_messages) == 1
+    assert "status changes from ready to blocked" in user_messages[0].content
+    assert "status was ready" in user_messages[0].content
+    assert all(
+        "status was ready" not in message.content
+        for message in loop_state.messages
+        if message.role == "system"
+    )
+
+
+@pytest.mark.parametrize(
+    "watch_outcome",
+    [None, {"condition_met": True, "summary": "   "}],
+    ids=["missing", "empty-summary"],
+)
+def test_watch_outcome_retry_reuses_previous_observation_as_user_data(
+    watch_outcome: dict[str, Any] | None,
+) -> None:
+    runner = _NoToolRepairHarness()
+    runner.loop_ctx = SimpleNamespace(
+        state=SimpleNamespace(
+            module_state={
+                "watch_subscription": {
+                    "enabled": True,
+                    "alert_condition": "status changes from ready to blocked",
+                    "previous_observation": {
+                        "summary": "status was ready",
+                        "condition_met": False,
+                    },
+                }
+            }
+        ),
+        provider_retry_max_attempts=1,
+        _plan_tool_active_plan_override=None,
+    )
+    runner.loop_state = AdaptiveToolLoopState(
+        messages=[Message(role="assistant", content="No material change.")]
+    )
+    runner.profile = _profile(
+        allowed_tools=frozenset({"file.read"}),
+        profile_name="watch_check_v1",
+    )
+    runner.allowed_tools = frozenset({"file.read"})
+    runner.public_mode_tag = "act"
+    response = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="m",
+        output_text="No material change.",
+        finish_reason="stop",
+        watch_outcome=watch_outcome,
+    )
+
+    continue_loop, outcome = runner._handle_no_tool_calls(
+        prepared=SimpleNamespace(
+            response=response,
+            iter_llm_duration_ms=1,
+            iter_input_tokens=1,
+            iter_output_tokens=1,
+        ),
+        payloads=runner._build_response_payloads(response),
+    )
+
+    assert continue_loop is True
+    assert outcome is None
+    assert runner.loop_state.messages[-1].role == "user"
+    assert "status was ready" in runner.loop_state.messages[-1].content
+    assert all(
+        "status was ready" not in message.content
+        for message in runner.loop_state.messages
+        if message.role == "system"
     )
 
 
