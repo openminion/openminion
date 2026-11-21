@@ -183,3 +183,31 @@ def test_fresh_session_uses_requested_agent(two_agent_runtime):
 
     assert _models(requests) == {"model-b"}
     assert result.metadata["agent"] == "agent-b"
+
+
+def test_submitted_idempotency_key_rejects_cross_agent_reuse(two_agent_runtime):
+    runtime, requests, _state = two_agent_runtime
+    payload = {
+        "message": "same request",
+        "session_id": "shared-idempotency-session",
+        "idempotency_key": "shared-idempotency-key",
+        "deliver": False,
+        "timeout_seconds": 30,
+    }
+
+    first = runtime.submit_turn(payload={**payload, "agent_id": "agent-a"}).result(
+        timeout_s=60
+    )
+    mark = len(requests)
+    second = runtime.submit_turn(
+        payload={
+            **payload,
+            "agent_id": "agent-b",
+            "session_id": "other-idempotency-session",
+        }
+    ).result(timeout_s=60)
+
+    assert first.errors == []
+    assert [error.code for error in second.errors] == ["turn_failed"]
+    assert "idempotency key conflicts" in second.errors[0].message
+    assert len(requests) == mark

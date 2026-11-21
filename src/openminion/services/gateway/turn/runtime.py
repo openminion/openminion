@@ -178,6 +178,7 @@ def _append_knowledge_graph_context(
 
 def _request_hash(
     *,
+    agent_id: str,
     channel: str,
     target: str,
     body: str,
@@ -191,16 +192,13 @@ def _request_hash(
     typed_turn_intent: object | None = None,
     image_refs: tuple[str, ...] = (),
 ) -> str:
-    serialized_typed_turn_intent: object | None = None
-    if typed_turn_intent is not None:
-        if hasattr(typed_turn_intent, "model_dump"):
-            try:
-                serialized_typed_turn_intent = typed_turn_intent.model_dump(mode="json")
-            except TypeError:
-                serialized_typed_turn_intent = typed_turn_intent.model_dump()
-        else:
-            serialized_typed_turn_intent = typed_turn_intent
+    serialized_typed_turn_intent = (
+        typed_turn_intent.model_dump(mode="json")
+        if hasattr(typed_turn_intent, "model_dump")
+        else typed_turn_intent
+    )
     payload = {
+        "agent_id": agent_id,
         "channel": channel,
         "target": target,
         "body": body,
@@ -214,8 +212,7 @@ def _request_hash(
         "typed_turn_intent": serialized_typed_turn_intent,
         **({"image_refs": image_refs} if image_refs else {}),
     }
-    encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
 def _response_has_tool_activity(metadata: dict[str, str]) -> bool:

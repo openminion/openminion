@@ -426,6 +426,7 @@ class GatewayService:
         approval_callback: Callable[..., Any] | None = None,
     ) -> Message:
         request_hash = _request_hash(
+            agent_id=self._agent_id,
             channel=channel,
             target=target,
             body=body,
@@ -449,7 +450,6 @@ class GatewayService:
         inflight = self._inflight.get(inflight_key)
         if inflight is not None:
             return await inflight
-
         reserved = self._idempotency.reserve(
             method=self._METHOD_HANDLE_MESSAGE,
             idempotency_key=idempotency_key,

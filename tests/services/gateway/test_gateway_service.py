@@ -1017,6 +1017,22 @@ class GatewayServiceCoreTests(GatewayServiceTestCase):
                         )
                     )
 
+    def test_gateway_idempotency_hash_covers_agent_identity(self) -> None:
+        from openminion.services.gateway.turn.runtime import _request_hash
+
+        request = {
+            "channel": "console",
+            "target": "local-user",
+            "body": "same request body",
+            "session_id": "same-session",
+            "inbound_metadata": None,
+        }
+
+        self.assertNotEqual(
+            _request_hash(agent_id="agent-a", **request),
+            _request_hash(agent_id="agent-b", **request),
+        )
+
     def test_gateway_rejects_distinct_concurrent_explicit_session_turns(self) -> None:
         class _BlockingProvider(LLMProvider):
             name = "blocking-session-turn"
