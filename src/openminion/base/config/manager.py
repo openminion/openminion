@@ -16,6 +16,10 @@ class ConfigManagerError(RuntimeError):
     pass
 
 
+class ConfigMissingError(ConfigManagerError):
+    """Resolved config path absent (first-run state); other failures differ."""
+
+
 @dataclass
 class ConfigManager:
     """Instance-scoped config provider for derived module configs."""
@@ -45,22 +49,18 @@ class ConfigManager:
         data_root: Path | None = None,
     ) -> "ConfigManager":
         env_config = EnvironmentConfig.from_sources()
-        raw_config_path = str(config_path or "").strip()
-        normalized_config_path: str | None = None
-        if raw_config_path:
-            candidate = Path(raw_config_path).expanduser()
-            if candidate.is_absolute():
-                normalized_config_path = str(candidate.resolve(strict=False))
-            else:
-                normalized_config_path = raw_config_path
-        resolved_home_root = home_root or resolve_home_root(
-            config_path=normalized_config_path
-        )
+        raw = str(config_path or "").strip()
+        normalized: str | None = None
+        if raw:
+            candidate = Path(raw).expanduser()
+            resolved = str(candidate.resolve(strict=False))
+            normalized = resolved if candidate.is_absolute() else raw
+        resolved_home_root = home_root or resolve_home_root(config_path=normalized)
         resolved_config_path = resolve_config_path(
-            normalized_config_path, home_root=resolved_home_root
+            normalized, home_root=resolved_home_root
         )
         if not resolved_config_path.exists():
-            raise ConfigManagerError(f"config file not found: {resolved_config_path}")
+            raise ConfigMissingError(f"config file not found: {resolved_config_path}")
         data_root = data_root or resolve_data_root(resolved_home_root, env=env_config)
         base_config = load_config(
             str(resolved_config_path), home_root=resolved_home_root
