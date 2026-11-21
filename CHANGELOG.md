@@ -52,6 +52,12 @@ This file tracks package-facing release notes for `openminion`.
   `tool_budget`-prefixed code, which keeps its budget metadata but no longer implies a denial
   (Refs #478).
 
+- `/model setup` now includes the redacted connection review summary inside the
+  `Save and use this connection now?` overlay prompt instead of buffering it into the
+  post-command slash console, so Connection, API format, Model, Base URL, Credential,
+  Config, and the unchanged current-agent-default notice are visible before confirmation
+  or cancellation (Refs #707).
+
 
 - Cached reads inside one adaptive loop are now dropped when a tool call could have changed the tree: a known
   file writer invalidates by path containment (a cached read of `.` or `src` covers the files below it, and a
