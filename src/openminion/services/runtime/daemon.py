@@ -531,6 +531,7 @@ def _turn_success_response(
     duration_ms: int,
 ) -> TurnResponse:
     metadata = dict(turn_result.metadata)
+    stats = turn_result.stats
     tool_calls = _tool_call_summaries(metadata.get("tool_calls"))
     artifact_refs = _tool_artifact_refs(
         metadata.get("tool_results"),
@@ -540,15 +541,13 @@ def _turn_success_response(
     return TurnResponse(
         final_text=turn_result.body,
         metadata=metadata,
-        stats=turn_result.stats.as_payload()
-        if turn_result.stats is not None and turn_result.stats.has_any_data
-        else {},
+        stats=stats.as_payload() if stats is not None and stats.has_any_data else {},
         artifacts=artifact_refs,
         tool_calls_summary=tool_calls,
         memory_write_intents=[],
         telemetry=TurnTelemetry(
-            tokens_in=_to_int(metadata.get("usage_prompt_tokens")),
-            tokens_out=_to_int(metadata.get("usage_completion_tokens")),
+            tokens_in=stats.input_tokens if stats is not None else 0,
+            tokens_out=stats.output_tokens if stats is not None else 0,
             duration_ms=duration_ms,
             retries=0,
             queue_wait_ms=0,
@@ -681,11 +680,3 @@ def _tool_artifact_refs(
             }
         )
     return refs
-
-
-def _to_int(value: Any) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return 0
-    return max(0, parsed)

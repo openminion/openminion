@@ -10,6 +10,7 @@ from unittest import mock
 import pytest
 
 from openminion.modules.policy.models import build_consent_preview
+from openminion.modules.telemetry.usage.types import RunStats
 from openminion.services.runtime.daemon import execute_turn
 from openminion.services.runtime.ingress import TurnTimeoutError
 from openminion.services.runtime.ingress.requests import build_manager_turn_request
@@ -333,7 +334,7 @@ def test_daemon_negotiated_approval_emits_stream_and_session_events() -> None:
         return SimpleNamespace(
             body="final",
             metadata={},
-            stats=SimpleNamespace(has_any_data=False, as_payload=lambda: {}),
+            stats=RunStats(),
         )
 
     with (
@@ -389,7 +390,7 @@ def test_daemon_without_negotiation_passes_no_approval_callback() -> None:
         return SimpleNamespace(
             body="final",
             metadata={},
-            stats=SimpleNamespace(has_any_data=False, as_payload=lambda: {}),
+            stats=RunStats(),
         )
 
     with (
