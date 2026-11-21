@@ -5299,7 +5299,8 @@ def test_engine_watch_check_retries_once_when_outcome_is_missing() -> None:
     )
     assert any(
         message.role == "user"
-        and "<watch_alert_condition>deployment health is not healthy" in message.content
+        and '"alert_condition": "deployment health is not healthy"'
+        in message.content
         for message in runtime.calls[1]["messages"]
     )
     assert not any(
