@@ -350,7 +350,7 @@ Complete research, order-approval, and software-feature examples live in
 OpenMinion owns agent execution, sessions, tools, policy, artifacts, and
 telemetry. Your application owns users, product records, workflow, UI, auth,
 billing, and deployment. Reusable local plugins use the narrow
-`openminion.plugins` authoring facade; application-specific tools normally stay
+`openminion.tools` authoring facade; application-specific tools normally stay
 inside the application.
 
 ## Repository Map
