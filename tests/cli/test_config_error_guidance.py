@@ -37,23 +37,33 @@ def _run_cli(args: list[str], *, home_root: Path) -> subprocess.CompletedProcess
     )
 
 
-def test_format_cli_error_only_advises_when_the_config_is_absent() -> None:
+def test_the_error_origin_decides_the_guidance_not_a_missing_path() -> None:
+    from openminion.base.config.manager import ConfigMissingError
     from openminion.cli.main import format_cli_error
 
-    absent = RuntimeError("config file not found: /tmp/home/agents.json")
-    guidance = format_cli_error(absent, missing_config=True)
+    absent = ConfigMissingError("config file not found: /tmp/home/agents.json")
+    guidance = format_cli_error(absent)
     assert guidance.startswith("config file not found: /tmp/home/agents.json")
     assert "openminion config init --provider <name>" in guidance
 
-    # The same message without an absent path (malformed config, permission failure,
-    # any other runtime error) keeps its own text.
+    # Same words, same absent path, different origin: no guidance. This is the
+    # case the path-based check used to mislabel.
     for unrelated in (
-        RuntimeError("config file not found elsewhere"),
+        RuntimeError("config file not found: /tmp/home/agents.json"),
+        RuntimeError("storage backend unavailable"),
         ValueError("config file not found: /tmp/x"),
         RuntimeError("Invalid JSON config at /tmp/x: Expecting value"),
     ):
         assert format_cli_error(unrelated) == str(unrelated)
-        assert format_cli_error(unrelated, missing_config=False) == str(unrelated)
+
+
+def test_the_config_owner_raises_the_typed_error_for_an_absent_path(
+    tmp_path: Path,
+) -> None:
+    from openminion.base.config.manager import ConfigManager, ConfigMissingError
+
+    with pytest.raises(ConfigMissingError):
+        ConfigManager.load(tmp_path / "absent.json", home_root=tmp_path)
 
 
 def test_absent_default_config_explains_the_next_step(tmp_path: Path) -> None:

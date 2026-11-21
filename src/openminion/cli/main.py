@@ -22,6 +22,7 @@ from openminion.base.config import (
     resolve_config_path,
     run_profile_overrides_from_mapping,
 )
+from openminion.base.config.manager import ConfigMissingError
 
 
 def resolve_surface_onboarding_route(**kwargs: Any) -> Any:
@@ -46,31 +47,17 @@ _MISSING_CONFIG_HINT = (
 )
 
 
-def _config_absent(args: object, home_root: str) -> bool:
-    """Whether the config this invocation would load is absent (first-run state).
+def format_cli_error(exc: BaseException) -> str:
+    """Render a CLI error, adding the next step only for an absent config file.
 
-    Uses the same resolver the config manager loads through, so the check cannot
-    disagree with the failure that brought us here. Malformed JSON or a permission
-    failure resolves to an existing path and keeps its own message.
-    """
-    try:
-        resolved = resolve_config_path(
-            getattr(args, "config", None),
-            home_root=Path(home_root) if home_root else None,
-        )
-    except (OSError, ValueError):
-        return False
-    return not resolved.exists()
-
-
-def format_cli_error(exc: BaseException, *, missing_config: bool = False) -> str:
-    """Render a CLI error, adding the next step when the config file is absent.
-
-    Only the first-run case gains guidance: a malformed config, a permission
-    failure or any other runtime error is returned unchanged.
+    The decision comes from the error's origin, not from the filesystem: only
+    ``ConfigMissingError``, raised by the config owner when the resolved path
+    does not exist, gains the guidance. A malformed config, a permission failure
+    or an unrelated runtime error keeps its own message even when the config
+    path happens to be absent.
     """
     message = str(exc)
-    if missing_config:
+    if isinstance(exc, ConfigMissingError):
         return f"{message}\n{_MISSING_CONFIG_HINT}"
     return message
 
@@ -345,11 +332,11 @@ def main(argv: Sequence[str] | None = None, *, owns_process: bool = False) -> in
                 )
                 return int(handler(args, app) or 0)
             return int(handler(args) or 0)
+    except ConfigMissingError as exc:
+        parser.exit(status=2, message=f"openminion: {format_cli_error(exc)}\n")
+        return 2
     except (ConfigError, RuntimeError, KeyError) as exc:
-        message = format_cli_error(
-            exc, missing_config=_config_absent(args, home_root or effective_home_root)
-        )
-        parser.exit(status=2, message=f"openminion: {message}\n")
+        parser.exit(status=2, message=f"openminion: {format_cli_error(exc)}\n")
         return 2
     except KeyboardInterrupt:
         print("openminion: cancelled", file=sys.stderr)
