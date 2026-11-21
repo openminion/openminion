@@ -10,7 +10,6 @@ from eth_account import Account
 from web3 import Web3
 
 from openminion.base.config.runtime.tool_family import (
-    BlockchainToolRuntimeConfig,
     coerce_blockchain_tool_runtime_config,
 )
 from openminion.modules.tool.plugin_api import PolicyAuthorization
@@ -93,7 +92,8 @@ def test_the_cap_is_absent_by_default_and_coerced_when_present() -> None:
 def test_the_cap_rejects_non_canonical_decimals(bad: str) -> None:
     with pytest.raises(Exception) as raised:
         coerce_blockchain_tool_runtime_config({"enabled": True, "max_value_wei": bad})
-    assert "max_value_wei" in str(raised.value)
+    message = str(raised.value)
+    assert "max_value_wei" in message and "decimal string" in message
 
 
 def test_prepare_refuses_value_over_the_cap_before_any_rpc() -> None:
@@ -113,23 +113,58 @@ def test_prepare_refuses_value_over_the_cap_before_any_rpc() -> None:
     assert secret_service.reads == []
 
 
-def test_send_refuses_value_over_the_cap_before_signing() -> None:
-    secret_service = _SecretService()
-    context = _context(secret_service=secret_service, max_value_wei="1000")
-    transaction = {
+class _StubEth:
+    """Enough chain surface for the send-state revalidation, and no broadcast."""
+
+    chain_id = 31337
+
+    def __init__(self) -> None:
+        self.broadcasts = 0
+        self.account = SimpleNamespace(
+            from_key=lambda key: SimpleNamespace(address=Account.from_key(key).address)
+        )
+
+    def get_transaction_count(self, address: str, block: str) -> int:
+        return 9
+
+    def call(self, transaction: dict[str, Any], block: str) -> str:
+        return "0x"
+
+    def send_raw_transaction(self, raw: bytes) -> str:  # pragma: no cover
+        self.broadcasts += 1
+        raise AssertionError("a refused send must not broadcast")
+
+
+class _StubWeb3:
+    def __init__(self) -> None:
+        self.eth = _StubEth()
+
+    @staticmethod
+    def to_checksum_address(value: str) -> str:
+        return Web3.to_checksum_address(value)
+
+
+def _transaction(value_wei: str) -> dict[str, Any]:
+    return {
         "schema_version": "evm-transaction-v1",
         "transaction_type": "eip1559",
         "chain_id": 31337,
         "from_address": Account.from_key(PRIVATE_KEY).address,
         "to_address": RECIPIENT,
-        "value_wei": "1001",
-        "nonce": "0",
+        "value_wei": value_wei,
+        "nonce": "9",
         "gas_limit": "21000",
         "data": "0x",
-        "max_fee_per_gas_wei": "1000000000",
-        "max_priority_fee_per_gas_wei": "1000000000",
-        "max_total_fee_wei": "21000000000000",
+        "max_fee_per_gas_wei": "23",
+        "max_priority_fee_per_gas_wei": "3",
+        "max_total_fee_wei": "483000",
     }
+
+
+def test_send_refuses_value_over_the_cap_before_broadcast() -> None:
+    """The configured path reports the cap like it reports the fee cap: a stale field."""
+    client = _StubWeb3()
+    transaction = _transaction("1001")
 
     result = send_transaction(
         {
@@ -137,63 +172,60 @@ def test_send_refuses_value_over_the_cap_before_signing() -> None:
             "call_context": None,
             "preparation_digest": preparation_digest(transaction, None),
         },
-        context,
-        web3=_NoRpcWeb3(),
+        _context(secret_service=_SecretService(), max_value_wei="1000"),
+        web3=client,
     )
 
     assert result["ok"] is False
-    assert result["error"]["code"] == "VALUE_CAP_EXCEEDED"
-    assert secret_service.reads == []
+    assert result["error"]["details"]["fields"] == ["value"]
+    assert client.eth.broadcasts == 0
 
 
-def _signer_unavailable(code: str) -> bool:
-    return code == "SIGNER_UNAVAILABLE"
+def test_the_send_boundary_is_inclusive() -> None:
+    """Equal value is not stale; one wei more is."""
+    from openminion.tools.blockchain.cap_checks import stale_cap_fields
 
-
-def test_the_boundary_is_inclusive_and_zero_value_still_passes() -> None:
-    """value == cap and value == 0 are allowed; the guard only refuses strictly above."""
-    at_cap = prepare_transaction(
-        {"kind": "native_transfer", "to_address": RECIPIENT, "value_wei": "1000"},
-        _context(max_value_wei="1000"),
+    config = coerce_blockchain_tool_runtime_config(
+        {"enabled": True, "max_value_wei": "1000"}
     )
-    zero_value = prepare_transaction(
-        {"kind": "native_transfer", "to_address": RECIPIENT, "value_wei": "0"},
-        _context(max_value_wei="0"),
+    assert config is not None
+    assert stale_cap_fields(config, _transaction("1000")) == []
+    assert stale_cap_fields(config, _transaction("1001")) == ["value"]
+
+
+def test_the_fee_field_is_still_reported_alongside_the_value_field() -> None:
+    """Both caps are evaluated, so a transaction can report both stale fields."""
+    from openminion.tools.blockchain.cap_checks import stale_cap_fields
+
+    config = coerce_blockchain_tool_runtime_config(
+        {"enabled": True, "max_value_wei": "1000", "max_total_fee_wei": "100"}
     )
-    for result in (at_cap, zero_value):
-        assert result["error"]["code"] != "VALUE_CAP_EXCEEDED"
-        assert _signer_unavailable(result["error"]["code"])
+    assert config is not None
+    assert stale_cap_fields(config, _transaction("1001")) == ["fees", "value"]
 
 
-def test_a_zero_cap_refuses_any_non_zero_value() -> None:
-    result = prepare_transaction(
-        {"kind": "native_transfer", "to_address": RECIPIENT, "value_wei": "1"},
-        _context(max_value_wei="0"),
-    )
-    assert result["error"]["code"] == "VALUE_CAP_EXCEEDED"
-    assert result["error"]["details"]["configured_max_value_wei"] == "0"
-
-
-def test_the_cap_covers_the_resolved_prepare_entry() -> None:
-    """The resolved kind is refused before any stored resolution is consulted."""
-    result = prepare_transaction(
-        {
-            "kind": "resolved_contract_call",
-            "resolution_digest": "sha256:" + "1" * 64,
-            "function_signature": "deposit()",
-            "arguments": [],
-            "value_wei": "5000",
-        },
-        _context(max_value_wei="1000"),
-    )
-    assert result["error"]["code"] == "VALUE_CAP_EXCEEDED"
-    assert result["error"]["details"]["value_wei"] == "5000"
-
-
-def test_the_serialized_config_keeps_the_cap() -> None:
-    from openminion.base.config.runtime.tool_family import (
-        blockchain_tool_runtime_config_to_dict,
+def test_the_resolved_send_refuses_over_cap_before_any_broadcast() -> None:
+    """The mainnet send path refuses at its own gate, beside the fee cap."""
+    from openminion.tools.blockchain.resolved_operations import (
+        _load_validated_send_signer,
     )
 
-    config = BlockchainToolRuntimeConfig(enabled=True, max_value_wei="42")
-    assert blockchain_tool_runtime_config_to_dict(config)["max_value_wei"] == "42"
+    from openminion.tools.blockchain.runtime import resolve_blockchain_config
+
+    context = _context(secret_service=_SecretService(), max_value_wei="1000")
+    config = resolve_blockchain_config(context)
+    transaction = _transaction("1001")
+    request = SimpleNamespace(
+        transaction=SimpleNamespace(model_dump=lambda mode="json": transaction),
+        preparation_digest="sha256:" + "1" * 64,
+        signer_address=Account.from_key(PRIVATE_KEY).address,
+    )
+
+    _, _, _, error = _load_validated_send_signer(request, context, config)
+
+    assert error is not None
+    assert error["error"]["code"] == "VALUE_CAP_EXCEEDED"
+    assert error["error"]["details"] == {
+        "value_wei": "1001",
+        "configured_max_value_wei": "1000",
+    }

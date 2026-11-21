@@ -23,6 +23,7 @@ from .schemas import (
     ResolvedPreparedTransaction,
     SendTransactionArgs,
 )
+from .cap_checks import VALUE_CAP_MESSAGE, stale_cap_fields, value_cap_details
 from .preparations import save_prepared_transaction
 from .schema_types import decimal_string, web3_hex_data
 from .transaction_schemas import preparation_digest
@@ -425,27 +426,13 @@ def prepare_transaction(
             {"field": "", "reason": "request_schema"},
         )
 
-    if config.max_value_wei and int(request.value_wei) > int(config.max_value_wei):
-        return _error(
-            "VALUE_CAP_EXCEEDED",
-            "Native value exceeds the configured cap.",
-            {
-                "value_wei": str(request.value_wei),
-                "configured_max_value_wei": str(config.max_value_wei),
-            },
-        )
+    if (value_cap := value_cap_details(config, request.value_wei)) is not None:
+        return _error("VALUE_CAP_EXCEEDED", VALUE_CAP_MESSAGE, value_cap)
 
     if request.kind == "resolved_contract_call":
         from .resolved_calls import prepare_resolved_transaction
 
         return prepare_resolved_transaction(request, config, context)
-    if not config.rpc_url or config.chain_id is None:
-        return _error(
-            "FEATURE_UNAVAILABLE",
-            "Configured blockchain network is unavailable.",
-            {"feature": "configured_blockchain_network"},
-        )
-
     try:
         client, account = _load_signing_account(config, context, web3)
     except (KeyError, OSError, TypeError, ValueError):
@@ -617,8 +604,7 @@ def _validate_send_state(
         else:
             if encoded != transaction["data"]:
                 stale_fields.append("data")
-    if int(transaction["max_total_fee_wei"]) > int(config.max_total_fee_wei):
-        stale_fields.append("fees")
+    stale_fields.extend(stale_cap_fields(config, transaction))
     client.eth.call(rpc_transaction, "pending")
     return rpc_transaction, stale_fields
 
@@ -743,23 +729,6 @@ def _send_validated_transaction(
 ) -> dict[str, Any]:
     from web3.exceptions import ContractLogicError, Web3Exception
 
-    if config.max_value_wei and int(transaction["value_wei"]) > int(
-        config.max_value_wei
-    ):
-        return _send_terminal(
-            context,
-            transaction,
-            request.preparation_digest,
-            "failed",
-            _error(
-                "VALUE_CAP_EXCEEDED",
-                "Native value exceeds the configured cap.",
-                {
-                    "value_wei": str(transaction["value_wei"]),
-                    "configured_max_value_wei": str(config.max_value_wei),
-                },
-            ),
-        )
     try:
         client, account = _load_signing_account(config, context, web3)
     except (KeyError, OSError, TypeError, ValueError):

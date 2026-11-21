@@ -7,6 +7,8 @@ from typing import Any
 from eth_abi.exceptions import DecodingError
 
 from .abi import decode_abi_values, encode_function_call
+from .cap_checks import FEE_CAP_MESSAGE, VALUE_CAP_MESSAGE
+from .cap_checks import fee_cap_details, value_cap_details
 from .preparations import (
     MAX_OPERATION_RECORD_BYTES,
     SessionRecordError,
@@ -234,40 +236,19 @@ def _load_validated_send_signer(
             ),
         )
     sender = Web3.to_checksum_address(account.address)
-    if int(transaction["max_total_fee_wei"]) > int(config.max_total_fee_wei):
-        return (
-            None,
-            sender,
-            transaction,
-            _resolved_send_failure(
-                context,
-                request,
-                "FEE_CAP_EXCEEDED",
-                "Transaction fee exceeds the configured cap.",
-                {
-                    "max_total_fee_wei": transaction["max_total_fee_wei"],
-                    "configured_max_total_fee_wei": str(config.max_total_fee_wei),
-                },
-            ),
-        )
-    if config.max_value_wei and int(transaction["value_wei"]) > int(
-        config.max_value_wei
+    fee_details = fee_cap_details(config, transaction["max_total_fee_wei"])
+    value_details = value_cap_details(config, transaction["value_wei"])
+    for code, message, details in (
+        ("FEE_CAP_EXCEEDED", FEE_CAP_MESSAGE, fee_details),
+        ("VALUE_CAP_EXCEEDED", VALUE_CAP_MESSAGE, value_details),
     ):
-        return (
-            None,
-            sender,
-            transaction,
-            _resolved_send_failure(
-                context,
-                request,
-                "VALUE_CAP_EXCEEDED",
-                "Native value exceeds the configured cap.",
-                {
-                    "value_wei": str(transaction["value_wei"]),
-                    "configured_max_value_wei": str(config.max_value_wei),
-                },
-            ),
-        )
+        if details is not None:
+            return (
+                None,
+                sender,
+                transaction,
+                _resolved_send_failure(context, request, code, message, details),
+            )
     if sender != request.signer_address or sender != transaction["from_address"]:
         return (
             None,

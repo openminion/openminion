@@ -41,10 +41,12 @@ def test_blockchain_config_defaults_round_trip_when_present() -> None:
             "signer_secret_namespace": "blockchain",
             "writes_enabled": False,
             "max_total_fee_wei": "10000000000000000",
+            "max_value_wei": "",
             "receipt_timeout_seconds": 60,
             "confirmation_depth": 1,
         }
     }
+    assert coerce_tool_runtime_config(tool_runtime_config_to_dict(config)) == config
 
 
 def test_omitted_blockchain_config_stays_omitted() -> None:
