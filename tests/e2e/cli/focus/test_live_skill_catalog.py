@@ -319,10 +319,15 @@ def _assert_case(case: str, evidence: dict, workspace: Path) -> None:
             not in {"skill.get", "respond", "clarify"} | _DISCOVERY_TOOLS
         ]
     else:
-        expected = (
+        fixture = (
             "system-inventory"
             if case == "complex-resource"
             else "swiftui-performance-audit"
+        )
+        expected = next(
+            row["skill_id"]
+            for row in manifest.values()
+            if Path(row["fixture"]).parent.name == fixture
         )
         assert ids == {expected}
         assert all(p["selected_skill_ids"] == [expected] for p in selected)

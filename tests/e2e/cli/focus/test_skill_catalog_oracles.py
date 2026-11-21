@@ -1,6 +1,7 @@
 """Provider-free controls for the frozen catalog evidence and approval boundary."""
 
 from copy import deepcopy
+from contextlib import closing
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -15,11 +16,13 @@ from openminion.modules.brain.bootstrap.skill.pipeline import (
     _resolve_unique_named_skill_refs,
 )
 from openminion.modules.brain.bootstrap.skill.selection import (
+    SkillRef,
     _emit_skill_prerouting_failure,
     _emit_skill_selection_event,
 )
 from tests.e2e.cli.focus.harness import FocusProbe
 from tests.e2e.cli.focus import test_live_skill_catalog as catalog
+from openminion.tools.skill.plugin import _h_skill_get
 
 
 def test_frozen_corpus_and_implicit_prompt():
@@ -53,7 +56,8 @@ def resource_evidence():
         "sha256": sha256(content.encode()).hexdigest(),
     }
     row = {
-        "skill_id": "swiftui-performance-audit",
+        "fixture": "fixtures/swiftui-performance-audit/SKILL.md",
+        "skill_id": "swiftui_performance_audit",
         "version_hash": "a" * 64,
         "resources": [resource],
     }
@@ -302,7 +306,16 @@ def test_approval_binds_actual_pending_local_write(tmp_path, defect):
         )
 
 
-def test_public_admission_preserves_full_agent_catalog(tmp_path):
+@pytest.mark.parametrize(
+    ("case", "fixture"),
+    [
+        ("explicit", "swiftui-performance-audit"),
+        ("implicit", "swiftui-performance-audit"),
+        ("complex-resource", "system-inventory"),
+        ("ambiguous", "webapp-testing"),
+    ],
+)
+def test_public_admission_preserves_full_agent_catalog(tmp_path, case, fixture):
     config = tmp_path / "config.json"
     config.write_text(
         json.dumps(
@@ -333,6 +346,77 @@ def test_public_admission_preserves_full_agent_catalog(tmp_path):
     )
     assert all(row["admission"]["admission_state"] == "admitted" for row in manifest)
     assert catalog._fixture_hashes() == before
+    row = next(r for r in manifest if Path(r["fixture"]).parent.name == fixture)
+    events = []
+    _emit_skill_selection_event(
+        logger=SimpleNamespace(
+            emit=lambda name, payload, **kwargs: events.append(
+                {"type": name, "payload": payload}
+            )
+        ),
+        state=SimpleNamespace(trace_id="oracle"),
+        model="fixture",
+        selection_mode="llm-select",
+        selected_refs=[SkillRef(row["skill_id"], row["version_hash"], "llm-select")],
+        effective_count=len(manifest),
+        capacity=4,
+        routed_intent="provider-free admitted-identity control",
+        fail_closed_reason=None,
+        context_budget="medium",
+        shortlisted_ids=[row["skill_id"]],
+    )
+    tools = []
+    if case != "ambiguous":
+        args = {
+            "skill_id": row["skill_id"],
+            "version_hash": row["version_hash"],
+            "resource_path": row["resources"][0]["path"],
+        }
+        with closing(catalog.Skill(catalog._skill_config(probe))) as skill:
+            output = _h_skill_get(
+                args, SimpleNamespace(skill_api=skill, agent_id=probe.agent_id)
+            )
+            tools.append(("skill.get", args, output))
+    if case == "complex-resource":
+        facts = {
+            "platform": {"system": "fixture", "machine": "arm64", "python": "3.11"},
+            "memory": {"total_bytes": 1024},
+            "disk": [{"total_bytes": 2048}],
+        }
+        tools.append(("host.metrics", {}, {"data": facts}))
+        (tmp_path / "inventory.json").write_text(json.dumps(facts))
+        (tmp_path / "inventory.md").write_text("Synthetic inventory oracle control.")
+    elif case in {"explicit", "implicit"}:
+        (tmp_path / "audit.md").write_text("Synthetic audit oracle control.")
+    for index, (name, args, output) in enumerate(tools):
+        events.extend(
+            [
+                {
+                    "type": "tool.call.requested",
+                    "payload": {
+                        "call_id": str(index),
+                        "canonical_name": name,
+                        "sanitized_normalized_arguments": args,
+                    },
+                },
+                {
+                    "type": "tool.call.completed",
+                    "payload": {
+                        "call_id": str(index),
+                        "status": "success",
+                        "output": {"outputs": output},
+                    },
+                },
+            ]
+        )
+    evidence = {"brain_events": events, "manifest": manifest, "approvals": []}
+    catalog._assert_case(case, evidence, tmp_path)
+    if row["skill_id"] != fixture:
+        selected = next(e["payload"] for e in events if e["type"] == "skill.selected")
+        selected["skill_ref"]["id"] = fixture
+        selected["selected_skill_ids"] = [fixture]
+        with pytest.raises(KeyError):
+            catalog._assert_case(case, evidence, tmp_path)
 
 
 def test_approval_accepts_wrapping_but_rejects_ambiguous_preview(tmp_path):
