@@ -20,7 +20,7 @@ from openminion.modules.brain.schemas import (
     new_uuid,
 )
 from openminion.modules.brain.loop.tools.iteration.setup import (
-    _ensure_profile_guidance,
+    _ensure_loop_guidance,
 )
 from openminion.modules.llm.providers.base import ProviderError
 from openminion.modules.brain.loop.tools.engine import (
@@ -391,14 +391,16 @@ def test_watch_context_is_user_role_not_system_instruction() -> None:
         )
     )
 
-    _ensure_profile_guidance(
+    _ensure_loop_guidance(
         profile,
         loop_state,
         lambda _profile: "",
         loop_ctx=loop_ctx,
     )
 
-    user_messages = [message for message in loop_state.messages if message.role == "user"]
+    user_messages = [
+        message for message in loop_state.messages if message.role == "user"
+    ]
     assert len(user_messages) == 1
     assert "status changes from ready to blocked" in user_messages[0].content
     assert "status was ready" in user_messages[0].content

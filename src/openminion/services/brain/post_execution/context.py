@@ -96,17 +96,11 @@ def _inject_gateway_system_context(
 def _history_has_memory_context(*, history: list[Message]) -> bool:
     for item in history:
         metadata = getattr(item, "metadata", {}) or {}
-        if str(metadata.get("memory_scope", "") or "").strip():
+        if _metadata_text(metadata, "memory_scope"):
             return True
-        if (
-            str(metadata.get("context_memory_merged", "") or "").strip().lower()
-            == "true"
-        ):
+        if _metadata_bool(metadata, "context_memory_merged"):
             return True
-        if (
-            str(metadata.get("context_memory_dynamic", "") or "").strip().lower()
-            == "true"
-        ):
+        if _metadata_bool(metadata, "context_memory_dynamic"):
             return True
     return False
 
@@ -266,7 +260,9 @@ def _attach_watch_resume_context(
         "alert_condition": _metadata_text(inbound_metadata, "watch_alert_condition"),
         "profile_id": _metadata_text(inbound_metadata, "watch_profile_id"),
         "target_id": _metadata_text(inbound_metadata, "watch_target_id"),
-        "allowed_tools": [item.strip() for item in raw_tools.split(",") if item.strip()],
+        "allowed_tools": [
+            item.strip() for item in raw_tools.split(",") if item.strip()
+        ],
         "max_iterations": int(inbound_metadata.get("watch_max_iterations", 3) or 3),
         "timeout_seconds": int(inbound_metadata.get("watch_timeout_seconds", 60) or 60),
         "write_authorized": _metadata_bool(inbound_metadata, "watch_write_authorized"),
@@ -277,7 +273,9 @@ def _attach_watch_resume_context(
     if "watch_previous_condition_met" in inbound_metadata:
         subscription["previous_observation"] = {
             "summary": _metadata_text(inbound_metadata, "watch_previous_summary"),
-            "condition_met": _metadata_bool(inbound_metadata, "watch_previous_condition_met"),
+            "condition_met": _metadata_bool(
+                inbound_metadata, "watch_previous_condition_met"
+            ),
         }
     module_state["watch_subscription"] = subscription
     state_inline[STATE_KEY_MODULE_STATE] = module_state

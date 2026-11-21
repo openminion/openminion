@@ -95,7 +95,9 @@ def _wait_for_finished_run_count(
     )
 
 
-def _wait_for_running_run_count(db_path: Path, job_id: str, expected: int) -> list[dict]:
+def _wait_for_running_run_count(
+    db_path: Path, job_id: str, expected: int
+) -> list[dict]:
     deadline = time.monotonic() + 180
     terminal = {"finished", "failed", "cancelled", "timed_out"}
     while time.monotonic() < deadline:
@@ -213,7 +215,9 @@ def _trace_tool_call_arguments(trace_root: Path, tool_name: str) -> list[dict]:
                         arguments.append(parsed)
             for key, value in node.items():
                 if key != "tools":
-                    collect(value, within_arguments=within_arguments or key == "arguments")
+                    collect(
+                        value, within_arguments=within_arguments or key == "arguments"
+                    )
         elif isinstance(node, list):
             for item in node:
                 collect(item, within_arguments=within_arguments)
@@ -383,9 +387,7 @@ def test_trace_tool_call_arguments_reads_normalized_trace(tmp_path: Path) -> Non
                 "tool_calls": [
                     {
                         "name": "task.schedule",
-                        "arguments": {
-                            "schedule": {"kind": "at", "after_seconds": 90}
-                        },
+                        "arguments": {"schedule": {"kind": "at", "after_seconds": 90}},
                     }
                 ]
             }
@@ -646,9 +648,12 @@ def test_official_minimax_focus_daemon_material_change_watch(
         assert watch["stop_on_condition"] is True
         assert watch["on_condition_action"] is None
         assert watch["write_authorized"] is False
-        assert json.loads(config_path.read_text(encoding="utf-8"))["runtime"][
-            "provider_retry_max_attempts"
-        ] == 1
+        assert (
+            json.loads(config_path.read_text(encoding="utf-8"))["runtime"][
+                "provider_retry_max_attempts"
+            ]
+            == 1
+        )
         assert payload["_openminion_origin"]["session_id"] == session_id
         assert _trace_proves_tool_execution(trace_root, "task.watch")
 
@@ -870,7 +875,7 @@ def test_official_minimax_focus_daemon_ordinary_recurring_two_deliveries(
                     prompt=(
                         "Use task.schedule to create a recurring task named "
                         f"{task_name!r}. Set schedule to exactly "
-                        "{\"kind\":\"every\",\"every_ms\":60000}. Set instruction "
+                        '{"kind":"every","every_ms":60000}. Set instruction '
                         "'Reply with exactly: TSRL_RECURRING_DELIVERY'. Keep the "
                         "default announce delivery and report the exact task_id."
                     ),
@@ -882,7 +887,9 @@ def test_official_minimax_focus_daemon_ordinary_recurring_two_deliveries(
                 ),
             )
             db_path = data_root / "state" / "brain" / "sessions.db"
-            jobs = _rows(db_path, "SELECT * FROM cron_jobs WHERE name = ?", (task_name,))
+            jobs = _rows(
+                db_path, "SELECT * FROM cron_jobs WHERE name = ?", (task_name,)
+            )
             assert len(jobs) == 1
             job = jobs[0]
             job_id = str(job["job_id"])
@@ -933,7 +940,10 @@ def test_official_minimax_focus_daemon_ordinary_recurring_two_deliveries(
             data_root=data_root,
             expected_pid=daemon_pid,
         )
-        assert len(_rows(db_path, "SELECT * FROM cron_runs WHERE job_id = ?", (job_id,))) == 2
+        assert (
+            len(_rows(db_path, "SELECT * FROM cron_runs WHERE job_id = ?", (job_id,)))
+            == 2
+        )
 
         messages, events = _cron_announcements(
             data_root / "state" / "openminion.db",
@@ -942,9 +952,9 @@ def test_official_minimax_focus_daemon_ordinary_recurring_two_deliveries(
         )
         assert len(messages) == 2
         assert len(events) == 2
-        assert {json.loads(row["metadata_json"])["cron_run_id"] for row in messages} == {
-            row["run_id"] for row in runs
-        }
+        assert {
+            json.loads(row["metadata_json"])["cron_run_id"] for row in messages
+        } == {row["run_id"] for row in runs}
         assert {json.loads(row["payload_json"])["cron_run_id"] for row in events} == {
             row["run_id"] for row in runs
         }
@@ -1036,7 +1046,9 @@ def test_official_minimax_focus_daemon_relative_one_time_delivery(
                 ),
             )
             db_path = data_root / "state" / "brain" / "sessions.db"
-            jobs = _rows(db_path, "SELECT * FROM cron_jobs WHERE name = ?", (task_name,))
+            jobs = _rows(
+                db_path, "SELECT * FROM cron_jobs WHERE name = ?", (task_name,)
+            )
             assert len(jobs) == 1
             job = jobs[0]
             job_id = str(job["job_id"])
@@ -1061,7 +1073,10 @@ def test_official_minimax_focus_daemon_relative_one_time_delivery(
         assert run["state"] == "finished"
         assert datetime.fromisoformat(run["due_at"]) == schedule_at
         assert json.loads(run["delivery_targets_json"]) == ["announce:last"]
-        assert len(_rows(db_path, "SELECT * FROM cron_runs WHERE job_id = ?", (job_id,))) == 1
+        assert (
+            len(_rows(db_path, "SELECT * FROM cron_runs WHERE job_id = ?", (job_id,)))
+            == 1
+        )
         assert _rows(
             data_root / DEFAULT_INTEGRATED_SQLITE_SUBPATH,
             "SELECT state FROM scheduled_tasks WHERE cron_job_id = ?",

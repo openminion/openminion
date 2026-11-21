@@ -256,7 +256,7 @@ def _workflow_observation_enabled(
     return bool(getattr(skill_api, "runtime_workflow_observation_enabled", False))
 
 
-def _ensure_profile_guidance(
+def _ensure_loop_guidance(
     profile: AdaptiveToolLoopProfile,
     loop_state: AdaptiveToolLoopState,
     render_policy: Any,
@@ -463,7 +463,7 @@ def prepare_loop_frame(
         render_goal_execution_policy,
     )
 
-    _ensure_profile_guidance(profile, loop_state, render_goal_execution_policy, loop_ctx)
+    _ensure_loop_guidance(profile, loop_state, render_goal_execution_policy, loop_ctx)
     refresh_shortlisting_state(
         loop_state.messages,
         loop_state.scratchpad,
