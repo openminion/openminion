@@ -11,6 +11,7 @@ from openminion.modules.skill.runtime.bundle_metadata import (
     agent_skills_conformance_warnings,
     agent_skills_metadata,
     companion_metadata_unavailable_warning,
+    invocation_policy_warnings,
     load_companion_metadata,
     resolve_bundle_metadata_trust,
 )
@@ -496,11 +497,14 @@ class SkillIngestMixin:
             remote_source=remote_source,
             authority=authority,
         )
-        companion = load_companion_metadata(bundle_root, trust=resolved_trust)
         warnings: list[str] = []
+        companion = load_companion_metadata(
+            bundle_root, trust=resolved_trust, warnings=warnings
+        )
         companion_warning = companion_metadata_unavailable_warning(companion)
         if companion_warning is not None:
             warnings.append(companion_warning)
+        warnings.extend(invocation_policy_warnings(front_matter, companion))
         portable_metadata, metadata_warnings = agent_skills_metadata(front_matter)
         warnings.extend(metadata_warnings)
         if portable_metadata:

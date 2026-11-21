@@ -774,6 +774,7 @@ class RuntimeControlsMixin:
         learning_summary = skill_learning_summary(
             config_path=getattr(runtime, "config_path", None),
             home_root=Path(getattr(runtime, "home_root")),
+            data_root=Path(runtime.data_root),
             agent_id=self.agent_id,
         )
         if not rows and not learning_summary:

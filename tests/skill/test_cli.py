@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from openminion.modules.skill.cli import main
+from openminion.modules.skill.runtime.skill import ingest
 
 
 DEMO_SKILL_MD = """
@@ -134,6 +135,71 @@ def test_cli_ingest_persists_explicit_trust(tmp_path: Path) -> None:
     payload = json.loads(out)
     assert payload["ok"] is True
     assert payload["skill"]["bundle_metadata"]["trust"] == "trusted_local"
+
+
+def test_cli_invocation_warnings_preserve_duplicate_package_and_pending_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _config_path(tmp_path)
+    root = tmp_path / "manual-skill"
+    (root / "agents").mkdir(parents=True)
+    source = root / "SKILL.md"
+    source.write_text(
+        "---\nname: manual-skill\ndescription: Read facts.\n"
+        "disable-model-invocation: true\nallowed-tools: exec.run\n---\n"
+        "## Procedure\nRead the input.\n",
+        encoding="utf-8",
+    )
+    (root / "agents/openai.yaml").write_text(
+        "policy:\n  allow_implicit_invocation: false\n", encoding="utf-8"
+    )
+    args = [
+        "--config",
+        str(cfg),
+        "ingest",
+        "--name",
+        "manual-skill",
+        "--file",
+        str(source),
+    ]
+    with monkeypatch.context() as before_warnings:
+        before_warnings.setattr(ingest, "invocation_policy_warnings", lambda *_: [])
+        original = json.loads(_run_cli(args))
+    inspect_args = [
+        "--config",
+        str(cfg),
+        "inspect",
+        original["skill_id"],
+        "--version",
+        original["version_hash"],
+    ]
+    package = json.loads(_run_cli(inspect_args))["skill"]
+
+    repeated = json.loads(_run_cli(args))
+
+    assert repeated["skill_id"] == original["skill_id"]
+    assert repeated["version_hash"] == original["version_hash"]
+    assert "admission.pending" in original["warnings"]
+    assert "admission.duplicate_content" in repeated["warnings"]
+    assert (
+        "parse.warning:unsupported_invocation_policy:openai.policy.allow_implicit_invocation"
+        in repeated["warnings"]
+    )
+    assert (
+        "parse.warning:unsupported_invocation_policy:claude.disable-model-invocation"
+        in repeated["warnings"]
+    )
+    assert (
+        "parse.warning:unknown_front_matter_key:disable-model-invocation"
+        in repeated["warnings"]
+    )
+    assert json.loads(_run_cli(inspect_args))["skill"] == package
+    assert package["tools"] == []
+    assert package["bundle_metadata"]["trust"] == "untrusted_local"
+    assert package["bundle_metadata"]["payload"] == {
+        "policy": {"allow_implicit_invocation": False}
+    }
+    assert json.loads(_run_cli(["--config", str(cfg), "list"]))["skills"] == []
 
 
 def test_cli_disable_sets_status_deprecated(tmp_path: Path) -> None:
