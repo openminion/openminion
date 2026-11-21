@@ -84,7 +84,14 @@ class APITurnsTests(unittest.TestCase):
                     body=request_body,
                     request_id="client-request-1",
                 )
-                second_status, second_payload = dispatch_request(
+                replay_status, _ = dispatch_request(
+                    "POST",
+                    "/turns",
+                    str(config_path),
+                    body=request_body,
+                    request_id="client-request-1",
+                )
+                conflict_status, conflict_payload = dispatch_request(
                     "POST",
                     "/turns",
                     str(config_path),
@@ -93,11 +100,47 @@ class APITurnsTests(unittest.TestCase):
                 )
 
             self.assertEqual(int(first_status), 200)
-            self.assertEqual(int(second_status), 500)
+            self.assertEqual(int(replay_status), 200)
+            self.assertEqual(int(conflict_status), 500)
             self.assertEqual(
-                second_payload["error"]["message"],
+                conflict_payload["error"]["message"],
                 "idempotency key conflicts with an earlier request",
             )
+
+    def test_post_turns_ignores_generated_request_ids_for_idempotency(self) -> None:
+        for index, request_id in enumerate(("", "invalid request id")):
+            with (
+                self.subTest(request_id=request_id),
+                tempfile.TemporaryDirectory() as tmp,
+            ):
+                os.environ["OPENMINION_DATA_ROOT"] = str(Path(tmp) / ".openminion")
+                config_path = _write_echo_config(Path(tmp))
+                body = {
+                    "message": "idempotent turn",
+                    "idempotency_key": f"generated-request-id-{index}",
+                }
+
+                with redirect_stdout(io.StringIO()):
+                    first_status, first_payload = dispatch_request(
+                        "POST",
+                        "/turns",
+                        str(config_path),
+                        body=body,
+                        request_id=request_id,
+                    )
+                    second_status, second_payload = dispatch_request(
+                        "POST",
+                        "/turns",
+                        str(config_path),
+                        body=body,
+                        request_id=request_id,
+                    )
+
+                self.assertEqual(int(first_status), 200)
+                self.assertEqual(int(second_status), 200)
+                self.assertEqual(
+                    first_payload["turn"]["id"], second_payload["turn"]["id"]
+                )
 
     def test_post_turns_agent_id_uses_agent_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

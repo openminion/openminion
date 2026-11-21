@@ -61,7 +61,8 @@ def dispatch_request(
     from openminion.api import server
 
     method_name = method.upper().strip() or "GET"
-    resolved_request_id = normalize_request_id(request_id)
+    submitted_request_id = (request_id or "").strip()
+    resolved_request_id = normalize_request_id(submitted_request_id)
     started_at = server.perf_counter()
     logger = logging.getLogger("openminion.api")
     logger.info(
@@ -77,7 +78,10 @@ def dispatch_request(
             runtime_bootstrap_error=runtime_bootstrap_error,
             request_headers=request_headers,
             request_id=resolved_request_id,
-            request_id_supplied=request_id is not None,
+            request_id_supplied=(
+                bool(submitted_request_id)
+                and resolved_request_id == submitted_request_id
+            ),
         ),
         method_name=method_name,
         path=path,
