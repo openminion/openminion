@@ -24,6 +24,8 @@ from tests.e2e.cli.focus.harness import FocusProbe
 from tests.e2e.cli.focus import test_live_skill_catalog as catalog
 from openminion.tools.skill.plugin import _h_skill_get
 
+pytestmark = pytest.mark.e2e
+
 
 def test_frozen_corpus_and_implicit_prompt():
     paths = catalog._positive_skill_fixture_paths()
