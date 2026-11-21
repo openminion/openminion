@@ -1,3 +1,5 @@
+"""OMX bundle export and rehydration helpers."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -6,9 +8,10 @@ import json
 import sqlite3
 from contextlib import closing
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Any, Iterator
 
+from openminion.modules.storage.migrations.errors import DbIdentityError
 from openminion.modules.storage.migrations.meta_rows import rows_to_meta
 from openminion.modules.storage.migrations.models import RehydrateReport
 from openminion.modules.storage.migrations.omx import (
@@ -20,7 +23,11 @@ from openminion.modules.storage.migrations.omx import (
     load_manifest,
 )
 from openminion.modules.storage.migrations.verify import run_verification
-from openminion.modules.storage.record_store import RecordStore, RecordStoreSQLite
+from openminion.modules.storage.record_store import (
+    RecordStore,
+    RecordStoreSQLite,
+    _quote_ident,
+)
 
 if TYPE_CHECKING:
     from openminion.modules.storage.progress import ProgressReporter
@@ -316,7 +323,7 @@ def _export_via_record_store(
         table_entries.append(
             OmxTableEntry(
                 name=table,
-                path=str(data_path.relative_to(export_dir)),
+                path=data_path.relative_to(export_dir).as_posix(),
                 codec="jsonl",
                 row_count=row_count,
                 sha256=sha256,
@@ -414,11 +421,49 @@ def export_omx(
         _close_record_store(sqlite_store)
 
 
+def _resolve_omx_table_path(omx_dir: Path, raw_path: str) -> Path:
+    raw_text = str(raw_path or "").strip()
+    posix_rel = PurePosixPath(raw_text.replace("\\", "/"))
+    win_rel = PureWindowsPath(raw_text)
+    if (
+        not raw_text
+        or posix_rel.is_absolute()
+        or win_rel.is_absolute()
+        or ".." in posix_rel.parts
+        or posix_rel == PurePosixPath(".")
+    ):
+        raise ValueError(f"OMX table path escapes bundle directory: {raw_path!r}")
+    bundle_root = omx_dir.resolve(strict=False)
+    candidate = omx_dir.joinpath(*posix_rel.parts).resolve(strict=False)
+    if candidate == bundle_root or not candidate.is_relative_to(bundle_root):
+        raise ValueError(f"OMX table path escapes bundle directory: {raw_path!r}")
+    return candidate
+
+
+def _validate_omx_table_rows(table_name: str, rows: list[dict[str, Any]]) -> list[str]:
+    _quote_ident(table_name)
+    if not rows:
+        return []
+    columns = list(rows[0].keys())
+    if not columns:
+        raise ValueError(f"OMX table {table_name} row must define at least one column")
+    first_columns = set(columns)
+    if any(set(row.keys()) != first_columns for row in rows[1:]):
+        raise ValueError(f"OMX table {table_name} rows must share the same columns")
+    return [_quote_ident(col) for col in columns]
+
+
 def _read_omx_bundle_rows(
     omx_dir: Path, table_entry: Any, *, verify_checksums: bool
 ) -> list[dict[str, Any]]:
-    data_path = omx_dir / table_entry.path
+    _quote_ident(table_entry.name)
+    data_path = _resolve_omx_table_path(omx_dir, table_entry.path)
     if verify_checksums:
+        expected_count = int(table_entry.row_count)
+        if expected_count < 0:
+            raise ValueError(
+                f"Invalid negative row count for table {table_entry.name}: {expected_count}"
+            )
         actual = _sha256_file(data_path)
         if actual != table_entry.sha256:
             raise ValueError(
@@ -430,7 +475,18 @@ def _read_omx_bundle_rows(
         for line in handle:
             if not line.strip():
                 continue
-            rows.append(json.loads(line))
+            parsed = json.loads(line)
+            if not isinstance(parsed, dict):
+                raise ValueError(
+                    f"OMX table {table_entry.name} row must be a JSON object"
+                )
+            rows.append(parsed)
+    if verify_checksums and len(rows) != int(table_entry.row_count):
+        raise ValueError(
+            f"Row count mismatch for table {table_entry.name}: "
+            f"{len(rows)} != {table_entry.row_count}"
+        )
+    _validate_omx_table_rows(table_entry.name, rows)
     return rows
 
 
@@ -445,6 +501,36 @@ def _ensure_table_schema_sqlite(
     except sqlite3.OperationalError as exc:
         if "already exists" not in str(exc).lower():
             raise
+
+
+def _sync_sqlite_omx_pragmas(
+    conn: sqlite3.Connection, manifest: OmxManifest, *, check_only: bool
+) -> None:
+    if (
+        isinstance(manifest.module_application_id, bool)
+        or int(manifest.module_application_id) < 0
+    ):
+        raise DbIdentityError(
+            f"invalid module_application_id for '{manifest.module_id}': "
+            f"{manifest.module_application_id!r}"
+        )
+    expected_app_id = int(manifest.module_application_id)
+    app_row = conn.execute("PRAGMA application_id").fetchone()
+    current_app_id = int(app_row[0]) if app_row and app_row[0] is not None else 0
+    if current_app_id != 0 and current_app_id != expected_app_id:
+        raise DbIdentityError(
+            f"application_id mismatch for module '{manifest.module_id}': "
+            f"expected {expected_app_id}, found {current_app_id}"
+        )
+    if check_only:
+        return
+    if expected_app_id > 0 and current_app_id == 0:
+        conn.execute(f"PRAGMA application_id={expected_app_id}")
+    source_uv = int(manifest.source.user_version)
+    uv_row = conn.execute("PRAGMA user_version").fetchone()
+    current_uv = int(uv_row[0]) if uv_row and uv_row[0] is not None else 0
+    if source_uv > 0 and current_uv == 0:
+        conn.execute(f"PRAGMA user_version={source_uv}")
 
 
 def _import_via_record_store(
@@ -469,26 +555,41 @@ def _import_via_record_store(
         )
 
     try:
-        for table in manifest.tables:
-            rows = _read_omx_bundle_rows(
-                omx_dir, table, verify_checksums=verify_checksums
+        if isinstance(record_store, RecordStoreSQLite):
+            _sync_sqlite_omx_pragmas(record_store.connection, manifest, check_only=True)
+        prepared_tables = [
+            (
+                table.name,
+                _quote_ident(table.name),
+                _read_omx_bundle_rows(
+                    omx_dir, table, verify_checksums=verify_checksums
+                ),
             )
-            try:
-                record_store.execute_count(f'DELETE FROM "{table.name}"')
-            except Exception:
+            for table in manifest.tables
+        ]
+        with record_store.transaction():
+            for table_name, quoted_table, rows in prepared_tables:
+                try:
+                    record_store.execute_count(f"DELETE FROM {quoted_table}")
+                except Exception:
+                    if not rows:
+                        continue
+                    raise
                 if not rows:
                     continue
-                raise
-            if not rows:
-                continue
-            inserted = record_store.insert_many(table.name, rows)
-            imported_rows += inserted
-            if reporter is not None:
-                _call_reporter(
-                    reporter.on_progress, advance=inserted, message=table.name
+                inserted = record_store.insert_many(table_name, rows)
+                imported_rows += inserted
+                if reporter is not None:
+                    _call_reporter(
+                        reporter.on_progress, advance=inserted, message=table_name
+                    )
+            if isinstance(record_store, RecordStoreSQLite):
+                _sync_sqlite_omx_pragmas(
+                    record_store.connection, manifest, check_only=False
                 )
         success = True
     except Exception as exc:  # noqa: BLE001
+        imported_rows = 0
         error = str(exc)
 
     if _reporter_started and reporter is not None:
@@ -514,29 +615,33 @@ def _import_omx_tables_sqlite(
     verify_checksums: bool,
     reporter: "ProgressReporter | None",
 ) -> int:
+    prepared_tables = [
+        (
+            table.name,
+            _read_omx_bundle_rows(omx_dir, table, verify_checksums=verify_checksums),
+        )
+        for table in manifest.tables
+    ]
     imported_rows = 0
     target.parent.mkdir(parents=True, exist_ok=True)
     with closing(sqlite3.connect(str(target))) as conn, conn:
+        _sync_sqlite_omx_pragmas(conn, manifest, check_only=True)
         schema_map = manifest.blobs.get("schemas", {}) if manifest.blobs else {}
-        for table in manifest.tables:
-            _ensure_table_schema_sqlite(conn, schema_map, table.name)
-        for table in manifest.tables:
-            rows = _read_omx_bundle_rows(
-                omx_dir,
-                table,
-                verify_checksums=verify_checksums,
-            )
+        for table_name, _rows in prepared_tables:
+            _ensure_table_schema_sqlite(conn, schema_map, table_name)
+        for table_name, rows in prepared_tables:
             imported_rows += _replace_sqlite_table_rows(
                 conn=conn,
-                table_name=table.name,
+                table_name=table_name,
                 rows=rows,
             )
             if reporter is not None and rows:
                 _call_reporter(
                     reporter.on_progress,
                     advance=len(rows),
-                    message=table.name,
+                    message=table_name,
                 )
+        _sync_sqlite_omx_pragmas(conn, manifest, check_only=False)
         conn.commit()
     return imported_rows
 
@@ -547,8 +652,10 @@ def _replace_sqlite_table_rows(
     table_name: str,
     rows: list[dict[str, Any]],
 ) -> int:
+    quoted_table = _quote_ident(table_name)
+    quoted_columns = _validate_omx_table_rows(table_name, rows)
     try:
-        conn.execute(f'DELETE FROM "{table_name}"')
+        conn.execute(f"DELETE FROM {quoted_table}")
     except sqlite3.OperationalError:
         if not rows:
             return 0
@@ -557,8 +664,11 @@ def _replace_sqlite_table_rows(
         return 0
     columns = list(rows[0].keys())
     placeholders = ", ".join(["?"] * len(columns))
-    sql = f'INSERT INTO "{table_name}" ({", ".join(columns)}) VALUES ({placeholders})'
-    conn.executemany(sql, [[row.get(col) for col in columns] for row in rows])
+    sql = (
+        f"INSERT INTO {quoted_table} ({', '.join(quoted_columns)}) "
+        f"VALUES ({placeholders})"
+    )
+    conn.executemany(sql, [[row[col] for col in columns] for row in rows])
     return len(rows)
 
 
@@ -625,7 +735,19 @@ def import_omx(
             level="quick",
             raise_on_fatal=False,
         )
-        success = True
+        if verification.ok:
+            success = True
+        else:
+            fatal_messages = [
+                finding.message
+                for finding in verification.findings
+                if finding.severity == "fatal" and finding.message
+            ]
+            error = (
+                "; ".join(fatal_messages)
+                if fatal_messages
+                else "post-import SQLite verification failed"
+            )
     except Exception as exc:  # noqa: BLE001
         error = str(exc)
 
