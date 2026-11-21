@@ -15,6 +15,11 @@ This file tracks package-facing release notes for `openminion`.
   exact-boundary instants are physically purged on both backends without altering
   supersession protection or candidate/artifact-edge cleanup (Refs #824).
 
+- The context manifest and the `context.manifest.created` payload now carry the context-budget stage's identity
+  outcome as counts, `identity_budget = {truncated, cap_tokens, used_tokens}` (that stage's own estimates for the
+  rendered identity, including caller `instructions`; never the text, and not the earlier renderer or the final
+  request). Older manifests leave the fields `None` and still emit `identity_budget: {}`, so an unmeasured identity
+  is not reported as untruncated. No budget, cap or permission behaviour changes. (Refs #811)
 
 - The shared `PromptBlockKind` literal now includes `self_awareness` and `memory`,
   `segments_to_messages` merges `cache_invalidation_refs` across combined system

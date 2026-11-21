@@ -468,6 +468,7 @@ def _build_context_manifest(
     constraints: BuildConstraints,
     session_slice: SessionSlice,
     identity: Any,
+    identity_budget: IdentityBudgetResult,
     included: _IncludedPackItems,
     prompt_view: Any,
     projection_metrics: dict[str, Any],
@@ -483,6 +484,9 @@ def _build_context_manifest(
             agent_id=request.agent_id,
             profile_version=identity.profile_version,
             render_version=identity.render_version,
+            budget_truncated=identity_budget.truncated,
+            budget_cap_tokens=identity_budget.cap_tokens,
+            budget_used_tokens=identity_budget.used_tokens,
         ),
         session=SessionManifest(
             slice_version=session_slice.slice_version,
@@ -723,7 +727,6 @@ def finalize_context_pack(
         segments=segments,
         prompt_tool_schemas=prompt_tool_schemas,
     )
-    messages = segments_to_messages_fn(segments)
     included = _included_pack_items(
         segments=segments,
         decision_log=decision_log,
@@ -740,6 +743,7 @@ def finalize_context_pack(
         constraints=constraints,
         session_slice=session_slice,
         identity=identity,
+        identity_budget=identity_budget,
         included=included,
         prompt_view=prompt_view,
         projection_metrics=projection_metrics,
@@ -787,7 +791,7 @@ def finalize_context_pack(
             agent_id=request.agent_id,
             purpose=request.purpose,
             segments=segments,
-            messages=messages,
+            messages=segments_to_messages_fn(segments),
             profile_version=identity.profile_version,
             render_version=identity.render_version,
             slice_version=session_slice.slice_version,
