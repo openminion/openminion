@@ -88,6 +88,15 @@ This file tracks package-facing release notes for `openminion`.
   error, it records bounded `error_type` and `closed` diagnostics without copying raw
   exception text or replacing an active turn failure. (Refs #797)
 
+- `diff_session_branches` now hashes session-independent structural projections via
+  `_stable_ref` (`summary_short`, `summary_long`, `base_ref`, `delta_refs` for `summary`
+  and `state_ref`, `state_inline` for `working_state`) instead of `session_id`, version,
+  or row timestamps, `carry_forward_branch_fields` preserves `base_ref`, `delta_refs`,
+  child-local summary refresh semantics (`based_on_seq=0`), and `state_inline=None` while
+  rejecting empty or non-sequence `fields` inputs with
+  `SessionBranchCarryForwardDeniedError` before child creation, and both entrypoints
+  raise `SessionBranchError` when a referenced session does not exist (Refs #826).
+
 - The agent loop's stall rule now counts consecutive failures: a productive batch clears
   the no-progress counter, so two intermittent failures spread across a turn no longer end it
   while work is still getting done (Refs #679).
