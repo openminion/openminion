@@ -7,6 +7,15 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `purge_soft_deleted` (`run_gc` / `memctl gc`) now reuses the canonical SQLite
+  (`expiry_clause` + `expiry_bind_params`) and PostgreSQL (`EXPIRY_CLAUSE`) instant
+  predicates (`NOT <expiry_clause>`) instead of comparing `expires_at < now` as text,
+  so future negative-offset expiries and calendar-/clock-invalid or non-expiry values
+  are preserved while expired positive-offset, `Z`-suffixed, naive-UTC, and
+  exact-boundary instants are physically purged on both backends without altering
+  supersession protection or candidate/artifact-edge cleanup (Refs #824).
+
+
 - The shared `PromptBlockKind` literal now includes `self_awareness` and `memory`,
   `segments_to_messages` merges `cache_invalidation_refs` across combined system
   segments in a bucket, and brain runtime context assembly forwards `self_awareness`
