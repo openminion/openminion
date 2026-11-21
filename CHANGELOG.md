@@ -7,6 +7,14 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `Handoff` now accepts optional keyword-only `timeout_seconds` and `approval_callback`
+  controls forwarded by `build_delegate_tool` to each delegated `target.run()` call. A
+  positive `timeout_seconds` tightens without widening an existing
+  `target.subagent_context.timeout_seconds` bound while leaving validation in
+  `resolve_timeout_seconds`, and `approval_callback` governs child-turn tool confirmations
+  without altering the `transfer_to_<name>` parent-policy check or inheriting parent
+  callbacks when omitted. (Refs #774)
+
 - The PostgreSQL pool options are emitted as the factory's own `pool_size` and
   `pool_max_overflow`, so `storage.postgres_pool_min` / `postgres_pool_max` reach the pool
   instead of being silently dropped, with the 5 retained / 15 total default preserved

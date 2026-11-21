@@ -514,6 +514,211 @@ def test_handoff_approval_does_not_authorize_child_tools(sdk_tools):
     assert "Risk: destructive" in result.text
 
 
+@pytest.mark.parametrize(
+    ("parent_decision", "child_decision"),
+    [
+        ("deny", "allow"),
+        ("allow", "none"),
+        ("allow", "allow"),
+        ("allow", "async"),
+        ("allow", "deny"),
+        ("allow", "error"),
+    ],
+)
+def test_handoff_child_approval_callback_controls_child_tools_distinct_from_parent(
+    sdk_tools,
+    parent_decision: str,
+    child_decision: str,
+):
+    runtime, _requests, state = sdk_tools
+    calls, parent_approvals, child_approvals = [], [], []
+    state.update(
+        tool_name="transfer_to_child",
+        child_tool_name="lookup_order",
+        echo_tool_result=True,
+    )
+    runtime.config.action_policy.rules = []
+
+    @tool(dangerous=True)
+    def lookup_order(order_id: str) -> str:
+        calls.append(order_id)
+        return "CHILD_HANDLER_RESULT"
+
+    build_registrar(lookup_order.tool_family_spec()).register(runtime.tools)
+    spec = runtime.tools.get("lookup_order")
+    spec.prompt_visible_runtime_name = True
+    for key, risk in derive_tool_risk_registry({"lookup_order": spec}).items():
+        runtime.action_policy.register_risk(key, risk)
+    child = Agent(runtime=runtime, name="child", tools=["lookup_order"])
+
+    def approve_child(name, args, approval_id):
+        child_approvals.append((name, args, approval_id))
+        if child_decision == "error":
+            raise RuntimeError("child callback failed")
+        return child_decision in {"allow", "async"}
+
+    async def approve_child_async(name, args, approval_id):
+        return approve_child(name, args, approval_id)
+
+    child_callback = (
+        None
+        if child_decision == "none"
+        else (approve_child_async if child_decision == "async" else approve_child)
+    )
+    parent = Agent(
+        runtime=runtime,
+        tools=[],
+        handoffs=[Handoff(target=child, approval_callback=child_callback)],
+    )
+
+    def approve_parent(name, args, approval_id):
+        parent_approvals.append((name, args, approval_id))
+        return parent_decision == "allow"
+
+    result = parent.run("delegate", approval_callback=approve_parent)
+
+    assert len(parent_approvals) == 1
+    assert parent_approvals[0][0] == "transfer_to_child"
+    assert parent_approvals[0][1] == {"message": "Return LOCAL_MARKER."}
+    assert parent_approvals[0][2]
+    assert "transfer_to_child" not in runtime.tools.list()
+
+    if parent_decision == "deny":
+        assert child_approvals == []
+        assert calls == []
+        assert "Confirmation denied. The action was not run." in result.text
+        return
+
+    if child_decision == "none":
+        assert child_approvals == []
+        assert calls == []
+        assert "Policy confirmation required." in result.text
+        assert "Risk: destructive" in result.text
+        return
+
+    assert len(child_approvals) == 1
+    assert child_approvals[0][0] == "lookup_order"
+    assert child_approvals[0][1] == {"order_id": "A-104"}
+    assert child_approvals[0][2]
+
+    if child_decision in {"allow", "async"}:
+        assert calls == ["A-104"]
+        assert "CHILD_HANDLER_RESULT" in result.text
+    elif child_decision == "deny":
+        assert calls == []
+        assert "Confirmation denied. The action was not run." in result.text
+    elif child_decision == "error":
+        assert calls == []
+        assert "child callback failed" in result.text
+        tool_results = json.loads(result.metadata["tool_results"])
+        tool_data = tool_results[0]["data"]["data"]
+        assert tool_data["run_state"] == "failed"
+
+
+@pytest.mark.parametrize("bad_timeout", [0, -5.0, "bad"])
+@pytest.mark.parametrize("use_subagent_bound", [False, True])
+def test_handoff_invalid_timeout_rejected_by_ingress_owner(
+    sdk_tools,
+    bad_timeout: object,
+    use_subagent_bound: bool,
+):
+    from openminion.api.handoff import build_delegate_tool, subagent
+    from openminion.services.runtime.ingress.types import TurnRequestError
+
+    runtime, _requests, state = sdk_tools
+    state.update(tool_name="transfer_to_child", echo_tool_result=True)
+    runtime.config.action_policy.rules = []
+
+    base_parent = Agent(runtime=runtime, name="parent", tools=[])
+    child = (
+        subagent(base_parent, name="child", timeout_seconds=37)
+        if use_subagent_bound
+        else Agent(runtime=runtime, name="child", tools=[])
+    )
+    handoff = Handoff(target=child, timeout_seconds=bad_timeout)  # type: ignore[arg-type]
+    decl = build_delegate_tool(handoff)
+    with pytest.raises(TurnRequestError, match="greater than zero"):
+        decl.handler(decl.args_model(message="Return LOCAL_MARKER."))
+
+    parent = Agent(runtime=runtime, tools=[], handoffs=[handoff])
+    result = parent.run("delegate", approval_callback=lambda *_args: True)
+    assert "transfer_to_child" not in runtime.tools.list()
+    tool_results = json.loads(result.metadata["tool_results"])
+    error_details = tool_results[0]["data"]["error_details"]
+    assert error_details["error_type"] == "TurnRequestError"
+
+
+def test_handoff_timeout_request_boundary_tightens_accepted_resolver_inputs(sdk_tools):
+    from decimal import Decimal
+    from unittest.mock import patch
+
+    import openminion.services.runtime.ingress as ingress_mod
+    from openminion.api.handoff import build_delegate_tool, subagent
+    from openminion.services.runtime.ingress.types import TurnRequestError
+
+    runtime, _requests, _state = sdk_tools
+    runtime.config.action_policy.rules = []
+    captured_requests = []
+    original_builder = ingress_mod.runtime_turn_request_from_payload
+
+    def capture_request(**kwargs):
+        req = original_builder(**kwargs)
+        captured_requests.append(req)
+        return req
+
+    base_parent = Agent(runtime=runtime, name="parent", tools=[])
+    bounded_cases = [
+        (None, 37.0),
+        (120.0, 37.0),
+        ("120", 37.0),
+        (Decimal("120"), 37.0),
+        (15.0, 15.0),
+        ("15", 15.0),
+    ]
+    with patch.object(
+        ingress_mod,
+        "runtime_turn_request_from_payload",
+        side_effect=capture_request,
+    ):
+        for raw_timeout, expected_timeout in bounded_cases:
+            captured_requests.clear()
+            bounded_child = subagent(base_parent, name="child", timeout_seconds=37)
+            decl = build_delegate_tool(
+                Handoff(target=bounded_child, timeout_seconds=raw_timeout)  # type: ignore[arg-type]
+            )
+            decl.handler(decl.args_model(message="Return LOCAL_MARKER."))
+            assert len(captured_requests) == 1
+            assert captured_requests[0].timeout_seconds == expected_timeout
+            assert captured_requests[0].trusted_subagent_context is not None
+            assert captured_requests[0].trusted_subagent_context.timeout_seconds == 37
+
+        for raw_timeout, expected_timeout in [("120", 120.0), (120.0, 120.0)]:
+            captured_requests.clear()
+            unbounded_child = Agent(runtime=runtime, name="plain", tools=[])
+            decl = build_delegate_tool(
+                Handoff(target=unbounded_child, timeout_seconds=raw_timeout)  # type: ignore[arg-type]
+            )
+            decl.handler(decl.args_model(message="Return LOCAL_MARKER."))
+            assert len(captured_requests) == 1
+            assert captured_requests[0].timeout_seconds == expected_timeout
+            assert captured_requests[0].trusted_subagent_context is None
+
+        captured_requests.clear()
+        Agent(runtime=runtime, name="direct", tools=[]).run("Return LOCAL_MARKER.")
+        assert len(captured_requests) == 1
+        assert captured_requests[0].timeout_seconds == float(
+            runtime.config.runtime.chat_turn_timeout_seconds
+        )
+
+    for bad_timeout in (0, -5.0, "bad"):
+        bounded_child = subagent(base_parent, name="child", timeout_seconds=37)
+        decl = build_delegate_tool(
+            Handoff(target=bounded_child, timeout_seconds=bad_timeout)  # type: ignore[arg-type]
+        )
+        with pytest.raises(TurnRequestError, match="greater than zero"):
+            decl.handler(decl.args_model(message="Return LOCAL_MARKER."))
+
+
 class _Window(BaseModel):
     start: int
     end: int
