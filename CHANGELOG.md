@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Respect directory boundaries in `find`/`search` file globs: a single `*` no longer
+  crosses a separator, `**` recurses to any depth, character classes and ranges match like
+  `fnmatch` without matching `/`, and hidden, pruning and limit behaviour is unchanged
+  (Refs #492).
+
+
 - The PostgreSQL pool options are emitted as the factory's own `pool_size` and
   `pool_max_overflow`, so `storage.postgres_pool_min` / `postgres_pool_max` reach the pool
   instead of being silently dropped, with the 5 retained / 15 total default preserved
