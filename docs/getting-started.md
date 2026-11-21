@@ -8,23 +8,31 @@ bootstrap and execution summary for work inside the `openminion` repo.
 
 ## Quickstart for users
 
-An installed package needs no virtualenv and no checkout:
+An installed package needs no manually managed virtualenv and no checkout:
+`pipx` and `uv tool install` each place OpenMinion in an isolated environment of
+their own. Run commands from the workspace you intend to work in.
 
 ```bash
 pipx install openminion        # or: uv tool install openminion
 openminion
 ```
 
-The first bare launch runs setup, writes the canonical config at
-`~/.openminion/agents.json`, runs `doctor`, and enters the interactive CLI. To
-upgrade later, use whichever tool installed it:
+The first bare launch enters setup only when no configuration resolves; an
+existing config is reused and setup is skipped. Setup needs an interactive
+terminal, and without one the command exits with its remediation line instead of
+prompting. On the default root it writes `~/.openminion/agents.json`; `--root` or
+`--config` changes that canonical path. After writing, it offers a provider
+check, and it enters the interactive CLI only when that check passes and setup
+was neither cancelled nor run with `--no-chat`; cancelling exits 130. To upgrade
+later, use whichever tool installed it:
 
 ```bash
 pipx upgrade openminion        # or: uv tool upgrade openminion
 ```
 
 Everything below this point describes working inside a checkout. Skip to
-[First run](#first-run) if you only intend to use the package.
+[First run](#first-run) for the installed-package guidance, which does not
+require any of it.
 
 ## Fast bootstrap (contributors)
 
