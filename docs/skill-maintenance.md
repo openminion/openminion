@@ -1,7 +1,7 @@
 # Skill maintenance
 
 Status: active
-Last updated: 2026-09-06
+Last updated: 2026-11-21
 
 This page summarizes the current maintenance contract for the skill subsystem.
 It is not a claim that every authored skill is useful or safe for every task.
@@ -22,6 +22,38 @@ OpenMinion supports:
 Bundled skill scripts are stored as resources with `executable=false`; the
 skill runtime does not execute them. A tool or workflow may execute only
 through its normal runtime, exposure, policy, and approval boundaries.
+
+## Imported invocation policies
+
+Ingest and the skill harness warn whenever either exact field is present,
+regardless of its value:
+
+- `agents/openai.yaml`: `policy.allow_implicit_invocation` produces
+  `parse.warning:unsupported_invocation_policy:openai.policy.allow_implicit_invocation`.
+- `SKILL.md` front matter: `disable-model-invocation` produces
+  `parse.warning:unsupported_invocation_policy:claude.disable-model-invocation`.
+
+These policies are **not enforced**. After admission, OpenMinion may use the
+skill automatically. Do not admit it if manual-only behavior is required.
+Native or portable structural success does not certify invocation compatibility.
+Warnings do not grant permissions, admit a version, or change selection.
+Existing unknown-key diagnostics remain visible.
+
+The companion reader resolves the bundle root and skips symlinked `agents/` or `openai.yaml`,
+non-regular files, and files larger than the existing 1,000,000-byte resource
+limit. Skips produce `parse.warning:companion_metadata_skipped:<reason>` with
+`symlink`, `non_regular`, or `file_size_limit`, plus the existing
+unavailable warning. Unread content cannot produce invocation-policy diagnostics.
+Checks cover static files, not adversarial concurrent filesystem replacement;
+malformed YAML and read errors retain their existing error behavior.
+
+Valid bounded companions retain their metadata and fingerprints. Stored packages
+are not rewritten. Re-ingesting an unsafe companion may change the fingerprint
+because skipped metadata is excluded. Revalidate or re-ingest existing bundles
+to obtain these diagnostics; a successful import is not a manual-only guarantee.
+
+For local sharing, see [export a stored skill bundle](guides/skill-bundle-export.md).
+Export preserves retained content, not local admission or a secrecy guarantee.
 
 ## Maintainer checks
 

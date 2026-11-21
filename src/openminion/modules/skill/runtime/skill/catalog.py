@@ -1,9 +1,12 @@
+"""Skill catalog reads, version admission, and operator lifecycle actions."""
+
 from __future__ import annotations
 
 import hashlib
 import json
 import uuid
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from openminion.modules.context.input_boundaries import (
@@ -32,6 +35,7 @@ from openminion.modules.skill.runtime.parser import (
 )
 
 from .ingest import _source_ref_from_payload, _source_ref_to_digest
+from .resources import write_bundle_export
 
 
 class SkillCatalogMixin:
@@ -97,6 +101,29 @@ class SkillCatalogMixin:
         return {
             "scope": scope,
             "agent_id": str(agent_id) if agent_id else None,
+        }
+
+    def export_bundle(
+        self, skill_id: str, version_hash: str, destination: str | Path
+    ) -> dict[str, Any]:
+        """Export retained content for a local operator, without transferring admission."""
+        if not version_hash or not version_hash.strip():
+            raise SkillError("INVALID_ARGUMENT", "An exact version hash is required.")
+        package = self.get_skill(skill_id, version_hash)
+        admission = self.store.get_skill_admission(
+            skill_id=skill_id, version_hash=version_hash
+        )
+        if admission is None or admission["state"] != "admitted":
+            raise SkillError(
+                "SKILL_EXPORT_NOT_ADMITTED", "Only admitted versions can be exported."
+            )
+        return {
+            "ok": True,
+            "skill_id": skill_id,
+            "version_hash": version_hash,
+            **write_bundle_export(
+                package, blob_store=self._blob_store, destination=destination
+            ),
         }
 
     def read_skill_resource(
