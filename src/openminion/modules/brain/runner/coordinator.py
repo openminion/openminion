@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from openminion.modules.artifact.models import ImageInputContext
+
+
 from threading import Lock
 from typing import Any, Callable, Literal, Mapping
 
@@ -528,6 +531,7 @@ class BrainRunner:
         trigger: str = "user_input",
         runtime_session_id: str | None = None,
         runtime_conversation_id: str | None = None,
+        image_input: ImageInputContext | None = None,
         root_turn_id: str | None = None,
         capture_event_id: str | None = None,
         capture_id: str | None = None,
@@ -575,6 +579,7 @@ class BrainRunner:
                 trigger=trigger,
                 capture_identity=identity,
                 runtime_conversation_id=runtime_conversation_id,
+                image_input=image_input,
             )
             self._emit_brain_operation(
                 session_id=session_id,
@@ -624,6 +629,7 @@ class BrainRunner:
         capability_category: str | None = None,
         capture_identity: CaptureIdentity | None = None,
         runtime_conversation_id: str | None = None,
+        image_input: ImageInputContext | None = None,
         progress_callback: Callable[[PhaseStatus], None] | None = None,
     ) -> StepOutput:
         previous_callback = self._progress_callback
@@ -662,6 +668,7 @@ class BrainRunner:
                     capability_category=capability_category,
                     capture_identity=identity,
                     runtime_conversation_id=runtime_conversation_id,
+                    image_input=image_input,
                 )
             if not run_owns_turn_outcome:
                 turn_id = (

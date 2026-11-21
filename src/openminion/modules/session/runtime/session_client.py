@@ -76,6 +76,7 @@ class SessctlSessionClient:
                 content=str(turn.get("text") or turn.get("content", "")),
                 ts=str(turn.get("timestamp") or turn.get("ts", "")) or None,
                 is_error=bool(turn.get("is_error")),
+                image_input=(turn.get("channel_meta") or {}).get("image_input"),
             )
             for turn in raw.get("recent_turns", [])
             if isinstance(turn, dict)

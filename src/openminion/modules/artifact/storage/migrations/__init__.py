@@ -18,4 +18,4 @@ def run_migrations(db_path: str | Path) -> None:
 
 
 def list_migrations() -> list[str]:
-    return [BASELINE_REVISION]
+    return [BASELINE_REVISION, "0002_session_images"]

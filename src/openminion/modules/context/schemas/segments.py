@@ -1,3 +1,5 @@
+from openminion.modules.artifact.models import ImageInputContext
+
 # ruff: noqa: F403,F405
 import json
 from typing import Any, Dict, List, Optional
@@ -18,6 +20,7 @@ from .common import (
 
 
 class RenderMessage(BaseModel):
+    image_input: ImageInputContext | None = None
     role: MessageRole
     content: str
     cache_control: Optional[Dict[str, Any]] = None
@@ -26,6 +29,8 @@ class RenderMessage(BaseModel):
 
 class ContextSegment(BaseModel):
     """Typed segment inside a `ContextPack`."""
+
+    image_input: ImageInputContext | None = None
 
     id: str  # stable identifier (e.g. "safety", "identity", "turn:<turn_id>")
     bucket: SegmentBucket

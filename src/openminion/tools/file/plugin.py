@@ -17,9 +17,11 @@ from openminion.base.errors.adapt import (
     error_dict_from_mapping,
 )
 from openminion.modules.tool.contracts.model_ids import (
+    MODEL_FILE_COPY,
     MODEL_FILE_EDIT,
     MODEL_FILE_FIND,
     MODEL_FILE_LIST_DIR,
+    MODEL_FILE_MKDIR,
     MODEL_FILE_READ,
     MODEL_FILE_READ_RANGE,
     MODEL_FILE_SEARCH,
@@ -262,6 +264,41 @@ class FileTrashArgs(BaseModel):
     path: str = Field(..., min_length=1, description="Path to trash")
 
     @field_validator("path", mode="before")
+    @classmethod
+    def _normalize_path(cls, value: Any) -> Any:
+        normalized = _normalize_path_input(value)
+        if normalized is None or normalized == "":
+            raise ValueError("path is required")
+        return normalized
+
+
+class FileMkdirArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(..., min_length=1, description="Directory to create")
+    parents: bool = Field(
+        default=False, description="Create missing parent directories as well"
+    )
+
+    @field_validator("path", mode="before")
+    @classmethod
+    def _normalize_path(cls, value: Any) -> Any:
+        normalized = _normalize_path_input(value)
+        if normalized is None or normalized == "":
+            raise ValueError("path is required")
+        return normalized
+
+
+class FileCopyArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source: str = Field(..., min_length=1, description="File to copy")
+    destination: str = Field(..., min_length=1, description="Destination file path")
+    overwrite: bool = Field(
+        default=False, description="Replace an existing destination file"
+    )
+
+    @field_validator("source", "destination", mode="before")
     @classmethod
     def _normalize_path(cls, value: Any) -> Any:
         normalized = _normalize_path_input(value)
@@ -671,6 +708,50 @@ def _h_trash(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     }
 
 
+def _h_mkdir(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
+    validated = FileMkdirArgs.model_validate(args)
+
+    try:
+        resolved = resolve_path(ctx, validated.path, operation="write")
+    except ToolRuntimeError as e:
+        return _tool_error_result_from_exception(e)
+
+    try:
+        created = _get_backend(ctx).mkdir(resolved, parents=validated.parents)
+    except ToolRuntimeError as e:
+        return _tool_error_result_from_exception(e)
+    return {
+        "ok": True,
+        "path": resolved,
+        "created": created,
+        "source": _FILE_TOOL_SOURCE,
+    }
+
+
+def _h_copy(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
+    validated = FileCopyArgs.model_validate(args)
+
+    try:
+        source = resolve_path(ctx, validated.source, operation="read")
+        destination = resolve_path(ctx, validated.destination, operation="write")
+    except ToolRuntimeError as e:
+        return _tool_error_result_from_exception(e)
+
+    try:
+        copied = _get_backend(ctx).copy_file(
+            source, destination, overwrite=validated.overwrite
+        )
+    except ToolRuntimeError as e:
+        return _tool_error_result_from_exception(e)
+    return {
+        "ok": True,
+        "source": source,
+        "destination": destination,
+        "bytes": copied,
+        "source_kind": "file.copy",
+    }
+
+
 def _h_search_files(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     validated = FileSearchArgs.model_validate(args)
     raw_path = validated.path or "."
@@ -782,85 +863,63 @@ def _h_edit_file(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     }
 
 
+_FILE_TOOL_ROWS: tuple[tuple[str, Any, str, Any, bool, bool, bool], ...] = (
+    # name, args model, scope, handler, dangerous, idempotent, blocked under readonly
+    (
+        MODEL_FILE_LIST_DIR,
+        FileListDirArgs,
+        "READ_ONLY",
+        _h_list_dir,
+        False,
+        False,
+        False,
+    ),
+    (MODEL_FILE_READ, FileReadArgs, "READ_ONLY", _h_read_file, False, False, False),
+    (
+        MODEL_FILE_READ_RANGE,
+        FileReadRangeArgs,
+        "READ_ONLY",
+        _h_read_range,
+        False,
+        False,
+        False,
+    ),
+    (MODEL_FILE_WRITE, FileWriteArgs, "WRITE_SAFE", _h_write_file, True, False, True),
+    (MODEL_FILE_FIND, FileFindArgs, "READ_ONLY", _h_find_files, False, False, False),
+    (MODEL_FILE_TRASH, FileTrashArgs, "WRITE_SAFE", _h_trash, True, False, True),
+    (
+        MODEL_FILE_SEARCH,
+        FileSearchArgs,
+        "READ_ONLY",
+        _h_search_files,
+        False,
+        True,
+        False,
+    ),
+    (MODEL_FILE_EDIT, FileEditArgs, "WRITE_SAFE", _h_edit_file, False, False, True),
+    (MODEL_FILE_MKDIR, FileMkdirArgs, "WRITE_SAFE", _h_mkdir, False, True, True),
+    (MODEL_FILE_COPY, FileCopyArgs, "WRITE_SAFE", _h_copy, False, False, True),
+)
+
+
 def register(registry: ToolRegistry) -> None:
-    registry.add(
-        ToolSpec(
-            name=MODEL_FILE_LIST_DIR,
-            args_model=FileListDirArgs,
-            min_scope="READ_ONLY",
-            handler=_h_list_dir,
+    for (
+        name,
+        args_model,
+        min_scope,
+        handler,
+        dangerous,
+        idempotent,
+        blocked,
+    ) in _FILE_TOOL_ROWS:
+        registry.add(
+            ToolSpec(
+                name=name,
+                args_model=args_model,
+                min_scope=min_scope,
+                handler=handler,
+                dangerous=dangerous,
+                idempotent=idempotent,
+                block_under_readonly=blocked,
+            )
         )
-    )
-
-    registry.add(
-        ToolSpec(
-            name=MODEL_FILE_READ,
-            args_model=FileReadArgs,
-            min_scope="READ_ONLY",
-            handler=_h_read_file,
-        )
-    )
-
-    registry.add(
-        ToolSpec(
-            name=MODEL_FILE_READ_RANGE,
-            args_model=FileReadRangeArgs,
-            min_scope="READ_ONLY",
-            handler=_h_read_range,
-        )
-    )
-
-    registry.add(
-        ToolSpec(
-            name=MODEL_FILE_WRITE,
-            args_model=FileWriteArgs,
-            min_scope="WRITE_SAFE",
-            handler=_h_write_file,
-            dangerous=True,
-            idempotent=False,
-            block_under_readonly=True,
-        )
-    )
-
-    registry.add(
-        ToolSpec(
-            name=MODEL_FILE_FIND,
-            args_model=FileFindArgs,
-            min_scope="READ_ONLY",
-            handler=_h_find_files,
-        )
-    )
-
-    registry.add(
-        ToolSpec(
-            name=MODEL_FILE_TRASH,
-            args_model=FileTrashArgs,
-            min_scope="WRITE_SAFE",
-            handler=_h_trash,
-            dangerous=True,
-            idempotent=False,
-            block_under_readonly=True,
-        )
-    )
-
-    registry.add(
-        ToolSpec(
-            name=MODEL_FILE_SEARCH,
-            args_model=FileSearchArgs,
-            min_scope="READ_ONLY",
-            handler=_h_search_files,
-            idempotent=True,
-        )
-    )
-
-    registry.add(
-        ToolSpec(
-            name=MODEL_FILE_EDIT,
-            args_model=FileEditArgs,
-            min_scope="WRITE_SAFE",
-            handler=_h_edit_file,
-            dangerous=False,
-            idempotent=False,
-            block_under_readonly=True,
-        )
-    )

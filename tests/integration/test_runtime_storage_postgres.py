@@ -520,7 +520,7 @@ def test_postgres_append_seq_migration_uses_fallback_order_and_moves_tied_bounda
             )
 
             result = migrate_record_store(record_store, backend_type="postgres")
-            assert result.applied_versions == (12, 13, 14, 15)
+            assert result.applied_versions == (12, 13, 14, 15, 16)
 
             seq_rows = record_store.query_dicts(
                 "SELECT body, append_seq FROM messages ORDER BY append_seq"
@@ -817,7 +817,7 @@ def test_postgres_event_facts_migration_backfills_existing_history(
                 backend_type="postgres",
                 migrations=recorded_backfill_migrations(batches),
             )
-            assert result.applied_versions == (13, 14, 15)
+            assert result.applied_versions == (13, 14, 15, 16)
             assert batches == [1000, 1000, 345, 0]
         with _postgres_sessions(tmp_path, url) as sessions:
             check_upgraded_history(
@@ -861,7 +861,7 @@ def test_postgres_event_facts_migration_rolls_back_when_the_backfill_fails(
                 "UPDATE events SET payload_json = '{}' WHERE id = 1400"
             )
             result = migrate_record_store(record_store, backend_type="postgres")
-            assert result.applied_versions == (13, 14, 15)
+            assert result.applied_versions == (13, 14, 15, 16)
             assert record_store.query_dicts(
                 "SELECT COUNT(*) AS facts FROM event_run_facts"
             ) == [{"facts": 1500}]
@@ -1036,7 +1036,7 @@ def test_postgres_join_seq_migration_numbers_participants_in_pre_upgrade_order(
             }
 
             result = migrate_record_store(record_store, backend_type="postgres")
-            assert result.applied_versions == (14, 15)
+            assert result.applied_versions == (14, 15, 16)
             assert record_store.query_dicts(
                 "SELECT indexname FROM pg_indexes "
                 "WHERE schemaname = current_schema() "
@@ -1185,7 +1185,7 @@ def test_postgres_metadata_strings_migration_backfills_existing_history() -> Non
                 backend_type="postgres",
                 migrations=recorded_metadata_backfill_migrations(batches),
             )
-            assert result.applied_versions == (15,)
+            assert result.applied_versions == (15, 16)
             # 2,346 sessions: three batches of up to 1,000.
             assert batches == [1000, 1000, 346, 0]
             store = SessionStore(record_store)
@@ -1244,7 +1244,7 @@ def test_postgres_metadata_strings_migration_rolls_back_whole_and_reruns() -> No
             assert_not_applied()
 
             result = migrate_record_store(record_store, backend_type="postgres")
-            assert result.applied_versions == (15,)
+            assert result.applied_versions == (15, 16)
             store = SessionStore(record_store)
             assert stored_metadata(store) == before
             assert_rows_match_metadata(store)

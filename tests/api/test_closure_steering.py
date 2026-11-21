@@ -51,7 +51,7 @@ class _ClosureScript(Script):
                 {"final_answer": answer, "satisfied": True, "next_action": "close"},
                 f"steering-judge-{len(self.judges)}",
             )
-        if "The tool budget or a per-tool limit has been reached." in text or any(
+        if "No further tool calls are available in this turn." in text or any(
             message.get("role") == "tool" for message in body["messages"]
         ):
             self.drafts.append(body)
@@ -147,7 +147,7 @@ def test_sdk_closure_uses_ordered_current_turn_steering(
     assert calls == ["A-104", "A-104"]
     assert len(script.drafts) == len(script.judges) == 2, script.kinds
     assert (
-        "The tool budget or a per-tool limit has been reached."
+        "No further tool calls are available in this turn."
         in _all_text(script.drafts[0])
     ) == (tool_cap == 1)
     assert [

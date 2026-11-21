@@ -1,3 +1,5 @@
+from openminion.modules.artifact.models import ImageInputContext
+from openminion.modules.llm.schemas import LLMRequest, LLMResponse
 import asyncio
 import concurrent.futures
 import inspect
@@ -16,6 +18,9 @@ from openminion.base.config.action_policy import (
 from openminion.base.types import AgentResponse, Message
 from openminion.modules.brain.runner import BrainRunner
 from openminion.modules.brain.loop.services import turn_tool_scope
+from openminion.modules.brain.loop.tools.transcript import (
+    persist_interrupted_tool_calls,
+)
 from openminion.modules.brain.diagnostics.status import (
     PhaseStatus,
     StatusDetailCode,
@@ -117,6 +122,11 @@ def _runner_turn_kwargs(metadata_source: dict[str, Any]) -> dict[str, Any]:
 
 
 class BrainBridgeTurnMixin:
+    _config: Any
+    _image_artifact_config: Any
+    _runtime_handle: Any
+    _llm_runtime: Any
+    _logger: Any
     _identity_security_lab_facts: Callable[[], dict[str, Any]]
 
     async def _prepare_turn(
@@ -179,6 +189,7 @@ class BrainBridgeTurnMixin:
             session_id=session_id,
             user_input=message.body,
             inbound_metadata=message.metadata,
+            has_images=bool(message.image_refs),
         )
         runner._capture_excluded_for_turn = capture_is_excluded(message.metadata or {})
         runner._terminal_capture_enabled_for_turn = terminal_capture_is_enabled(
@@ -202,7 +213,6 @@ class BrainBridgeTurnMixin:
             session_id=session_id,
             inbound_metadata=dict(message.metadata or {}),
         )
-
         self._bind_tool_policy_adapter(
             runner=runner,
             message=message,
@@ -376,6 +386,41 @@ class BrainBridgeTurnMixin:
         setattr(runner, "_pending_permission_overrides", permission_overrides)
         runner._pending_session_action_policy_mode_override = action_policy_mode
 
+    def _resolve_image_request(self, request: LLMRequest) -> LLMRequest:
+        from openminion.modules.llm.image_input import resolve_image_request
+
+        return resolve_image_request(
+            request,
+            config=self._config,
+            artifacts=self._image_artifact_config,
+            sessions=self._runtime_handle.sessions,
+            provider=self._llm_runtime.name,
+            model=self._llm_runtime.model,
+        )
+
+    def _read_images(
+        self,
+        record: ImageInputContext,
+        *,
+        question: str,
+        max_output_tokens: int,
+        on_response: Callable[[LLMResponse], None],
+        before_request: Callable[[LLMRequest], LLMRequest],
+    ) -> LLMResponse:
+        from openminion.modules.llm.image_input import read_images
+
+        return read_images(
+            self._config,
+            self._image_artifact_config,
+            record,
+            question=question,
+            max_output_tokens=max_output_tokens,
+            logger=self._logger,
+            sessions=self._runtime_handle.sessions,
+            on_response=on_response,
+            before_request=before_request,
+        )
+
     def _execute_turn(
         self,
         *,
@@ -391,6 +436,17 @@ class BrainBridgeTurnMixin:
         # cron-scheduled idle ticks arrive with a `pae_idle_tick`
         metadata_source = getattr(message, "metadata", {}) or {}
         turn_kwargs = _runner_turn_kwargs(metadata_source)
+        if message.image_refs:
+            from openminion.modules.llm.image_input import admit_images
+
+            turn_kwargs["image_input"] = admit_images(
+                self._config,
+                self._image_artifact_config,
+                session=self._runtime_handle.sessions.get_session(
+                    str(metadata_source["runtime_session_id"])
+                ),
+                image_refs=message.image_refs,
+            )
         self._bind_inbound_permission_metadata(
             runner=runner,
             metadata_source=metadata_source,
@@ -493,8 +549,7 @@ class BrainBridgeTurnMixin:
         invocation_id, execution_id, invocation_scope = issue_execution_identity(
             message.metadata
         )
-        message.metadata["invocation_id"] = invocation_id
-        message.metadata["execution_id"] = execution_id
+        message.metadata.update(invocation_id=invocation_id, execution_id=execution_id)
         resolved_capability_category = str(capability_category or "").strip() or None
         self._logger.info(
             "BrainBridgeService handling turn for runtime_session=%s brain_session=%s forced_tools=%s capability_category=%s",
@@ -503,14 +558,7 @@ class BrainBridgeTurnMixin:
             forced_tools,
             resolved_capability_category,
         )
-
-        (
-            runner,
-            session_id,
-            request_id,
-            turn_id,
-            turn_start_time,
-        ) = await self._prepare_turn(
+        prepared = await self._prepare_turn(
             message=message,
             history=history or [],
             forced_tools=forced_tools,
@@ -518,14 +566,13 @@ class BrainBridgeTurnMixin:
             brain_session_id=brain_session_id,
             progress_callback=progress_callback,
         )
+        runner, session_id, request_id, turn_id, turn_start_time = prepared
         workspace_scope = _bind_tool_workspace_root(
             getattr(runner, "tool_api", None), message.metadata, added_roots
         )
-        message.metadata["session_id"] = session_id
-        message.metadata["turn_id"] = turn_id
+        message.metadata.update(session_id=session_id, turn_id=turn_id)
         telemetry = AgentExecutionTelemetry(self, inbound=message)
         await telemetry.start()
-
         if callable(approval_callback):
             loop = asyncio.get_running_loop()
             async_approval_callback = approval_callback
@@ -558,7 +605,6 @@ class BrainBridgeTurnMixin:
                     progress_callback=progress_callback,
                     approval_callback=approval_callback,
                 )
-
             response = await self._postprocess_turn(
                 runner=runner,
                 step_out=step_out,
@@ -570,7 +616,18 @@ class BrainBridgeTurnMixin:
                 turn_start_time=turn_start_time,
             )
         except BaseException as exc:  # noqa: BLE001 - preserve cancellation lifecycle
-            await telemetry.fail(exc)
+            try:
+                await telemetry.fail(exc)
+            finally:
+                profile = getattr(runner, "profile", None)
+                structural = bool(getattr(profile, "structural_tool_results", False))
+                persist_interrupted_tool_calls(
+                    getattr(runner, "session_api", None),
+                    session_id,
+                    turn_scope_id=request_id,
+                    structural_only=structural,
+                    active_exception=exc,
+                )
             raise
         response.metadata.setdefault("invocation_id", invocation_id)
         response.metadata.setdefault("execution_id", execution_id)
@@ -662,7 +719,6 @@ BrainBridgeTurnMixin._normalize_turn_content = _normalize_turn_content
 BrainBridgeTurnMixin._is_state_machine_error_text = staticmethod(
     _is_state_machine_error_text
 )
-
 BrainBridgeTurnMixin._looks_like_embedded_tool_call = staticmethod(
     _looks_like_embedded_tool_call
 )
@@ -685,7 +741,6 @@ BrainBridgeTurnMixin._finalize_tool_follow_up_text = staticmethod(
     _finalize_tool_follow_up_text
 )
 BrainBridgeTurnMixin._follow_up_after_tool = _follow_up_after_tool
-
 BrainBridgeTurnMixin._resolve_command = staticmethod(_resolve_command)
 BrainBridgeTurnMixin._build_clarify_request_payload = staticmethod(
     _build_clarify_request_payload
@@ -706,7 +761,6 @@ BrainBridgeTurnMixin._security_events_from_tool_results = staticmethod(
 )
 BrainBridgeTurnMixin._attach_tool_result_metadata = _attach_tool_result_metadata
 BrainBridgeTurnMixin._postprocess_turn = _postprocess_turn
-
 BrainBridgeTurnMixin._latest_working_state_inline = staticmethod(
     _latest_working_state_inline
 )

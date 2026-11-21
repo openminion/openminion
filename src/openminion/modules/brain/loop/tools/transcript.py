@@ -1,12 +1,20 @@
+"""Durable canonical tool transcript persistence and replay."""
+
 from __future__ import annotations
 
 import json
+import sqlite3
 from typing import Any
 
+from openminion.base.logging import format_structured_event, get_logger
 from openminion.modules.brain.config import TOOL_TRANSCRIPT_MAX_REPLAYED_CALLS
 from openminion.modules.brain.constants import STATE_KEY_MODULE_STATE
 from openminion.modules.brain.schemas import ActionError, ActionResult
 from openminion.modules.llm.schemas import Message, ToolCall
+from openminion.modules.runtime.sync import (
+    is_turn_deadline_elapsed,
+    raise_if_cancelled,
+)
 from openminion.modules.tool.diagnostics.events import (
     is_structural_security_tool,
     structural_result_fields,
@@ -15,6 +23,19 @@ from openminion.modules.tool.diagnostics.events import (
 from .contracts import AdaptiveToolLoopContext
 
 _REQUEST_EVENT_IDS_KEY = "tool_transcript.request_event_ids"
+_LOG = get_logger(__name__)
+_RECOVERY_STORAGE_ERRORS: tuple[type[Exception], ...] = (
+    OSError,
+    RuntimeError,
+    ValueError,
+    sqlite3.Error,
+)
+try:
+    from sqlalchemy.exc import SQLAlchemyError
+except ImportError:
+    pass
+else:
+    _RECOVERY_STORAGE_ERRORS += (SQLAlchemyError,)
 
 
 def successful_replayed_tool_names(messages: list[Message]) -> frozenset[str]:
@@ -223,6 +244,7 @@ def persist_terminal_tool_result(
     tool_call: ToolCall,
     action_result: ActionResult,
 ) -> None:
+    raise_if_cancelled()
     session_api, session_id = _session_writer(loop_ctx)
     if session_api is None:
         return
@@ -278,14 +300,197 @@ def persist_terminal_tool_result(
             },
         }
     payload.update(_research_invocation_fields(loop_ctx))
-    session_api.append_event(
-        session_id,
-        type=event_type,
-        parent_event_id=str(request_event_id),
-        payload=payload,
-        actor_type="tool",
-        artifact_refs=[ref.ref for ref in action_result.artifact_refs],
+    try:
+        session_api.append_event(
+            session_id,
+            type=event_type,
+            parent_event_id=str(request_event_id),
+            payload=payload,
+            actor_type="tool",
+            artifact_refs=[ref.ref for ref in action_result.artifact_refs],
+        )
+    except ValueError as exc:
+        if "session event idempotency conflict:" in str(exc):
+            raise_if_cancelled()
+        raise
+
+
+def _has_terminal_child_event(
+    reader: Any,
+    session_id: str,
+    *,
+    request_event_id: str,
+    turn_scope_id: str,
+    call_id: str,
+    research_invocation_id: str,
+) -> bool:
+    transcript = reader(session_id)
+    if transcript.get("transcript_lane") != "canonical_events":
+        return False
+    for event in transcript.get("events", []):
+        if event.get("event_type") not in {"tool.call.completed", "tool.call.blocked"}:
+            continue
+        if str(event.get("parent_event_id", "") or "").strip() != request_event_id:
+            continue
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        if (
+            str(payload.get("turn_scope_id", "") or "").strip() == turn_scope_id
+            and str(payload.get("call_id", "") or "").strip() == call_id
+            and str(payload.get("research_invocation_id", "") or "").strip()
+            == research_invocation_id
+        ):
+            return True
+    return False
+
+
+def _build_interrupted_payload(
+    event: dict[str, Any],
+    resolved_parents: set[str],
+    *,
+    scope_filter: str,
+    structural_only: bool,
+    is_timeout: bool,
+) -> tuple[str, dict[str, Any], str, str, str] | None:
+    if event.get("event_type") != "tool.call.requested":
+        return None
+    request_event_id = str(event.get("event_id", "") or "").strip()
+    payload = event.get("payload")
+    if (
+        not request_event_id
+        or request_event_id in resolved_parents
+        or not isinstance(payload, dict)
+    ):
+        return None
+    event_scope_id = str(payload.get("turn_scope_id", "") or "").strip()
+    call_id = str(payload.get("call_id", "") or "").strip()
+    if (
+        not event_scope_id
+        or not call_id
+        or (scope_filter and event_scope_id != scope_filter)
+    ):
+        return None
+    canonical_name = str(payload.get("canonical_name", "") or "").strip()
+    security_tool = structural_only or is_structural_security_tool(canonical_name)
+    research_id = str(payload.get("research_invocation_id", "") or "").strip()
+    default_message = (
+        "Turn timed out before tool call completed."
+        if is_timeout
+        else "Turn ended before tool call completed."
     )
+    blocked_payload: dict[str, Any] = {
+        "schema_version": 1,
+        "turn_scope_id": event_scope_id,
+        "call_id": call_id,
+        "status": "timeout" if is_timeout else "blocked",
+        "error": {
+            "code": "TURN_TIMEOUT" if is_timeout else "TURN_INTERRUPTED",
+            "message": (
+                "security tool did not complete" if security_tool else default_message
+            ),
+            "details": {},
+        },
+    }
+    if research_id:
+        blocked_payload["research_invocation_id"] = research_id
+    return request_event_id, blocked_payload, event_scope_id, call_id, research_id
+
+
+def persist_interrupted_tool_calls(
+    session_api: Any,
+    session_id: str,
+    *,
+    turn_scope_id: str | None = None,
+    structural_only: bool = False,
+    timed_out: bool | None = None,
+    active_exception: BaseException | None = None,
+) -> int:
+    normalized_session = str(session_id or "").strip()
+    reader = getattr(session_api, "get_tool_transcript", None)
+    writer = getattr(session_api, "append_event", None)
+    scope_filter = str(turn_scope_id or "").strip()
+    if (
+        not normalized_session
+        or not callable(reader)
+        or not callable(writer)
+        or (turn_scope_id is not None and not scope_filter)
+    ):
+        return 0
+    closed = 0
+    try:
+        transcript = reader(normalized_session)
+        if transcript.get("transcript_lane") != "canonical_events":
+            return 0
+        events = transcript.get("events", [])
+        resolved_parents = {
+            str(event.get("parent_event_id", "") or "").strip()
+            for event in events
+            if event.get("event_type") in {"tool.call.completed", "tool.call.blocked"}
+        }
+        is_timeout = (
+            isinstance(active_exception, TimeoutError) or is_turn_deadline_elapsed()
+            if timed_out is None
+            else bool(timed_out)
+        )
+        for event in events:
+            built = _build_interrupted_payload(
+                event,
+                resolved_parents,
+                scope_filter=scope_filter,
+                structural_only=structural_only,
+                is_timeout=is_timeout,
+            )
+            if built is None:
+                continue
+            request_event_id, blocked_payload, event_scope_id, call_id, research_id = (
+                built
+            )
+            try:
+                writer(
+                    normalized_session,
+                    type="tool.call.blocked",
+                    parent_event_id=request_event_id,
+                    payload=blocked_payload,
+                    actor_type="tool",
+                )
+            except ValueError as exc:
+                if "session event idempotency conflict:" not in str(
+                    exc
+                ) or not _has_terminal_child_event(
+                    reader,
+                    normalized_session,
+                    request_event_id=request_event_id,
+                    turn_scope_id=event_scope_id,
+                    call_id=call_id,
+                    research_invocation_id=research_id,
+                ):
+                    raise
+                resolved_parents.add(request_event_id)
+                continue
+            resolved_parents.add(request_event_id)
+            closed += 1
+        return closed
+    except (NotImplementedError, RecursionError):
+        raise
+    except _RECOVERY_STORAGE_ERRORS as exc:
+        error_type = type(exc).__name__
+        _LOG.warning(
+            format_structured_event(
+                "brain.tool_transcript.recovery_failed",
+                session_id=normalized_session,
+                turn_scope_id=scope_filter or None,
+                closed=closed,
+                error_type=error_type,
+            )
+        )
+        if active_exception is None:
+            raise
+        active_exception.add_note(
+            "Interrupted tool transcript recovery failed "
+            f"(error_type={error_type}; closed={closed})"
+        )
+        return closed
 
 
 def persist_blocked_tool_calls(

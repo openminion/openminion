@@ -121,7 +121,7 @@ from .iteration.dispatch import prepare_iteration_dispatch
 from .iteration.execution import execute_iteration_results
 from .postprocess.loop import finalize_iteration_state
 from .iteration.termination import finalize_iteration_cap_exit
-from .transcript import persist_requested_tool_calls
+from .transcript import persist_interrupted_tool_calls, persist_requested_tool_calls
 from .iteration.helpers import (
     _append_tool_result_payload,
     _build_enrichment_message,
@@ -185,20 +185,35 @@ def run_adaptive_tool_loop(
         on_tool_result=on_tool_result,
         tool_batch_runner=tool_batch_runner,
     )
+    active_exception: BaseException | None = None
     try:
         return runner.run()
+    except BaseException as exc:  # noqa: BLE001 - preserve active failure across cleanup
+        active_exception = exc
+        raise
     finally:
-        if (
-            getattr(loop_ctx.state, STATE_KEY_MODULE_STATE, {})
-            .get("research", {})
-            .get("child")
-        ):
-            _persist_loop_snapshot(
-                loop_ctx=loop_ctx,
-                profile=profile,
-                loop_state=runner.loop_state,
-                turn_scope_id=runner.turn_scope_id,
-                model=model,
+        try:
+            if (
+                getattr(loop_ctx.state, STATE_KEY_MODULE_STATE, {})
+                .get("research", {})
+                .get("child")
+            ):
+                _persist_loop_snapshot(
+                    loop_ctx=loop_ctx,
+                    profile=profile,
+                    loop_state=runner.loop_state,
+                    turn_scope_id=runner.turn_scope_id,
+                    model=model,
+                )
+        finally:
+            persist_interrupted_tool_calls(
+                getattr(loop_ctx, "session_api", None),
+                str(getattr(loop_ctx.state, "session_id", "") or ""),
+                turn_scope_id=str(runner.turn_scope_id or ""),
+                structural_only=bool(
+                    getattr(loop_ctx, "structural_tool_results", False)
+                ),
+                active_exception=active_exception,
             )
 
 

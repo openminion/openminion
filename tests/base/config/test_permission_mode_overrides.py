@@ -150,6 +150,8 @@ def test_readonly_blocks_write_tools() -> None:
     assert is_tool_blocked_by_readonly("file.write")
     assert is_tool_blocked_by_readonly("file.edit")
     assert is_tool_blocked_by_readonly("file.trash")
+    assert is_tool_blocked_by_readonly("file.mkdir")
+    assert is_tool_blocked_by_readonly("file.copy")
     assert is_tool_blocked_by_readonly("code.patch")
     assert is_tool_blocked_by_readonly("exec.run")
     assert is_tool_blocked_by_readonly("exec.kill")
@@ -214,6 +216,8 @@ def test_readonly_blocked_tools_are_owned_by_tool_specs() -> None:
         "file.write",
         "file.edit",
         "file.trash",
+        "file.mkdir",
+        "file.copy",
         "code.patch",
         "exec.run",
         "exec.submit",

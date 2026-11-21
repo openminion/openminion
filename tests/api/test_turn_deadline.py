@@ -242,3 +242,55 @@ def test_submitted_turn_timeout_has_failed_receipt(local_sdk):
         ]
         == "failed"
     )
+
+
+def test_sdk_timeout_during_tool_call_keeps_session_usable(local_sdk):
+    runtime, requests, _state, _responded, _root = local_sdk
+    entered, release, finished = Event(), Event(), Event()
+
+    @tool(min_scope="READ_ONLY", idempotent=True)
+    def lookup_order(order_id: str) -> str:
+        entered.set()
+        try:
+            release.wait(15)
+            return "LATE_TOOL_MARKER"
+        finally:
+            finished.set()
+
+    session_id = "timeout-tool-session-resume"
+    agent = Agent(
+        runtime=runtime,
+        session_id=session_id,
+        tools=[lookup_order],
+        forced_tools=["lookup_order"],
+    )
+    follow_up = Agent(runtime=runtime, session_id=session_id)
+    try:
+        with pytest.raises(TurnTimeoutError):
+            agent.run("Check A-104", timeout_seconds=4)
+        assert entered.is_set()
+
+        while_blocked = follow_up.run("hello", timeout_seconds=10)
+        assert while_blocked.run_state == "completed"
+        assert "LOCAL_MARKER" in while_blocked.text
+    finally:
+        release.set()
+
+    assert finished.wait(2)
+    after_finish = follow_up.run("hello again", timeout_seconds=10)
+    assert after_finish.run_state == "completed"
+    assert "LOCAL_MARKER" in after_finish.text
+    assert not any("LATE_TOOL_MARKER" in json.dumps(req) for req in requests)
+    assert any(
+        msg.get("role") == "tool"
+        and msg.get("tool_call_id") == "local-call"
+        and "TURN_TIMEOUT" in msg.get("content", "")
+        for req in requests
+        for msg in req.get("messages", [])
+    )
+    states = [
+        run["state"]
+        for run in list_runs(None, session_id=session_id, runtime=runtime)["runs"]
+    ]
+    assert states.count("failed") == 1
+    assert states.count("completed") == 2

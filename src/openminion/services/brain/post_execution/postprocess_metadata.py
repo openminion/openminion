@@ -32,6 +32,15 @@ _STRUCTURED_ACTION_OUTPUT_METADATA_KEYS: tuple[str, ...] = (
     "memory_consolidation.state_hash",
 )
 
+# Legacy result shapes state the decision in the code; explicit producer facts win.
+_LEGACY_EVENT_KINDS = {
+    "require_approval": "approval_required",
+    "confirm_required": "approval_required",
+    "approval_denied": "policy_denied",
+    "policy_denied": "policy_denied",
+    "tool_exposure_denied": "policy_denied",
+}
+
 
 def _build_turn_response_metadata(
     self,
@@ -173,42 +182,33 @@ def _security_events_from_tool_results(
     metadata_updates: dict[str, str] = {}
     for item in tool_results_payload:
         data = item.get("data", {})
-        if not isinstance(data, dict):
-            data = {}
-        error_code = str(
-            item.get("error_code", "") or data.get("error_code", "")
-        ).strip()
-        if not error_code:
+        data = data if isinstance(data, dict) else {}
+        code = str(item.get("error_code") or data.get("error_code") or "").strip()
+        if not code:
             continue
-        blocked_kind = str(
-            item.get("blocked_kind", "") or data.get("blocked_kind", "")
-        ).strip()
-        event_kind = blocked_kind or (
-            "approval_required" if error_code == "require_approval" else "policy_denied"
-        )
-        reason_code = (
-            str(item.get("reason_code", "") or data.get("reason_code", "")).strip()
-            or error_code
-        )
-        details = {}
-        raw_details = data.get("error_details")
-        if isinstance(raw_details, dict):
-            details = raw_details
+        details = data.get("error_details")
+        details = details if isinstance(details, dict) else {}
+        if code.startswith("tool_budget") and details:
+            metadata_updates["tool_budget"] = json.dumps(details, sort_keys=True)
+        blocked_kind = str(item.get("blocked_kind") or data.get("blocked_kind") or "")
+        source = str(item.get("denial_source") or data.get("denial_source") or "")
+        # Only the concrete legacy decision codes map to an event; a budget denial
+        # states itself through the producer's blocked_kind/denial_source facts.
+        event_kind = blocked_kind.strip() or _LEGACY_EVENT_KINDS.get(code.lower(), "")
+        if not event_kind:
+            continue
+        reason_code = str(item.get("reason_code") or data.get("reason_code") or "")
         security_events.append(
             {
                 "event_kind": event_kind,
-                "reason_code": reason_code,
-                "policy_version": str(details.get("policy_version", "") or "v1"),
-                "decision": str(details.get("decision", "") or error_code),
-                "tool_name": str(
-                    item.get("tool_name", "") or item.get("name", "") or ""
-                ),
-                "call_id": str(item.get("call_id", "") or item.get("id", "") or ""),
-                "source": "policy",
+                "reason_code": reason_code.strip() or code,
+                "policy_version": str(details.get("policy_version") or "v1"),
+                "decision": str(details.get("decision") or code),
+                "tool_name": str(item.get("tool_name") or item.get("name") or ""),
+                "call_id": str(item.get("call_id") or item.get("id") or ""),
+                "source": source.strip() or "policy",
             }
         )
-        if error_code.startswith("tool_budget") and details:
-            metadata_updates["tool_budget"] = json.dumps(details, sort_keys=True)
     return security_events, metadata_updates
 
 

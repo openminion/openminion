@@ -1,3 +1,5 @@
+from openminion.modules.artifact.models import ImageInputContext
+
 # ruff: noqa: F403,F405
 from .common import *
 from .budgets import ContextBudgets
@@ -24,6 +26,7 @@ class BuildConstraints(BaseModel):
 
 
 class BuildPackRequest(BaseModel):
+    image_input: ImageInputContext | None = None
     session_id: str
     agent_id: str
     purpose: Purpose

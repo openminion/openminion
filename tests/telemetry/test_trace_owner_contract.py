@@ -13,6 +13,7 @@ from openminion.modules.telemetry.trace.structured import (
 )
 from openminion.modules.telemetry.trace.layout import (
     build_trace_file_path,
+    delete_invocation_trace_artifacts,
     resolve_trace_root,
 )
 from openminion.modules.telemetry.trace.metadata import merge_trace_metadata
@@ -82,6 +83,39 @@ def test_agent_metadata_compatibility_surface_is_canonical() -> None:
     from openminion.services.agent.telemetry import merge_metadata
 
     assert merge_metadata is merge_trace_metadata
+
+
+def test_long_trace_identity_preserves_metadata_and_distinguishes_tails(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("OPENMINION_TRACE_REQUESTS", "1")
+    monkeypatch.setenv("OPENMINION_TRACE_REQUESTS_DIR", str(tmp_path))
+    session = "task-delegate::" + "parent::conv:project::delegate:child::" * 12
+    turn = "turn-" + "long-run-" * 40
+    paths = []
+    for tail in ("first", "second"):
+        context = trace_context_payload(
+            session_id=session + tail,
+            turn_id=turn,
+            inference_step=1,
+            label="call01",
+            invocation_id=tail,
+        )
+        relative = write_structured_trace(
+            trace_context=context, patch={"response": {"ok": True}}
+        )
+        path = tmp_path / relative
+        assert len(path.parent.name.encode()) <= 193
+        assert path.stat().st_mode & 0o777 == 0o600
+        assert path.parent.stat().st_mode & 0o777 == 0o700
+        payload = json.loads(path.read_text())
+        assert payload["trace"]["session_id"] == session + tail
+        assert payload["trace"]["turn_id"] == turn
+        assert write_structured_trace(trace_context=context, patch={}) == relative
+        paths.append(path)
+    assert paths[0] != paths[1]
+    assert delete_invocation_trace_artifacts(tmp_path, invocation_id="first") == 1
+    assert not paths[0].exists() and paths[1].exists()
 
 
 def test_write_structured_trace_merges_nested_dicts_and_keeps_existing_keys(

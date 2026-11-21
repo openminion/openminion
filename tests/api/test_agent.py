@@ -327,6 +327,34 @@ def test_agent_raises_validation_error_on_unparseable_reply() -> None:
     assert exc_info.value.validation_error is not None
 
 
+@pytest.mark.parametrize(
+    ("reply", "expected_errors"),
+    [
+        ('agent: {"sentiment": "neutral"}', [("missing", ("summary",))]),
+        ('{"sentiment": "neutral"}', [("missing", ("summary",))]),
+        ("not json at all", [("json_invalid", ())]),
+    ],
+    ids=[
+        "wrapped-object-schema-error",
+        "raw-object-schema-error",
+        "non-json-parse-error",
+    ],
+)
+def test_agent_output_validation_error_reports_the_failing_validation(
+    reply: str, expected_errors: list[tuple[str, tuple[str, ...]]]
+) -> None:
+    agent = Agent(output_type=_ReplyModel, runtime=_FakeRuntime(reply))
+    with pytest.raises(AgentOutputValidationError) as exc_info:
+        agent.run("evaluate")
+
+    error = exc_info.value
+    assert [
+        (e["type"], e["loc"]) for e in error.validation_error.errors()
+    ] == expected_errors
+    assert error.raw_text == reply
+    assert error.__cause__ is error.validation_error
+
+
 def test_agent_model_param_propagates_to_payload() -> None:
     runtime = _FakeRuntime()
     agent = Agent(model="anthropic:claude-opus-4-7", runtime=runtime)

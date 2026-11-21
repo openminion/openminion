@@ -128,7 +128,7 @@ def _serve_identity(argv: list[str]) -> tuple[dict[str, str] | None, str]:
     guessing here means terminating a process that is not ours.
     """
     interpreter = Path(argv[0]).name if argv else ""
-    if not interpreter.startswith("python"):
+    if not interpreter.lower().startswith("python"):
         return (
             None,
             f"executable {interpreter or 'unknown'} is not a Python interpreter",

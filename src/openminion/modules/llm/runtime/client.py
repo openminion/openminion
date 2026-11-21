@@ -2,7 +2,7 @@ import asyncio
 import ast
 import json
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Union
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Union
 
 from pydantic import ValidationError
 
@@ -325,6 +325,8 @@ class LLMClient:
         self.llmctl = llmctl
         self.profile = profile
         self._telemetryctl = telemetryctl
+        self.image_resolver: Callable[[LLMRequest], LLMRequest] | None = None
+        self.on_attempt_response: Callable[[LLMResponse], None] | None = None
 
     _resolve_provider_and_model = _resolve_provider_and_model
     _merge_generation_params = _merge_generation_params

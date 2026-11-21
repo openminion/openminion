@@ -281,7 +281,7 @@ def execute_iteration_results(
         action_result = action_results[result_index]
 
         tc_args_for_cache = dict(tool_call.arguments)
-        loop_cache.invalidate_for_write(tool_name, tc_args_for_cache)
+        loop_cache.invalidate_for_tool(tool_name, tc_args_for_cache, command_outcome)
         loop_cache.put(tool_name, tc_args_for_cache, command_outcome)
 
         iter_tool_records.append(

@@ -303,3 +303,79 @@ def test_retry_policy_writes_structured_retry_sidecar(
         "Use the existing tool result already present in context"
         in retry["retry_message"]
     )
+
+
+def test_structured_response_callback_observes_each_retry_outside_domain_payload() -> (
+    None
+):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from pydantic import BaseModel, ConfigDict
+
+    from openminion.modules.brain.adapters.llm import LlmctlAdapter
+    from openminion.modules.llm.schemas import LLMResponse, UsageInfo
+
+    class Report(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        count: int
+
+    responses = [
+        LLMResponse(
+            ok=True,
+            provider="test",
+            model="test",
+            output_text=text,
+            usage=UsageInfo(input_tokens=20, output_tokens=10),
+        )
+        for text in ('{"count": "invalid"}', '{"count": 1}')
+    ]
+    observed = []
+    client = SimpleNamespace(call=Mock(side_effect=responses))
+    result = call_structured_with_retry(
+        LlmctlAdapter(client),
+        model="test",
+        purpose="reflect",
+        context={},
+        schema=Report,
+        on_response=observed.append,
+    )
+    assert client.call.call_count == 2
+    assert observed == responses
+    assert result == {"count": 1}
+    assert all(
+        "on_response" not in call.args[0].metadata
+        for call in client.call.call_args_list
+    )
+
+
+def test_structured_retry_omits_callback_for_existing_callers() -> None:
+    from types import SimpleNamespace
+
+    def call_structured(*, model, purpose, context, schema):
+        return {"items": []}
+
+    result = call_structured_with_retry(
+        SimpleNamespace(call_structured=call_structured),
+        model="test",
+        purpose="reflect",
+        context={},
+        schema=UserMessageCandidateReport,
+    )
+    assert result == {"items": []}
+
+
+def test_local_structured_adapter_does_not_invent_provider_usage() -> None:
+    from openminion.modules.brain.adapters.llm.local import LocalLLMAdapter
+
+    observed = []
+    result = call_structured_with_retry(
+        LocalLLMAdapter(),
+        model="local",
+        purpose="reflect",
+        context={},
+        schema=UserMessageCandidateReport,
+        on_response=observed.append,
+    )
+    assert result["items"] == []
+    assert observed == []

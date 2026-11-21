@@ -45,10 +45,10 @@ class StorageMigrationTests(unittest.TestCase):
             database_path = Path(tmp) / "state" / "openminion.db"
 
             result = migrate_database(database_path)
-            self.assertEqual(result.current_version, 15)
+            self.assertEqual(result.current_version, 16)
             self.assertEqual(
                 result.applied_versions,
-                (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15),
+                (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16),
             )
 
             with closing(sqlite3.connect(str(database_path))) as conn:
@@ -140,6 +140,7 @@ class StorageMigrationTests(unittest.TestCase):
                         (13, "add_event_run_facts"),
                         (14, "add_room_participant_join_seq"),
                         (15, "add_session_metadata_strings"),
+                        (16, "session_image_generation"),
                     ],
                 )
 
@@ -150,19 +151,19 @@ class StorageMigrationTests(unittest.TestCase):
             first = migrate_database(database_path)
             second = migrate_database(database_path)
 
-            self.assertEqual(first.current_version, 15)
+            self.assertEqual(first.current_version, 16)
             self.assertEqual(
                 first.applied_versions,
-                (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15),
+                (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16),
             )
-            self.assertEqual(second.current_version, 15)
+            self.assertEqual(second.current_version, 16)
             self.assertEqual(second.applied_versions, ())
 
             with closing(sqlite3.connect(str(database_path))) as conn:
                 migration_count = conn.execute(
                     "SELECT COUNT(*) FROM migrations"
                 ).fetchone()[0]
-                self.assertEqual(migration_count, 15)
+                self.assertEqual(migration_count, 16)
 
     def test_run_migrations_rolls_back_failed_migration(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -320,7 +321,7 @@ def test_append_seq_migration_backfills_migration_time_rowid_order(
 
     # Migrations 13 (run facts) and 14 (participant join order) run after it;
     # the append-order checks below are migration 12's.
-    assert migrate_database(path).applied_versions == (12, 13, 14, 15)
+    assert migrate_database(path).applied_versions == (12, 13, 14, 15, 16)
 
     with closing(sqlite3.connect(str(path))) as conn:
         rows = conn.execute(
@@ -482,7 +483,7 @@ def test_join_seq_migration_numbers_participants_in_pre_upgrade_order(
             ] == order
         counted = {row[0]: row[1] for row in conn.execute(COUNTED_JOIN_SEQ_SQL)}
 
-    assert migrate_database(path).applied_versions == (14, 15)
+    assert migrate_database(path).applied_versions == (14, 15, 16)
 
     with closing(connect_database(path)) as conn:
         indexes = {
@@ -514,7 +515,7 @@ def test_join_seq_migration_numbers_participants_in_pre_upgrade_order(
 
 def test_join_seq_fresh_database_numbers_new_participants(tmp_path: Path) -> None:
     path = tmp_path / "openminion.db"
-    assert migrate_database(path).applied_versions == tuple(range(1, 16))
+    assert migrate_database(path).applied_versions == tuple(range(1, 17))
 
     with closing(connect_database(path)) as conn:
         sessions = SessionStore(conn)
@@ -531,3 +532,54 @@ def test_join_seq_fresh_database_numbers_new_participants(tmp_path: Path) -> Non
             "second": 2,
             "third": 3,
         }
+
+
+def test_session_image_generation_survives_restart_but_not_recreation(tmp_path):
+    from openminion.modules.storage.runtime.session_store import SessionStore
+    from openminion.modules.storage.runtime.sqlite import connect_database
+
+    path = tmp_path / "sessions.db"
+    migrate_database(path)
+    with connect_database(path) as connection:
+        store = SessionStore(connection)
+        store.resolve_session(
+            agent_id="agent", session_id="same", channel="console", target="owner"
+        )
+        first = store.get_session("same")
+        assert first.image_generation
+        store.update_session_metadata(
+            session_id="same", patch={"friendly_name": "Renamed"}
+        )
+        assert store.get_session("same").image_generation == first.image_generation
+    with connect_database(path) as connection:
+        store = SessionStore(connection)
+        assert store.get_session("same").image_scope == first.image_scope
+        store.delete_session("same")
+        store.resolve_session(
+            agent_id="agent", session_id="same", channel="console", target="owner"
+        )
+        assert store.get_session("same").image_scope != first.image_scope
+
+
+def test_image_generation_migration_backfills_once(tmp_path):
+    from openminion.modules.storage.runtime.migrations import DEFAULT_MIGRATIONS
+    from openminion.modules.storage.runtime.sqlite import connect_database
+
+    path = tmp_path / "upgrade.db"
+    migrate_database(path, migrations=DEFAULT_MIGRATIONS[:-1])
+    with connect_database(path) as connection:
+        connection.execute(
+            "INSERT INTO sessions(id, session_key, channel, target) VALUES ('old','old','console','owner')"
+        )
+    assert migrate_database(path).applied_versions == (16,)
+    with connect_database(path) as connection:
+        generation = connection.execute(
+            "SELECT image_generation FROM sessions"
+        ).fetchone()[0]
+        assert generation
+    assert migrate_database(path).applied_versions == ()
+    with connect_database(path) as connection:
+        assert (
+            connection.execute("SELECT image_generation FROM sessions").fetchone()[0]
+            == generation
+        )

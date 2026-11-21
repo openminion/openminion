@@ -4,7 +4,12 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 if TYPE_CHECKING:
     from openminion.modules.artifact.config import ArtifactCtlConfig
-    from openminion.modules.artifact.models import ArtifactMeta, ArtifactRef, ViewRecord
+    from openminion.modules.artifact.models import (
+        ArtifactMeta,
+        ArtifactRef,
+        ImageRef,
+        ViewRecord,
+    )
     from typing import BinaryIO
 
 
@@ -17,6 +22,16 @@ class ArtifactCtlInterface(Protocol):
     contract_version: ClassVar[str] = ARTIFACT_INTERFACE_VERSION
 
     def __init__(self, config: str | ArtifactCtlConfig) -> None: ...
+
+    def ingest_image(self, data: bytes, *, mime: str, session_id: str) -> ImageRef: ...
+
+    def get_image(self, image_ref: str, *, session_id: str) -> ImageRef: ...
+
+    def read_image(self, image_ref: str, *, session_id: str) -> bytes: ...
+
+    def revoke_image(self, image_ref: str, *, session_id: str) -> None: ...
+
+    def revoke_session_images(self, session_id: str) -> None: ...
 
     def ingest_bytes(
         self,

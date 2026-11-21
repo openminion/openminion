@@ -93,8 +93,13 @@ one (a subset or a superset of its columns, other types) is not evidence,
 and neither is a table without its owner's ledger.
 
 - Runtime storage starts when the base schema has none of the tables it
-  creates or reads, or when its history there is proven.
-- A module stays in the base schema when its history there is proven.
+  creates or reads (including `core_events`, `core_sidecar_rows` and
+  `sidecar_ingest_log`), or when its history there is proven and any
+  storage engine tables present match `engine_tables` in
+  `postgres_histories.json`.
+- A module stays in the base schema when its history there is proven and any
+  storage engine tables present match `engine_tables` in
+  `postgres_histories.json`.
 - A module uses `<base>__<module id>` when no `om_meta` in the base schema
   names it and every base table with one of its names belongs to other
   owners only. It also keeps `<base>__<module id>` when that schema holds
@@ -348,9 +353,12 @@ refused, whatever the tables are, also when they have exactly the columns
 this code's store creates: some of a store's tables, a copy, and what a
 store's first start leaves when it stops after its tables and before it
 writes `om_meta` look the same. A second process that opens the same module
-store while the first start is still creating its tables sees that layout
-too and is refused; a later start succeeds once the first one has written
-`om_meta`. OpenMinion never completes, adopts or drops such a schema.
+store or runs its migration while the first start is still creating its
+schema or tables is refused with `"Nothing was written"` (runtime module
+schema creation raises `SchemaOwnershipError`, whereas `MigrationRunner`
+rolls back its transaction and returns a failed `MigrationReport` with
+`rolled_back=True`); a later start succeeds once the first one has
+written `om_meta`. OpenMinion never completes, adopts or drops such a schema.
 Before you remove it, find where it came from (the logs of the first start)
 and take a full `pg_dump`; a module store creates the schema again when it
 does not exist.
