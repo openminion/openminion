@@ -93,7 +93,7 @@ scope	max_python_files	max_loc
 # (measured on dev c7833b4d with this change: 209 files, 42345 LOC).
 # OAAP (2026-11-21) rejects conflicting gateway idempotency reuse and versions
 # the existing local-plugin manifest contract without adding a service owner.
-services	209	42521
+services	209	42532
 services/security	6	187
 services/stats	1	25
 services/tool	3	50

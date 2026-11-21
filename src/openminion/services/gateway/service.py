@@ -439,15 +439,12 @@ class GatewayService:
             typed_turn_intent=typed_turn_intent,
             image_refs=image_refs,
         )
-        existing = self._idempotency.get(
-            method=self._METHOD_HANDLE_MESSAGE,
+        cached = self._completed_idempotent_message(
             idempotency_key=idempotency_key,
+            request_hash=request_hash,
         )
-        if existing is not None and existing.request_hash != request_hash:
-            raise ValueError("idempotency key conflicts with an earlier request")
-        if existing is not None and existing.status == "completed":
-            return _message_from_cache(existing.response)
-
+        if cached is not None:
+            return cached
         inflight_key = (self._METHOD_HANDLE_MESSAGE, idempotency_key)
         inflight = self._inflight.get(inflight_key)
         if inflight is not None:
@@ -459,14 +456,12 @@ class GatewayService:
             request_hash=request_hash,
         )
         if not reserved:
-            existing = self._idempotency.get(
-                method=self._METHOD_HANDLE_MESSAGE,
+            cached = self._completed_idempotent_message(
                 idempotency_key=idempotency_key,
+                request_hash=request_hash,
             )
-            if existing is not None and existing.request_hash != request_hash:
-                raise ValueError("idempotency key conflicts with an earlier request")
-            if existing is not None and existing.status == "completed":
-                return _message_from_cache(existing.response)
+            if cached is not None:
+                return cached
             inflight = self._inflight.get(inflight_key)
             if inflight is not None:
                 return await inflight
@@ -511,6 +506,22 @@ class GatewayService:
             raise
         finally:
             self._inflight.pop(inflight_key, None)
+
+    def _completed_idempotent_message(
+        self,
+        *,
+        idempotency_key: str,
+        request_hash: str,
+    ) -> Message | None:
+        existing = self._idempotency.get(
+            method=self._METHOD_HANDLE_MESSAGE,
+            idempotency_key=idempotency_key,
+        )
+        if existing is not None and existing.request_hash != request_hash:
+            raise ValueError("idempotency key conflicts with an earlier request")
+        if existing is not None and existing.status == "completed":
+            return _message_from_cache(existing.response)
+        return None
 
     async def _handle_message_once(
         self,
