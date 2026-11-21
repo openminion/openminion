@@ -22,6 +22,7 @@ from openminion.base.config import (
     resolve_config_path,
     run_profile_overrides_from_mapping,
 )
+from openminion.base.config.manager import ConfigMissingError
 
 
 def resolve_surface_onboarding_route(**kwargs: Any) -> Any:
@@ -38,6 +39,27 @@ def format_fail_fast_message(**kwargs: Any) -> str:
     )
 
     return str(_format_fail_fast_message(**kwargs))
+
+
+_MISSING_CONFIG_HINT = (
+    "To create one, run `openminion config init --provider <name>` "
+    "(for example `--provider echo`), or pass `--config <path>`."
+)
+
+
+def format_cli_error(exc: BaseException) -> str:
+    """Render a CLI error, adding the next step only for an absent config file.
+
+    The decision comes from the error's origin, not from the filesystem: only
+    ``ConfigMissingError``, raised by the config owner when the resolved path
+    does not exist, gains the guidance. A malformed config, a permission failure
+    or an unrelated runtime error keeps its own message even when the config
+    path happens to be absent.
+    """
+    message = str(exc)
+    if isinstance(exc, ConfigMissingError):
+        return f"{message}\n{_MISSING_CONFIG_HINT}"
+    return message
 
 
 def _prepare_runtime_roots(
@@ -310,8 +332,11 @@ def main(argv: Sequence[str] | None = None, *, owns_process: bool = False) -> in
                 )
                 return int(handler(args, app) or 0)
             return int(handler(args) or 0)
+    except ConfigMissingError as exc:
+        parser.exit(status=2, message=f"openminion: {format_cli_error(exc)}\n")
+        return 2
     except (ConfigError, RuntimeError, KeyError) as exc:
-        parser.exit(status=2, message=f"openminion: {exc}\n")
+        parser.exit(status=2, message=f"openminion: {format_cli_error(exc)}\n")
         return 2
     except KeyboardInterrupt:
         print("openminion: cancelled", file=sys.stderr)
