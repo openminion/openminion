@@ -7,6 +7,13 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `docs/telemetry-export-quickstarts.md` now states the local trace-artifact contract:
+  opt-in recording under `<data_root>/traces`, the `0700`/`0600` protected layout, the
+  raw `json_body` next to a parsed `json` with redaction limited to URL and headers, the
+  absence of an artifact export path in the current source, and invocation-scoped
+  deletion that is not an operator command and has no time-to-live. (Refs #642)
+
+
 - The PostgreSQL pool options are emitted as the factory's own `pool_size` and
   `pool_max_overflow`, so `storage.postgres_pool_min` / `postgres_pool_max` reach the pool
   instead of being silently dropped, with the 5 retained / 15 total default preserved
