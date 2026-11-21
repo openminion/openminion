@@ -99,6 +99,139 @@ def test_calculate_expression_allows_negative_power(tmp_path: Path):
     assert payload["result"] == 0.5
 
 
+@pytest.mark.parametrize("expression", ["100000 ** 64", "(-100000) ** 63.5"])
+def test_calculate_expression_rejects_overflowing_power_as_invalid_argument(
+    tmp_path: Path, expression: str
+) -> None:
+    ctx = _ctx(tmp_path)
+    with pytest.raises(ToolRuntimeError) as exc_info:
+        _h_calculate_expression({"expression": expression}, ctx)
+    assert exc_info.value.code == "INVALID_ARGUMENT"
+    assert exc_info.value.message == "Expression result is out of bounds"
+
+
+@pytest.mark.parametrize("expression", ["9" * 350, f"-({'9' * 350})"])
+def test_calculate_expression_rejects_integer_literal_exceeding_float_range(
+    tmp_path: Path, expression: str
+) -> None:
+    ctx = _ctx(tmp_path)
+    with pytest.raises(ToolRuntimeError) as exc_info:
+        _h_calculate_expression({"expression": expression}, ctx)
+    assert exc_info.value.code == "INVALID_ARGUMENT"
+    assert exc_info.value.message == "Expression result is out of bounds"
+
+
+@pytest.mark.parametrize("expression", ["1e400", "-1e400", "+1e400"])
+def test_calculate_expression_rejects_non_finite_float_literal(
+    tmp_path: Path, expression: str
+) -> None:
+    ctx = _ctx(tmp_path)
+    with pytest.raises(ToolRuntimeError) as exc_info:
+        _h_calculate_expression({"expression": expression}, ctx)
+    assert exc_info.value.code == "INVALID_ARGUMENT"
+    assert exc_info.value.message == "Expression result is not finite"
+
+
+@pytest.mark.parametrize("expression", ["1000000000001", "-1000000000001"])
+def test_calculate_expression_rejects_out_of_bounds_literal_and_unary(
+    tmp_path: Path, expression: str
+) -> None:
+    ctx = _ctx(tmp_path)
+    with pytest.raises(ToolRuntimeError) as exc_info:
+        _h_calculate_expression({"expression": expression}, ctx)
+    assert exc_info.value.code == "INVALID_ARGUMENT"
+    assert exc_info.value.message == "Expression result is out of bounds"
+
+
+def test_calculate_expression_preserves_exact_bounds_and_scaled_operands(
+    tmp_path: Path,
+) -> None:
+    ctx = _ctx(tmp_path)
+    assert (
+        _h_calculate_expression({"expression": "1000000000000"}, ctx)["result"]
+        == 10**12
+    )
+    assert _h_calculate_expression({"expression": "-1000000000000"}, ctx)[
+        "result"
+    ] == -(10**12)
+    assert (
+        _h_calculate_expression({"expression": "10000000000000 / 100"}, ctx)["result"]
+        == 10**11
+    )
+
+
+def test_calculate_expression_registry_dispatch_returns_structured_invalid_argument(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from openminion.modules.tool.base import ToolExecutionContext
+    from openminion.modules.tool.runtime.registry_toolspec import execute_tool_spec_call
+
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / ".openminion"))
+
+    registry = ToolRegistry()
+    register(registry)
+    spec = registry.list()["utility.calculate_expression"]
+    exec_ctx = ToolExecutionContext(
+        channel="console",
+        target="test-user",
+        session_id="test-session",
+        metadata={"workspace_root": str(tmp_path)},
+    )
+
+    for bad_expr in ("100000 ** 64", "9" * 350, "1e400", "-1000000000001"):
+        failed = execute_tool_spec_call(
+            tool=spec,
+            arguments={"expression": bad_expr},
+            context=exec_ctx,
+        )
+        assert failed.ok is False
+        assert failed.data.get("error_code") == "INVALID_ARGUMENT"
+
+    succeeded = execute_tool_spec_call(
+        tool=spec,
+        arguments={"expression": "-1000000000000"},
+        context=exec_ctx,
+    )
+    assert succeeded.ok is True
+    assert succeeded.data["result"] == -(10**12)
+
+
+def test_calculate_expression_brain_run_tool_spec_propagates_tool_runtime_error(
+    tmp_path: Path,
+) -> None:
+    import time
+    from openminion.modules.brain.adapters.tool.results import run_tool_spec
+
+    registry = ToolRegistry()
+    register(registry)
+    spec = registry.list()["utility.calculate_expression"]
+    ctx = _ctx(tmp_path)
+
+    for bad_expr in ("100000 ** 64", "9" * 350, "1e400", "-1000000000001"):
+        with pytest.raises(ToolRuntimeError) as exc_info:
+            run_tool_spec(
+                spec=spec,
+                validated_args={"expression": bad_expr},
+                context=ctx,
+                start_time=time.monotonic(),
+                background_write_authorized=False,
+                tool_name=spec.name,
+            )
+        assert exc_info.value.code == "INVALID_ARGUMENT"
+
+    ok_envelope = run_tool_spec(
+        spec=spec,
+        validated_args={"expression": "1000000000000"},
+        context=ctx,
+        start_time=time.monotonic(),
+        background_write_authorized=False,
+        tool_name=spec.name,
+    )
+    assert ok_envelope["status"] == "success"
+    assert ok_envelope["outputs"]["result"] == 10**12
+
+
 def test_text_stats_counts(tmp_path: Path):
     ctx = _ctx(tmp_path)
     payload = _h_text_stats({"text": "One line.\nTwo words"}, ctx)
