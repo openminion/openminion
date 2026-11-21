@@ -431,6 +431,11 @@ class GatewayService:
             body=body,
             session_id=session_id,
             inbound_metadata=inbound_metadata,
+            request_id=request_id,
+            deliver=deliver,
+            exclude_history_message_ids=exclude_history_message_ids,
+            forced_tools=forced_tools,
+            capability_category=capability_category,
             typed_turn_intent=typed_turn_intent,
             image_refs=image_refs,
         )

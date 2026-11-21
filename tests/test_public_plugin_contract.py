@@ -7,6 +7,8 @@ from pathlib import Path
 
 from openminion import APIRuntime
 from openminion.base.config import OpenMinionConfig, save_config
+from openminion.modules.llm.providers.base import ProviderToolCall
+from openminion.modules.tool.base import ToolExecutionContext
 from tests._csc_fixtures import _csc_install_default_agent
 
 
@@ -53,13 +55,25 @@ REGISTRAR = build_registrar(
                 args_model=EchoArgs,
                 handler=echo,
                 description="Echo one value.",
-                dangerous=True,
+            ),
+            ToolDecl(
+                name="plugin.example.public.needs_cli",
+                args_model=EchoArgs,
+                handler=echo,
+                description="Require one unavailable dependency.",
                 dependencies=(
                     ToolDependencyDecl(
                         dependency_id="example:cli",
                         probe=missing_dependency,
                     ),
                 ),
+            ),
+            ToolDecl(
+                name="plugin.example.public.dangerous",
+                args_model=EchoArgs,
+                handler=echo,
+                description="Require operator confirmation.",
+                dangerous=True,
             ),
         ),
     )
@@ -126,16 +140,52 @@ def test_public_manifest_plugin_runs_and_reports_policy_and_dependency(
         runtime = _runtime(tmp_path, enabled=True)
     try:
         tool_name = "plugin.example.public.echo"
-        tool = runtime.tools.get(tool_name)
-        assert tool.handler({"text": "hello"}, object()) == {"text": "hello"}
+        batch = runtime.tools.execute_calls(
+            [
+                ProviderToolCall(
+                    name=tool_name,
+                    arguments={"text": "hello"},
+                    id="public-plugin-call",
+                )
+            ],
+            context=ToolExecutionContext(
+                channel="console",
+                target="public-plugin-test",
+                session_id="public-plugin-test",
+            ),
+        )
+        assert batch.results[0].ok is True
+        assert batch.results[0].data["text"] == "hello"
 
         inventory = {
             item["name"]: item for item in runtime.tool_inventory_report(readiness=True)
         }
-        assert inventory[tool_name]["dependency_readiness"][0]["state"] == "missing"
+        dependency_tool = "plugin.example.public.needs_cli"
+        assert (
+            inventory[dependency_tool]["dependency_readiness"][0]["state"] == "missing"
+        )
+
+        blocked = runtime.tools.execute_calls(
+            [
+                ProviderToolCall(
+                    name=dependency_tool,
+                    arguments={"text": "hello"},
+                    id="missing-dependency-call",
+                )
+            ],
+            context=ToolExecutionContext(
+                channel="console",
+                target="public-plugin-test",
+                session_id="public-plugin-test",
+            ),
+        )
+        assert blocked.results[0].ok is False
 
         decision = runtime.action_policy.check(
-            {"tool": tool_name, "args": {"text": "hello"}},
+            {
+                "tool": "plugin.example.public.dangerous",
+                "args": {"text": "hello"},
+            },
             {},
         )
         assert decision.decision == "REQUIRE_CONFIRM"
