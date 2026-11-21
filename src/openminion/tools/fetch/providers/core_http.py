@@ -20,6 +20,7 @@ from ..interfaces import (
 from ..policy import (
     FetchPolicyError as _FetchPolicyError,
     enforce_url_policy as _shared_enforce_url_policy,
+    join_redirect_url as _shared_join_redirect_url,
     resolve_allow_private_hosts as _resolve_allow_private_hosts,
 )
 
@@ -78,6 +79,15 @@ def _enforce_url_policy(
 ) -> urllib.parse.ParseResult:
     try:
         return _shared_enforce_url_policy(url, allow_private_hosts=allow_private_hosts)
+    except _FetchPolicyError as exc:
+        raise _FetchProviderError(
+            code=exc.code, message=exc.message, details=dict(exc.details)
+        ) from exc
+
+
+def _join_redirect_url(base_url: str, location: str) -> str:
+    try:
+        return _shared_join_redirect_url(base_url, location)
     except _FetchPolicyError as exc:
         raise _FetchProviderError(
             code=exc.code, message=exc.message, details=dict(exc.details)
@@ -293,7 +303,7 @@ class CoreHttpFetchProvider(FetchProviderProtocol):
                             "Redirect limit exceeded",
                             {"max_redirects": max_redirects, "url": current_url},
                         )
-                    next_url = urllib.parse.urljoin(current_url, location)
+                    next_url = _join_redirect_url(current_url, location)
                     _enforce_url_policy(
                         next_url, allow_private_hosts=allow_private_hosts
                     )
