@@ -41,8 +41,9 @@ boundary summary than the broader docs.
 1. Fork and create a branch.
 2. Run `make dev-install` and `make hooks-install` once in your clone.
 3. Make focused changes.
-4. Add or update tests.
-5. Open a PR with a clear summary.
+4. Add or update the focused tests appropriate to the change.
+5. Complete the [required pre-submission self-review](CODE_QUALITY.md#required-self-review-before-submission).
+6. Open a PR against `dev` with the review evidence and exact validation results.
 
 ## Development basics
 
@@ -91,17 +92,18 @@ or expired handoffs, and avoid duplicate reminders when nothing has changed.
 
 ### Implementation and review
 
-Every contributor and coding agent, including maintainers and contributors
-using code-generation tools, must follow [Code Quality and Hygiene](CODE_QUALITY.md). Before requesting
-review, inspect the final diff for duplicate helpers, unnecessary abstractions,
-and comments or docstrings that repeat the code. Names, types and direct control
-flow should carry the explanation; retain only necessary context. See the
-[comment review rule](CODE_QUALITY.md#2-code-should-explain-itself), including its
-public-contract and test exceptions. Green CI alone is not readability approval.
-Review each new delta as well as the complete final diff, and record the exact
-head and caller/failure evidence. Follow the
-[merged-code and review evidence rules](CODE_QUALITY.md#11-review-evidence-and-merged-code)
-and the [cleanup ledger requirements](CODE_QUALITY.md#8-for-broad-cleanup-work-start-from-the-live-file-list).
+Every contributor, maintainer and coding agent must complete the
+[minimum usable code self-review](CODE_QUALITY.md#required-self-review-before-submission)
+before requesting review and after each revision. It covers every changed file,
+actual callers and failure paths, unnecessary structure, redundant commentary,
+and evidence that the intended contracts are preserved. Use the PR template to
+record the result; ticking its boxes is not a substitute for the evidence.
+
+Keep the record proportional to the change: a small fix needs concrete bullets;
+a broad cleanup needs the linked live inventory and per-file ledger. Describe
+unresolved design questions before expanding scope, preserve other contributors'
+work, and keep historical validation clearly labelled after a rebase. Reviewers
+apply the same bar to everyone and independently verify peer suggestions.
 Do not approve or merge with an unresolved, substantiated quality finding.
 
 1. Follow existing style and project conventions.

@@ -56,6 +56,56 @@ permissions, data integrity, compatibility, persistence, replay, resource
 cleanup and observable failures. Fewer lines are not an improvement if they
 remove one of those guarantees or make the flow harder to understand.
 
+### Required self-review before submission
+
+Before opening a PR for review, and after each revision, complete a minimum
+usable code sweep of the changed files. This is required for contributors,
+maintainers and agents alike. A draft may expose an unresolved question; mark
+it clearly instead of presenting the work as ready. Review quality is judged
+by the problem solved, preserved contracts and evidence, not PR volume or LOC.
+
+1. **Confirm the need and owner.** State the supported failure or requested
+   behavior, trace the actual caller to its existing owner, and separate the
+   intended change from behavior that must stay unchanged. Resolve changes to
+   public contracts, defaults, permissions or model-owned decisions with the
+   maintainer before implementing a different policy.
+2. **Read every changed file in context.** Review the complete final diff and
+   each new delta, including source, tests, scripts and documentation. Apply
+   the minimum usable code rule above to every added abstraction, dependency,
+   mode, fallback, retry and repeated check. Remove speculative structure and
+   redundant commentary; retain necessary boundaries and rationale. Do not
+   split a function or add a wrapper merely to evade a size ceiling.
+3. **Prove the affected path.** For a behavior fix, exercise the actual caller
+   and failure boundary, with a positive case, the reported failure and relevant
+   unchanged neighbors. Show that the regression control detects the old
+   defect, or explain why a direct before/after run is unavailable. Reuse
+   existing fixtures and controls; do not build a test framework for one case.
+   Include permissions, isolation, persistence/rollback, replay, cancellation
+   and cleanup where affected, including callers outside the owner's folder.
+4. **Check the deliverable.** Run the applicable gates below. Keep assertions
+   and quality limits intact; retries, new skips/xfails and raised ceilings do
+   not resolve failures. Check public commands and behavior claims against
+   source. Put new release notes under Unreleased, preserve existing history,
+   and use non-closing issue references when published acceptance is pending.
+5. **Record a short, verifiable result.** In the PR, identify the reviewed head
+   and base, changed files or coherent file groups, caller/contract evidence,
+   and anything deliberately deferred. Explain why any non-obvious new layer
+   or defense remains. List exact validation results and checks not run;
+   distinguish local, hosted, installed-package and live-provider evidence.
+   A small PR needs only a few concrete bullets, not another report framework.
+
+A normal feature or fix reviews its changed files and affected callers; it
+must not claim a repository-wide cleanup. Broad cleanup claims additionally
+require the [live inventory and per-file ledger](#8-for-broad-cleanup-work-start-from-the-live-file-list).
+After a rebase or revision, update the description and review the new delta;
+label earlier runs with their original revisions rather than calling them
+current validation. Request review only when remaining gaps are explicit.
+
+Contributor self-review and peer endorsements are inputs to maintainer review,
+not approval or proof that a finding is resolved. Reviewers independently check
+the source and evidence. Neither checked boxes nor green CI waive a concrete
+quality or behavior finding.
+
 ## 2. Code should explain itself
 
 Write code so names, types, and structure do most of the explaining.
