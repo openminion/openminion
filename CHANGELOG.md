@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- A failed usage-event read is no longer indistinguishable from an empty turn: the
+  collector returns the events it did read plus a read-failed flag, and the metadata carries
+  `llm_usage_events_incomplete` so partial totals are not reported as complete
+  (Refs #648).
+
+
 - The PostgreSQL pool options are emitted as the factory's own `pool_size` and
   `pool_max_overflow`, so `storage.postgres_pool_min` / `postgres_pool_max` reach the pool
   instead of being silently dropped, with the 5 retained / 15 total default preserved

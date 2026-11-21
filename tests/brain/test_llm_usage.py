@@ -86,12 +86,13 @@ def test_failed_response_retains_known_usage_and_unknown_purpose(tmp_path):
                 usage=UsageInfo(input_tokens=4, output_tokens=2),
             ),
         )
-    events = collect_llm_call_events(
+    events, read_failed = collect_llm_call_events(
         runner=SimpleNamespace(session_api=session),
         session_id="s",
         trace_id="trace",
         run_id="run",
     )
+    assert read_failed is False
     assert events[0]["type"] == "llm.call.failed"
     assert count_llm_calls(events, 9)["custom_phase"] == 1
     assert summarize_llm_usage(events)["total_tokens_used"] == 6
