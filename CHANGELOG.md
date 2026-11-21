@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- The PostgreSQL pool options are emitted as the factory's own `pool_size` and
+  `pool_max_overflow`, so `storage.postgres_pool_min` / `postgres_pool_max` reach the pool
+  instead of being silently dropped, with the 5 retained / 15 total default preserved
+  (Refs #667).
+
+
 ## Current package line - 2026-11-21
 
 - The file family gains `file.mkdir` and `file.copy`: `file.mkdir` creates a
