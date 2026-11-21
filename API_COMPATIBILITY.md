@@ -55,7 +55,7 @@ These are defined in `src/openminion/api/__init__.py`.
 
 ### Plugin author package
 
-`openminion.tools` is the narrow public authoring surface for local manifest
+Unreleased: `openminion.tools` is the narrow public authoring surface for local manifest
 plugins. It exports the existing `Plugin`, `PluginContext`, tool-family
 declarations, dependency declarations, `build_registrar`, and
 `PLUGIN_MANIFEST_CONTRACT_VERSION`. It does not make
