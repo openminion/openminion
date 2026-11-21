@@ -17,7 +17,7 @@ def test_rejected_image_batch_revokes_partial_upload_without_turn_or_local_retry
     monkeypatch.setattr(run, "_load_run_config", lambda args: config)
     monkeypatch.setattr(
         "openminion.cli.transport.images.read_selected_images",
-        lambda paths: [(b"first", "image/png"), (b"second", "image/png")],
+        lambda paths, **kwargs: [(b"first", "image/png"), (b"second", "image/png")],
     )
     monkeypatch.setattr(
         "openminion.cli.transport.runtime_source.ensure_daemon_running",

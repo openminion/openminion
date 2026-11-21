@@ -56,6 +56,25 @@ Then send your question, or submit an image-only turn. Image drafts cannot enter
 the text-only busy queue. Failed or cancelled Focus turns retain selected paths
 for an explicit resend; they are not replayed automatically.
 
+Capture one from the system clipboard instead of saving it first:
+
+```bash
+openminion run --image-clipboard "Explain this screen"
+```
+
+```text
+/image paste
+```
+
+`--image-clipboard` appends one image to the same selected-image list as `--image`,
+and `/image paste` stores it under the runtime's `images/<session>/` directory
+before adding it to the draft. Both go through the existing bounds below. The read
+tries `wl-paste`, `xclip` and `pngpaste` in that order and uses the first command
+that returns image bytes; a missing tool, a non-image clipboard payload or an
+oversized one fails with one line and starts no turn. Windows captures through
+`--image` only. The read is explicit: nothing polls or auto-ingests the clipboard
+in the background.
+
 ## Limits, history and consent
 
 - At most four still images per turn, 10 MiB per input and 20 MiB combined,

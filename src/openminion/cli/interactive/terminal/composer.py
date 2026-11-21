@@ -504,17 +504,21 @@ class TerminalComposer:
         self._multiline = True
         event.app.current_buffer.insert_text("\n")
 
+    def add_image(self, path: str, *, working_dir: str) -> None:
+        from openminion.cli.transport.images import read_selected_images
+
+        candidate = Path(path).expanduser()
+        if not candidate.is_absolute():
+            candidate = Path(working_dir) / candidate
+        read_selected_images([*self.image_paths, str(candidate)])
+        self.image_paths.append(str(candidate))
+
     def manage_images(self, command: str, *, working_dir: str) -> str:
         import shlex
-        from openminion.cli.transport.images import read_selected_images
 
         parts = shlex.split(command)[1:]
         if parts[:1] == ["add"] and len(parts) == 2:
-            path = Path(parts[1]).expanduser()
-            if not path.is_absolute():
-                path = Path(working_dir) / path
-            read_selected_images([*self.image_paths, str(path)])
-            self.image_paths.append(str(path))
+            self.add_image(parts[1], working_dir=working_dir)
         elif parts[:1] == ["remove"] and len(parts) == 2:
             index = int(parts[1]) - 1
             if not 0 <= index < len(self.image_paths):
