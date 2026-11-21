@@ -361,3 +361,33 @@ reviewed quoting, token and allowance handling, slippage and deadline controls,
 chain-specific fee policy, disposable-testnet evidence, monitoring, and
 operator runbooks. Keep public-mainnet writes disabled until those owners and
 acceptance gates exist.
+
+## Ship it to an agent as a skill
+
+The tools are the capability; the procedure still has to be taught. Ingest the
+bundled skill so the model reads the write order, the refusal table, and the
+prohibitions before it touches a chain:
+
+```bash
+openminion skill ingest --name blockchain-evm \
+  --file docs/skills/blockchain-evm/SKILL.md
+```
+
+Skills are immutable, versioned, and admitted by the operator; bundled scripts are
+stored with `executable=false` and never run, so a skill cannot act on its own
+authority. It only changes what the model knows, never what the runtime permits.
+
+Give the agent an envelope at the same time, because the skill can only describe
+these settings, not change them:
+
+| Setting | Safe starting point | Why it matters |
+| --- | --- | --- |
+| `writes_enabled` | `false` until a write is needed | turns the send tool off entirely |
+| signer | one key per agent or task, funded with what that task may spend | the wallet balance is the real budget |
+| `rpc_url` / `chain_id` | set together, or omit both and use resolution | a lone value is rejected, and the pair never overrides a resolution |
+| `confirmation_depth` | `1` on a disposable chain, more where reorgs matter | controls when an operation is reported final |
+| `max_total_fee_wei` | the smallest fee the task tolerates | bounds fee spend per transaction |
+
+OpenMinion does not yet have a per-transaction value cap or a cumulative spend
+budget; the approval preview and the funded wallet are the current limits. State
+that plainly to an operator rather than implying a monetary cap exists.
