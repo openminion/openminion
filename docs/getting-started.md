@@ -344,8 +344,14 @@ Append, external effects and partial readbacks do not receive this recovery.
 File tools preserve newline bytes outside edited spans and reject invalid UTF-8
 content before modifying a file. `file.read_range` counts the actual file and
 rejects a start beyond EOF. `file.search` supports search-root-relative globs
-and marks incomplete results as truncated. `file.trash` uses the native trash
-facility through Send2Trash and never substitutes permanent deletion. Native
+and marks incomplete results as truncated. `file.mkdir` creates one directory, and
+creates missing parents only when `parents` is set; `file.copy` copies one file's
+contents to a new path and refuses an existing destination unless `overwrite` is set,
+with the refusal enforced when the destination is created. Both resolve through the
+shared path policy before the backend, so a symlinked source is followed to its
+target; neither tool adds a separate symlink policy.
+`file.trash` uses the native trash facility through Send2Trash and never substitutes
+permanent deletion. Native
 file/directory recovery is verified on macOS; Windows and Linux recovery still
 require platform-specific qualification. The memory backend rejects trash
 without removing content because it has no recoverable trash facility.
