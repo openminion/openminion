@@ -39,8 +39,12 @@ and assistant-body capture remains separately controlled by
 
 ## Local trace artifacts
 
-Exact provider requests are recorded as local files, never exported. They are
-written only when `OPENMINION_TRACE_REQUESTS=1`, under
+Exact provider requests are recorded as local files, and in this revision
+nothing in the tree exports them: no code reads the trace root in order to send
+it anywhere, and `runtime.telemetry_exporter` governs a different payload. That
+is an observation about this source tree, not an absolute guarantee against
+external readers or future changes. Files are written only when
+`OPENMINION_TRACE_REQUESTS=1`, under
 `<data_root>/traces/llm/<agent>/<run>/stepNN-<label>-http.json`, through
 `write_protected_trace_file`: the run directory is created with mode `0700`,
 and each file is written to a temporary path in that directory, flushed and
@@ -54,12 +58,13 @@ and applying a generic redactor to the parsed copy would not repair the
 serialized body. Treat an artifact as sensitive input, not as a sanitized
 record of the call.
 
-There is no artifact export path in the current source: nothing in the tree
-reads these files in order to send them anywhere. The only readers are local
-inspection, the `telemetry trace list` and `telemetry trace show` commands and
-the interactive `/trace list` and `/trace show` surfaces that share them. That
-is an observation about this revision, not a guarantee about third-party tools
-that might be pointed at the directory.
+There is no artifact export path in the current source. The readers in the tree
+are local inspection only: `telemetryctl trace list` and
+`telemetryctl trace show`, where listing is structural and only the explicit
+`--raw` flag from a trusted shell reveals artifact content, plus the interactive
+`/trace list` and `/trace show` surfaces, which expose no raw-content switch of
+their own. That is an observation about this revision, not a guarantee about
+third-party tools that might be pointed at the directory.
 
 Deletion is invocation-scoped and is not exposed as an operator command:
 `TelemetryService.delete_invocation` removes an invocation's telemetry rows,
