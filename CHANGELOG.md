@@ -88,6 +88,13 @@ This file tracks package-facing release notes for `openminion`.
   error, it records bounded `error_type` and `closed` diagnostics without copying raw
   exception text or replacing an active turn failure. (Refs #797)
 
+- `utility.calculate_expression` now maps float-overflowing numeric literals and binary
+  operations (`OverflowError`) to `ToolRuntimeError("INVALID_ARGUMENT", "Expression result is out of bounds")`
+  and applies the shared finite and `UTILITY_MAX_ABS_VALUE` (`10**12`) result guard to bare
+  literals and unary expressions as well as binary operations, while preserving exact
+  `±10**12` boundary values and scaled intermediate operands whose final result stays
+  within bounds (Refs #819).
+
 - The agent loop's stall rule now counts consecutive failures: a productive batch clears
   the no-progress counter, so two intermittent failures spread across a turn no longer end it
   while work is still getting done (Refs #679).
