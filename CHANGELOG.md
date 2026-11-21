@@ -7,6 +7,14 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Bound the native value one blockchain write may carry: `max_value_wei` refuses an
+  over-cap preparation before any RPC call and rechecks the prepared value at send on
+  both the configured and resolved paths. Empty means unbounded, which keeps existing
+  behaviour; `"0"` permits only zero-value calls. The config key set and the
+  serialized form are now derived from the dataclass, so the base file shrank and its
+  LOC ratchet moved from 236 to 230.
+
+
 - The PostgreSQL pool options are emitted as the factory's own `pool_size` and
   `pool_max_overflow`, so `storage.postgres_pool_min` / `postgres_pool_max` reach the pool
   instead of being silently dropped, with the 5 retained / 15 total default preserved

@@ -425,6 +425,16 @@ def prepare_transaction(
             {"field": "", "reason": "request_schema"},
         )
 
+    if config.max_value_wei and int(request.value_wei) > int(config.max_value_wei):
+        return _error(
+            "VALUE_CAP_EXCEEDED",
+            "Native value exceeds the configured cap.",
+            {
+                "value_wei": str(request.value_wei),
+                "configured_max_value_wei": str(config.max_value_wei),
+            },
+        )
+
     if request.kind == "resolved_contract_call":
         from .resolved_calls import prepare_resolved_transaction
 
@@ -733,6 +743,23 @@ def _send_validated_transaction(
 ) -> dict[str, Any]:
     from web3.exceptions import ContractLogicError, Web3Exception
 
+    if config.max_value_wei and int(transaction["value_wei"]) > int(
+        config.max_value_wei
+    ):
+        return _send_terminal(
+            context,
+            transaction,
+            request.preparation_digest,
+            "failed",
+            _error(
+                "VALUE_CAP_EXCEEDED",
+                "Native value exceeds the configured cap.",
+                {
+                    "value_wei": str(transaction["value_wei"]),
+                    "configured_max_value_wei": str(config.max_value_wei),
+                },
+            ),
+        )
     try:
         client, account = _load_signing_account(config, context, web3)
     except (KeyError, OSError, TypeError, ValueError):

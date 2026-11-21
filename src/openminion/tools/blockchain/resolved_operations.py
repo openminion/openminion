@@ -250,6 +250,24 @@ def _load_validated_send_signer(
                 },
             ),
         )
+    if config.max_value_wei and int(transaction["value_wei"]) > int(
+        config.max_value_wei
+    ):
+        return (
+            None,
+            sender,
+            transaction,
+            _resolved_send_failure(
+                context,
+                request,
+                "VALUE_CAP_EXCEEDED",
+                "Native value exceeds the configured cap.",
+                {
+                    "value_wei": str(transaction["value_wei"]),
+                    "configured_max_value_wei": str(config.max_value_wei),
+                },
+            ),
+        )
     if sender != request.signer_address or sender != transaction["from_address"]:
         return (
             None,

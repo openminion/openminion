@@ -44,6 +44,7 @@ Add the blockchain block under the active profile's `runtime.tools` object:
     "signer_secret_namespace": "blockchain",
     "writes_enabled": false,
     "max_total_fee_wei": "10000000000000000",
+    "max_value_wei": "",
     "receipt_timeout_seconds": 60,
     "confirmation_depth": 1
   }
@@ -109,9 +110,19 @@ After the signer is stored, set:
 {
   "signer_secret_key": "local-anvil-signer",
   "signer_secret_namespace": "blockchain",
-  "writes_enabled": true
+  "writes_enabled": true,
+  "max_value_wei": "100000000000000"
 }
 ```
+
+`max_value_wei` caps the native value one transaction may carry. It is empty by
+default, which leaves value unbounded and preserves previous behaviour; set it to
+a canonical decimal string to bound what a single call can move, and `"0"` to
+permit only zero-value calls. It is checked before a preparation exists, so an
+over-cap request never reaches the network, and again at send against the value in
+the prepared payload. It bounds one transaction, not a session: there is no
+cumulative spend budget yet, so fund a dedicated signer with what one agent may
+spend in total.
 
 Prepare first:
 
@@ -346,7 +357,8 @@ deletion:
 
 - Keep public-mainnet writes disabled. Use local Anvil or an explicitly
   authorized disposable testnet for write qualification.
-- Use the fee cap to bound the maximum estimated transaction fee.
+- Use the fee cap to bound the maximum estimated transaction fee, and
+  `max_value_wei` to bound the native value one transaction may carry.
 - Treat every send as irreversible and verify chain, sender, recipient, value,
   calldata, and fee fields in the approval preview.
 - Never paste a private key, mnemonic, or secret reference into a model prompt.
@@ -358,6 +370,6 @@ It does not support other proxy families, arbitrary metadata providers,
 private/authenticated RPC endpoints, or endpoint failover. Current facts and
 finality come from one researched RPC. Trading-specific work still needs
 reviewed quoting, token and allowance handling, slippage and deadline controls,
-chain-specific fee policy, disposable-testnet evidence, monitoring, and
-operator runbooks. Keep public-mainnet writes disabled until those owners and
+chain-specific fee policy, a cumulative spend budget across transactions,
+disposable-testnet evidence, monitoring, and operator runbooks. Keep public-mainnet writes disabled until those owners and
 acceptance gates exist.
