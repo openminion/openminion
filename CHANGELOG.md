@@ -24,6 +24,15 @@ This file tracks package-facing release notes for `openminion`.
   the final user `turn_input` while keeping bucket ordering, roles, cache/provenance
   metadata, secret redaction, and budget caps intact (Refs #483).
 
+- PostgreSQL runtime and in-place module schema ownership checks now verify base-schema
+  storage engine tables (`core_events`, `core_sidecar_rows`, `sidecar_ingest_log`) before
+  any DDL runs, refusing foreign or unowned base-schema engine tables without adding
+  columns, and concurrent first-start `CREATE SCHEMA` collisions (`pg_namespace_nspname_index`
+  `UniqueViolation` or `DuplicateSchema`) now roll back and report `"Nothing was written"` —
+  raising `SchemaOwnershipError` during runtime module-schema creation and returning a failed
+  `MigrationReport` (`rolled_back=True`) from `MigrationRunner` — while preserving existing
+  schema histories, no-adoption/no-repair behavior, and later-start recovery (Refs #446).
+
 
 - Memory retrieval honours `expires_at`: search, listing and entity lookups skip expired
   records instead of serving them until someone runs `memory gc`, on both SQLite and
