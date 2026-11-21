@@ -52,7 +52,9 @@ def test_run_payload_carries_session_from_both_flag_positions(
 
     args = build_parser().parse_args(argv)
     captured: dict[str, Any] = {}
-    monkeypatch.setattr(run_command, "load_config", lambda _cfg: _run_config())
+    monkeypatch.setattr(
+        run_command, "load_cli_config_from_args", lambda _args: _run_config()
+    )
     monkeypatch.setattr(
         run_command, "resolve_default_agent_id", lambda _cfg: "default-agent"
     )
@@ -73,7 +75,9 @@ def test_run_payload_defaults_to_cli_run_without_session(monkeypatch, capsys) ->
 
     args = build_parser().parse_args(["run", "hi"])
     captured: dict[str, Any] = {}
-    monkeypatch.setattr(run_command, "load_config", lambda _cfg: _run_config())
+    monkeypatch.setattr(
+        run_command, "load_cli_config_from_args", lambda _args: _run_config()
+    )
     monkeypatch.setattr(
         run_command, "resolve_default_agent_id", lambda _cfg: "default-agent"
     )
@@ -92,8 +96,8 @@ def test_run_payload_defaults_to_cli_run_without_session(monkeypatch, capsys) ->
 def test_run_openminion_json_output_single_process(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         run_command,
-        "load_config",
-        lambda _cfg: _run_config(),
+        "load_cli_config_from_args",
+        lambda _args: _run_config(),
     )
     monkeypatch.setattr(
         run_command,
@@ -121,8 +125,8 @@ def test_run_openminion_json_output_single_process(monkeypatch, capsys) -> None:
 def test_run_openminion_plain_output_prefers_final_text(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         run_command,
-        "load_config",
-        lambda _cfg: _run_config(),
+        "load_cli_config_from_args",
+        lambda _args: _run_config(),
     )
     monkeypatch.setattr(
         run_command,
@@ -146,8 +150,8 @@ def test_run_openminion_jsonl_output_single_process(monkeypatch, capsys) -> None
     args.jsonl = True
     monkeypatch.setattr(
         run_command,
-        "load_config",
-        lambda _cfg: _run_config(),
+        "load_cli_config_from_args",
+        lambda _args: _run_config(),
     )
     monkeypatch.setattr(run_command, "resolve_default_agent_id", lambda _cfg: "agent")
     monkeypatch.setattr(
@@ -169,7 +173,9 @@ def test_run_openminion_daemon_transport_outlives_configured_turn(
 ) -> None:
     calls: list[dict[str, object]] = []
     monkeypatch.setattr(
-        run_command, "load_config", lambda _cfg: _run_config(process_mode="daemon")
+        run_command,
+        "load_cli_config_from_args",
+        lambda _args: _run_config(process_mode="daemon"),
     )
     monkeypatch.setattr(run_command, "resolve_default_agent_id", lambda _cfg: "agent")
     monkeypatch.setattr(
@@ -198,8 +204,8 @@ def test_run_openminion_suppresses_default_info_logs_and_restores_logging(
 ) -> None:
     monkeypatch.setattr(
         run_command,
-        "load_config",
-        lambda _cfg: _run_config(),
+        "load_cli_config_from_args",
+        lambda _args: _run_config(),
     )
     monkeypatch.setattr(
         run_command,
@@ -226,8 +232,8 @@ def test_run_openminion_honors_explicit_log_level(monkeypatch, caplog) -> None:
     monkeypatch.setenv("OPENMINION_LOG_LEVEL", "INFO")
     monkeypatch.setattr(
         run_command,
-        "load_config",
-        lambda _cfg: _run_config(),
+        "load_cli_config_from_args",
+        lambda _args: _run_config(),
     )
     monkeypatch.setattr(
         run_command,
@@ -250,7 +256,9 @@ def test_run_openminion_honors_explicit_log_level(monkeypatch, caplog) -> None:
 
 def test_run_openminion_marks_caller_handles_delivery_inproc(monkeypatch) -> None:
     captured: dict[str, Any] = {}
-    monkeypatch.setattr(run_command, "load_config", lambda _cfg: _run_config())
+    monkeypatch.setattr(
+        run_command, "load_cli_config_from_args", lambda _args: _run_config()
+    )
     monkeypatch.setattr(
         run_command, "resolve_default_agent_id", lambda _cfg: "default-agent"
     )
@@ -271,7 +279,9 @@ def test_run_openminion_marks_caller_handles_delivery_inproc(monkeypatch) -> Non
 def test_run_openminion_marks_caller_handles_delivery_daemon(monkeypatch) -> None:
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        run_command, "load_config", lambda _cfg: _run_config(process_mode="daemon")
+        run_command,
+        "load_cli_config_from_args",
+        lambda _args: _run_config(process_mode="daemon"),
     )
     monkeypatch.setattr(run_command, "resolve_default_agent_id", lambda _cfg: "agent")
     monkeypatch.setattr(
@@ -300,7 +310,9 @@ def test_run_openminion_tools_work_in_the_calling_directory(
 ) -> None:
     captured: dict[str, Any] = {}
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(run_command, "load_config", lambda _cfg: _run_config())
+    monkeypatch.setattr(
+        run_command, "load_cli_config_from_args", lambda _args: _run_config()
+    )
     monkeypatch.setattr(
         run_command, "resolve_default_agent_id", lambda _cfg: "default-agent"
     )
@@ -325,7 +337,9 @@ def test_run_openminion_dir_flag_sets_the_workspace_root(monkeypatch, tmp_path) 
     project.mkdir()
     args = _run_args()
     args.dir = str(project)
-    monkeypatch.setattr(run_command, "load_config", lambda _cfg: _run_config())
+    monkeypatch.setattr(
+        run_command, "load_cli_config_from_args", lambda _args: _run_config()
+    )
     monkeypatch.setattr(
         run_command, "resolve_default_agent_id", lambda _cfg: "default-agent"
     )
@@ -350,7 +364,9 @@ def test_run_openminion_daemon_payload_carries_the_workspace_root(
     calls: list[dict[str, Any]] = []
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        run_command, "load_config", lambda _cfg: _run_config(process_mode="daemon")
+        run_command,
+        "load_cli_config_from_args",
+        lambda _args: _run_config(process_mode="daemon"),
     )
     monkeypatch.setattr(run_command, "resolve_default_agent_id", lambda _cfg: "agent")
     monkeypatch.setattr(
@@ -389,8 +405,8 @@ def test_run_openminion_preserves_the_configured_workspace_root(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         run_command,
-        "load_config",
-        lambda _cfg: _run_config_with_workspace(str(configured)),
+        "load_cli_config_from_args",
+        lambda _args: _run_config_with_workspace(str(configured)),
     )
     monkeypatch.setattr(
         run_command, "resolve_default_agent_id", lambda _cfg: "default-agent"
@@ -422,8 +438,8 @@ def test_run_openminion_dir_flag_overrides_the_configured_workspace_root(
     args.dir = str(explicit)
     monkeypatch.setattr(
         run_command,
-        "load_config",
-        lambda _cfg: _run_config_with_workspace(str(configured)),
+        "load_cli_config_from_args",
+        lambda _args: _run_config_with_workspace(str(configured)),
     )
     monkeypatch.setattr(
         run_command, "resolve_default_agent_id", lambda _cfg: "default-agent"
@@ -446,7 +462,9 @@ def test_run_openminion_dir_flag_overrides_the_configured_workspace_root(
 def test_run_openminion_rejects_a_nonexistent_dir(monkeypatch, tmp_path) -> None:
     args = _run_args()
     args.dir = str(tmp_path / "missing")
-    monkeypatch.setattr(run_command, "load_config", lambda _cfg: _run_config())
+    monkeypatch.setattr(
+        run_command, "load_cli_config_from_args", lambda _args: _run_config()
+    )
     monkeypatch.setattr(
         run_command, "resolve_default_agent_id", lambda _cfg: "default-agent"
     )
@@ -487,7 +505,9 @@ def test_resolved_workspace_root_serves_relative_file_access(
     root.mkdir()
     (root / "marker.txt").write_text("inside", encoding="utf-8")
     monkeypatch.chdir(root)
-    monkeypatch.setattr(run_command, "load_config", lambda _cfg: _run_config())
+    monkeypatch.setattr(
+        run_command, "load_cli_config_from_args", lambda _args: _run_config()
+    )
     monkeypatch.setattr(
         run_command, "resolve_default_agent_id", lambda _cfg: "default-agent"
     )
@@ -505,7 +525,7 @@ def _capture_turn_inbound_metadata(
 ) -> dict[str, str]:
     """Run the command with a mocked boundary and return its inbound metadata."""
     captured: dict[str, Any] = {}
-    monkeypatch.setattr(run_command, "load_config", lambda _cfg: config)
+    monkeypatch.setattr(run_command, "load_cli_config_from_args", lambda _args: config)
     monkeypatch.setattr(
         run_command, "resolve_default_agent_id", lambda _cfg: "default-agent"
     )
@@ -612,3 +632,55 @@ def test_selected_root_reaches_file_tools_through_the_ingress(
     denied = _h_read_file({"path": str(outside)}, ctx)
     assert denied["ok"] is False
     assert denied["error"]["code"] == "POLICY_DENIED"
+
+
+def test_run_openminion_loads_cli_config_from_args_unpatched(
+    monkeypatch, tmp_path
+) -> None:
+    from openminion.base.config import OpenMinionConfig, save_config
+    from openminion.cli.parser.base import build_parser
+    from tests._csc_fixtures import _csc_install_default_agent
+
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    custom_ws = tmp_path / "custom_ws"
+    custom_ws.mkdir()
+
+    config = OpenMinionConfig()
+    _csc_install_default_agent(config, name="real-loaded-agent")
+    config.runtime.process_mode = "single-process"
+    config.runtime.tool_workspace_root = str(custom_ws)
+    config_file = home_dir / "custom_config.json"
+    save_config(config, str(config_file))
+
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "--config",
+            str(config_file),
+            "--home-root",
+            str(home_dir),
+            "--data-root",
+            str(data_dir),
+            "run",
+            "hello unpatched",
+        ]
+    )
+
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        run_command,
+        "run_turn",
+        lambda **kwargs: (
+            captured.update(kwargs)
+            or {"run_id": "trace-unpatched", "final_text": "real done"}
+        ),
+    )
+
+    code = run_command.run_openminion(args)
+    assert code == 0
+    assert captured["config_path"] == str(config_file)
+    assert captured["payload"]["agent_id"] == "real-loaded-agent"
+    assert captured["payload"]["inbound_metadata"].get("workspace_root", "") == ""

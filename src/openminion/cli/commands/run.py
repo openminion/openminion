@@ -24,8 +24,6 @@ from openminion.cli.parser.flags import (
 from openminion.api.turns import run_turn
 from openminion.services.gateway.constants import CALLER_HANDLES_DELIVERY_METADATA_KEY
 
-load_config = load_cli_config_from_args
-
 
 def run_openminion(args: Any) -> int:
     message = _resolve_message(args)
@@ -36,7 +34,7 @@ def run_openminion(args: Any) -> int:
 
     images = read_selected_images(image_paths)
 
-    config = _load_run_config(args)
+    config = load_cli_config_from_args(args)
     workspace_root = _resolve_workspace_root(args, config)
     if getattr(args, "config", None):
         bootstrap_config_path(Path(args.config).expanduser())
@@ -231,13 +229,6 @@ def _run_inproc(
         if runtime is not None:
             runtime.close()
     return {"ok": True, "turn": turn, "trace_id": str(turn.get("run_id", "")).strip()}
-
-
-def _load_run_config(args: Any) -> Any:
-    loader = globals().get("load_config", load_cli_config_from_args)
-    if loader is load_cli_config_from_args:
-        return load_cli_config_from_args(args)
-    return loader(getattr(args, "config", None))
 
 
 def _print_output(args: Any, payload: dict[str, Any]) -> None:
