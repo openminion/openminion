@@ -1,5 +1,6 @@
 # mypy: disable-error-code="attr-defined,import-untyped"
 
+from dataclasses import replace
 import os
 from pathlib import Path
 from string import Template
@@ -7,6 +8,7 @@ from typing import Any, Mapping, MutableMapping, get_args
 
 import yaml
 
+from openminion.base.config import OpenMinionConfig
 from openminion.base.config.paths import ensure_under_data_root
 from openminion.modules.config import (
     resolve_module_config_path,
@@ -27,9 +29,15 @@ from .models import (
     RetrievalConfig,
     SQLiteRuntimeConfig,
     StoreConfig,
+    from_base_config,
     merge_candidate_learning_config,
 )
-from ..constants import DEFAULT_CONFIG_FILENAME, DEFAULT_CONFIDENCE, MEMCTL_CONFIG_ENV
+from ..constants import (
+    DEFAULT_CONFIG_FILENAME,
+    DEFAULT_CONFIDENCE,
+    DEFAULT_STANDALONE_SQLITE_SUBPATH,
+    MEMCTL_CONFIG_ENV,
+)
 from ..models import MemorySource
 
 
@@ -55,8 +63,16 @@ def load_config(
     elif path:
         path_source = "explicit_config"
 
-    resolved_path = _resolve_config_path(path, env, home_root=resolved_home_root)
+    resolved_path, candidate_entry_exists = _resolve_config_path(
+        path, env, home_root=resolved_home_root
+    )
     if not resolved_path.exists():
+        if not path and not env.get(MEMCTL_CONFIG_ENV) and not candidate_entry_exists:
+            return _derive_default_config(
+                env=env,
+                home_root=resolved_home_root,
+                data_root=resolved_data_root,
+            )
         raise FileNotFoundError(f"config file not found: {resolved_path}")
 
     payload = _load_yaml(resolved_path)
@@ -107,17 +123,55 @@ def load_config(
     )
 
 
+def _derive_default_config(
+    *,
+    env: Mapping[str, str],
+    home_root: Path | None,
+    data_root: Path | None,
+) -> MemctlConfig:
+    if data_root is None:
+        data_root = resolve_module_data_root(home_root=home_root, env=env)
+    if data_root is not None:
+        return from_base_config(
+            base_config=OpenMinionConfig(),
+            home_root=home_root if home_root is not None else data_root,
+            data_root=data_root,
+        )
+    standalone_home = home_root if home_root is not None else Path.home()
+    derived = from_base_config(
+        base_config=OpenMinionConfig(),
+        home_root=standalone_home,
+        data_root=standalone_home,
+    )
+    return replace(
+        derived,
+        store=replace(
+            derived.store,
+            sqlite_path=(standalone_home / DEFAULT_STANDALONE_SQLITE_SUBPATH).resolve(
+                strict=False
+            ),
+        ),
+        path_mode="module_standalone",
+        path_source="default_derived",
+    )
+
+
 def _resolve_config_path(
     path: str | Path | None, env: Mapping[str, str], home_root: Path | None = None
-) -> Path:
+) -> tuple[Path, bool]:
     candidate = path or env.get(MEMCTL_CONFIG_ENV) or DEFAULT_CONFIG_FILENAME
-    expanded = _expand_env(str(candidate), env)
-    path_obj = Path(expanded)
+    path_obj = Path(_expand_env(str(candidate), env))
     if path_obj.is_absolute():
-        return resolve_module_config_path(path_obj)
+        located = path_obj.expanduser()
+        return resolve_module_config_path(path_obj), os.path.lexists(located)
     if home_root:
-        return resolve_module_config_path(path_obj, home_root=home_root)
-    return Path.home() / path_obj.expanduser()
+        located = home_root / path_obj
+        return (
+            resolve_module_config_path(path_obj, home_root=home_root),
+            os.path.lexists(located),
+        )
+    located = Path.home() / path_obj.expanduser()
+    return located, os.path.lexists(located)
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
