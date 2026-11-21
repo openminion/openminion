@@ -787,6 +787,371 @@ def test_ssm_transport_preserves_id_when_poll_outcome_is_unknown() -> None:
         ).run(target, ("true",), timeout_seconds=1)
 
 
+def _ssm_target() -> SsmTarget:
+    target = _target(
+        {
+            "target_id": "node",
+            "kind": "ssm",
+            "environment": "staging",
+            "credential_ref": _credential(),
+            "account_id": "123456789012",
+            "region": "us-west-2",
+            "managed_node_id": "mi-123",
+            "document_name": "AWS-RunShellScript",
+        }
+    )
+    assert isinstance(target, SsmTarget)
+    return target
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        None,
+        {},
+        {"Command": None},
+        {"Command": {}},
+        {"Command": {"CommandId": None}},
+        {"Command": {"CommandId": "   "}},
+        {"Command": {"CommandId": 123}},
+        {"Command": {"CommandId": True}},
+    ],
+)
+def test_ssm_transport_rejects_malformed_send_command_response(
+    response: object,
+) -> None:
+    polled = False
+
+    class Client:
+        def send_command(self, **kwargs):
+            return response
+
+        def get_command_invocation(self, **kwargs):
+            nonlocal polled
+            polled = True
+            return {"Status": "Success", "ResponseCode": 0}
+
+    transport = SsmTransport(
+        lambda _ref: "staging-profile",
+        client_factory=lambda _target, _profile: Client(),
+        sleep=lambda _seconds: None,
+    )
+
+    with pytest.raises(RuntimeError, match="SSM send_command response invalid"):
+        transport.run(
+            _ssm_target(), ("true",), timeout_seconds=1, operation_id="op-ssm"
+        )
+
+    assert polled is False
+    assert transport._active == {}
+
+
+@pytest.mark.parametrize(
+    "invocation",
+    [
+        None,
+        {},
+        {"Status": None},
+        {"Status": "   "},
+        {"Status": 7},
+        {"Status": "Bogus"},
+        {"Status": "DeliveryTimedOut", "ResponseCode": -1},
+        {"Status": "Undeliverable", "ResponseCode": -1},
+        {"Status": "Success", "StatusDetails": 123, "ResponseCode": 0},
+        {"Status": "Success"},
+        {"Status": "Success", "ResponseCode": None},
+        {"Status": "Success", "ResponseCode": False},
+        {"Status": "Success", "ResponseCode": "0"},
+        {"Status": "Success", "ResponseCode": 1.5},
+        {"Status": "Success", "StatusDetails": "Success", "ResponseCode": -1},
+        {"Status": "Success", "StatusDetails": "Success", "ResponseCode": 2},
+        {"Status": "Cancelled", "ResponseCode": None},
+        {"Status": "Cancelled", "ResponseCode": True},
+        {"Status": "TimedOut", "ResponseCode": None},
+        {"Status": "Failed", "ResponseCode": None},
+        {"Status": "Failed", "ResponseCode": "bad"},
+        {"Status": "Failed", "StatusDetails": "Failed", "ResponseCode": 0},
+        {"Status": "Failed", "StatusDetails": "Undeliverable", "ResponseCode": -1},
+        {"Status": "Failed", "StatusDetails": "Terminated", "ResponseCode": -1},
+    ],
+)
+def test_ssm_transport_rejects_malformed_contradictory_or_unobserved_failed_invocations(
+    invocation: object,
+) -> None:
+    cancelled_calls: list[dict[str, Any]] = []
+
+    class Client:
+        def send_command(self, **kwargs):
+            return {"Command": {"CommandId": "cmd-invalid"}}
+
+        def get_command_invocation(self, **kwargs):
+            return invocation
+
+        def cancel_command(self, **kwargs):
+            cancelled_calls.append(kwargs)
+
+    times = iter((0.0, 0.2, 2.0))
+    transport = SsmTransport(
+        lambda _ref: "staging-profile",
+        client_factory=lambda _target, _profile: Client(),
+        sleep=lambda _seconds: None,
+        monotonic=lambda: next(times, 2.0),
+    )
+
+    with pytest.raises(RuntimeError, match="cmd-invalid"):
+        transport.run(
+            _ssm_target(), ("true",), timeout_seconds=1, operation_id="op-ssm"
+        )
+
+    assert cancelled_calls == []
+    assert transport._active == {}
+
+
+def test_ssm_transport_preserves_verified_aws_statuses_codes_and_null_streams() -> None:
+    sink_chunks: list[tuple[str, str]] = []
+    cancelled_calls: list[dict[str, Any]] = []
+    invocations = iter(
+        [
+            {"Status": "Pending", "StatusDetails": "Pending", "ResponseCode": -1},
+            {"Status": "Delayed", "StatusDetails": "Delayed", "ResponseCode": -1},
+            {
+                "Status": "Success",
+                "StatusDetails": "Success",
+                "ResponseCode": 0,
+                "StandardOutputContent": None,
+                "StandardErrorContent": None,
+            },
+            {
+                "Status": "Cancelled",
+                "StatusDetails": "Cancelled",
+                "ResponseCode": -1,
+            },
+            {
+                "Status": "Cancelling",
+                "StatusDetails": "Cancelling",
+                "ResponseCode": -1,
+            },
+            {
+                "Status": "TimedOut",
+                "StatusDetails": "Delivery Timed Out",
+                "ResponseCode": -1,
+            },
+            {
+                "Status": "TimedOut",
+                "StatusDetails": "Execution Timed Out",
+                "ResponseCode": -1,
+            },
+            {
+                "Status": "Failed",
+                "StatusDetails": "Failed",
+                "ResponseCode": 7,
+                "StandardOutputContent": "step",
+                "StandardErrorContent": "plugin err",
+            },
+        ]
+    )
+
+    class Client:
+        def send_command(self, **kwargs):
+            return {"Command": {"CommandId": "cmd-norm"}}
+
+        def get_command_invocation(self, **kwargs):
+            return next(invocations)
+
+        def cancel_command(self, **kwargs):
+            cancelled_calls.append(kwargs)
+
+    transport = SsmTransport(
+        lambda _ref: "staging-profile",
+        client_factory=lambda _target, _profile: Client(),
+        sleep=lambda _seconds: None,
+    )
+    target = _ssm_target()
+
+    null_ok = transport.run(
+        target,
+        ("true",),
+        timeout_seconds=3,
+        output_sink=lambda stream, chunk: sink_chunks.append((stream, chunk)),
+    )
+    assert (null_ok.return_code, null_ok.stdout, null_ok.stderr) == (0, "", "")
+    assert sink_chunks == []
+
+    for _ in range(2):
+        res = transport.run(target, ("true",), timeout_seconds=3)
+        assert res.cancelled is True
+        assert res.timed_out is False
+        assert res.return_code == -1
+
+    for _ in range(2):
+        res = transport.run(target, ("true",), timeout_seconds=3)
+        assert res.timed_out is True
+        assert res.cancelled is False
+        assert res.return_code == -1
+
+    failed_nonzero = transport.run(target, ("true",), timeout_seconds=3)
+    assert failed_nonzero.return_code == 7
+    assert failed_nonzero.cancelled is False
+    assert failed_nonzero.timed_out is False
+    assert (failed_nonzero.stdout, failed_nonzero.stderr) == ("step", "plugin err")
+    assert cancelled_calls == []
+
+
+@pytest.mark.parametrize(
+    (
+        "invocation",
+        "expected_status",
+        "expected_outcome",
+        "expected_return_code",
+    ),
+    [
+        (
+            {
+                "Status": "Success",
+                "StatusDetails": "Success",
+                "ResponseCode": 0,
+                "StandardOutputContent": "ok\n",
+            },
+            "succeeded",
+            "exit_observed",
+            0,
+        ),
+        (
+            {
+                "Status": "Failed",
+                "StatusDetails": "Failed",
+                "ResponseCode": 7,
+                "StandardErrorContent": "plugin failed",
+            },
+            "failed",
+            "exit_observed",
+            7,
+        ),
+        (
+            {
+                "Status": "Cancelled",
+                "StatusDetails": "Cancelled",
+                "ResponseCode": -1,
+            },
+            "cancelled",
+            "unknown",
+            -1,
+        ),
+        (
+            {
+                "Status": "TimedOut",
+                "StatusDetails": "Execution Timed Out",
+                "ResponseCode": -1,
+            },
+            "failed",
+            "unknown",
+            -1,
+        ),
+        (
+            {
+                "Status": "Failed",
+                "StatusDetails": "Failed",
+                "ResponseCode": 0,
+                "StandardOutputContent": "step output",
+            },
+            "failed",
+            "unknown",
+            None,
+        ),
+        (
+            {
+                "Status": "Failed",
+                "StatusDetails": "Undeliverable",
+                "ResponseCode": -1,
+            },
+            "failed",
+            "unknown",
+            None,
+        ),
+        ({"Status": "Cancelled", "ResponseCode": None}, "failed", "unknown", None),
+        ({"Status": "Success"}, "failed", "unknown", None),
+    ],
+)
+def test_ssm_plan_execution_preserves_outcome_facts_and_finishes_attempt_once(
+    tmp_path,
+    invocation: dict[str, Any],
+    expected_status: str,
+    expected_outcome: str,
+    expected_return_code: int | None,
+) -> None:
+    sent = 0
+
+    class Client:
+        def send_command(self, **kwargs):
+            nonlocal sent
+            sent += 1
+            return {"Command": {"CommandId": "cmd-plan"}}
+
+        def get_command_invocation(self, **kwargs):
+            return invocation
+
+        def cancel_command(self, **kwargs):
+            return None
+
+    target = _ssm_target()
+    transport = SsmTransport(
+        lambda _ref: "staging-profile",
+        client_factory=lambda _target, _profile: Client(),
+        sleep=lambda _seconds: None,
+    )
+    service = OpsService(
+        targets=TargetRegistry((target,)),
+        transports={"ssm": transport},
+        jobs=OperationJobStore(tmp_path / "jobs.db"),
+        action_policy=PolicyCtl.with_sqlite(
+            tmp_path / "policy.db", config=PolicyConfig(mode="enforce")
+        ),
+    )
+    plan = service.plan_command(
+        target_id="node",
+        argv=("printf", "hello"),
+        session_id="session-ssm",
+    )
+    with pytest.raises(ToolRuntimeError, match="confirmation") as pending:
+        service.run_plan(
+            plan_id=plan.plan_id,
+            plan_hash=plan.plan_hash,
+            session_id="session-ssm",
+        )
+    service.action_policy.resolve_confirmation(
+        str(pending.value.details["approval_id"]), "allow_once"
+    )
+
+    job = service.run_plan(
+        plan_id=plan.plan_id,
+        plan_hash=plan.plan_hash,
+        session_id="session-ssm",
+    )
+    repeated = service.run_plan(
+        plan_id=plan.plan_id,
+        plan_hash=plan.plan_hash,
+        session_id="session-ssm",
+    )
+    persisted = service.inspect_job(job.job_id)
+    evidence = service.inspect_evidence(job.evidence_id) if job.evidence_id else None
+    service.close()
+
+    assert sent == 1
+    assert transport._active == {}
+    assert job.status == expected_status
+    assert job.attempt_phase == "terminal"
+    assert job.claim_token == ""
+    assert job.remote_outcome == expected_outcome
+    if expected_return_code is None:
+        assert job.evidence_id == ""
+        assert "cmd-plan" in job.error
+    else:
+        assert evidence is not None
+        assert evidence.return_code == expected_return_code
+    assert repeated.job_id == job.job_id
+    assert persisted == job
+
+
 @pytest.mark.parametrize(
     ("profile_id", "parameters", "expected_script", "expected_tail"),
     [

@@ -52,6 +52,17 @@ This file tracks package-facing release notes for `openminion`.
   escape an active `OpsService` attempt unfinished (`remote_outcome="unknown"`).
   (Refs #654)
 
+- `SsmTransport.run` now validates AWS `send_command` `CommandId`, documented
+  `get_command_invocation` `Status` / `StatusDetails` values, and integer terminal
+  `ResponseCode` facts at the transport boundary — preserving real `ResponseCode=-1`
+  sentinels on `Cancelled`/`Cancelling`/`TimedOut` (`remote_outcome="unknown"`),
+  routing missing/malformed payloads plus contradictory (`Success` with non-zero code,
+  `Failed` with `ResponseCode=0`) or unobserved (`Failed` with `ResponseCode=-1`, such
+  as `StatusDetails="Undeliverable"` or `"Terminated"`) outcomes through the `RuntimeError`
+  unknown-outcome boundary instead of fabricating exit codes or leaving dispatched
+  `OpsService` attempts unfinished, and normalizing `None` output streams to `""`.
+  (Refs #823)
+
 
 - The turn's tool-result projection now records a security event only for a real policy decision:
   it keeps the producer's `blocked_kind`/`denial_source`, recognises the concrete legacy decision
