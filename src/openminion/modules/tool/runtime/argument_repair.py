@@ -1,7 +1,9 @@
 import json
 import re
-from typing import Any, cast
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
+from typing import Any
+
+from pydantic import BaseModel
 
 from ..contracts.model_ids import (
     MODEL_LOCATION,
@@ -170,12 +172,117 @@ def validate_model_tool_args(
         args_model=args_model,
         channel_name=f"model_tool:{tool_name}.args",
     )
-    return cast(dict[str, Any], args_model.model_validate(repaired).model_dump())
+    validated = args_model.model_validate(repaired)
+    return accepted_tool_args(validated, repaired)
+
+
+def accepted_tool_args(
+    validated: BaseModel,
+    accepted: Any,
+    *,
+    input_keys: Collection[str] | None = None,
+) -> dict[str, Any]:
+    """Return a canonical dump only when accepted input keys and shape stay valid."""
+    dumped = validated.model_dump()
+    if not isinstance(accepted, Mapping):
+        return dumped
+    if not _model_dump_accepts_input_keys(validated):
+        return dict(accepted)
+    if input_keys is not None and not set(dumped) <= set(input_keys):
+        return dict(accepted)
+    return dumped
+
+
+def _model_config_accepts_field_names(model_type: Any) -> bool:
+    config = getattr(model_type, "model_config", {}) or {}
+    validate_by_name = config.get("validate_by_name")
+    if validate_by_name is not None:
+        return bool(validate_by_name)
+    return bool(config.get("populate_by_name"))
+
+
+def _field_accepts_input_key(
+    model_type: Any, field_name: str, field_info: Any, key: str
+) -> bool:
+    config = getattr(model_type, "model_config", {}) or {}
+    validation_alias = getattr(field_info, "validation_alias", None)
+    if validation_alias is None:
+        validation_alias = getattr(field_info, "alias", None)
+
+    if config.get("validate_by_alias") is not False and _validation_alias_contains_key(
+        validation_alias, key
+    ):
+        return True
+    if key != field_name:
+        return False
+    has_renamed_alias = validation_alias is not None and not (
+        _validation_alias_contains_key(validation_alias, field_name)
+    )
+    return not has_renamed_alias or _model_config_accepts_field_names(model_type)
+
+
+def _validation_alias_contains_key(validation_alias: Any, key: str) -> bool:
+    if validation_alias == key:
+        return True
+    choices = getattr(validation_alias, "choices", ())
+    if any(_validation_alias_contains_key(choice, key) for choice in choices):
+        return True
+    path: tuple[Any, ...] = getattr(validation_alias, "path", ())
+    return len(path) == 1 and path[0] == key
+
+
+def _model_dump_accepts_input_keys(
+    model: BaseModel, seen: set[int] | None = None
+) -> bool:
+    # RootModel serializes its root value directly; preserve the accepted input shape.
+    if getattr(type(model), "__pydantic_root_model__", False):
+        return False
+    visited = seen if seen is not None else set()
+    identity = id(model)
+    if identity in visited:
+        return True
+    visited.add(identity)
+
+    config = getattr(type(model), "model_config", {}) or {}
+    serialize_by_alias = bool(config.get("serialize_by_alias"))
+    for field_name, field_info in type(model).model_fields.items():
+        serialized_key = field_name
+        if serialize_by_alias:
+            serialized_key = (
+                getattr(field_info, "serialization_alias", None)
+                or getattr(field_info, "alias", None)
+                or field_name
+            )
+        if not _field_accepts_input_key(
+            type(model), field_name, field_info, serialized_key
+        ):
+            return False
+        if not _nested_models_accept_input_keys(getattr(model, field_name), visited):
+            return False
+    return True
+
+
+def _nested_models_accept_input_keys(value: Any, seen: set[int]) -> bool:
+    if isinstance(value, BaseModel):
+        return _model_dump_accepts_input_keys(value, seen)
+    if isinstance(value, Mapping):
+        return all(
+            _nested_models_accept_input_keys(item, seen) for item in value.values()
+        )
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return all(_nested_models_accept_input_keys(item, seen) for item in value)
+    return True
 
 
 def _model_alias_map(args_model: Any) -> dict[str, str]:
     fields = getattr(args_model, "model_fields", None)
     if not isinstance(fields, Mapping):
+        return {}
+    # Do not turn a disabled alias input into an accepted field-name input.
+    config = getattr(args_model, "model_config", None) or {}
+    if config.get("validate_by_alias") is False:
+        return {}
+    if not _model_config_accepts_field_names(args_model):
         return {}
     alias_map: dict[str, str] = {}
     for field_name, field_info in fields.items():
@@ -287,6 +394,7 @@ def _sanitize_weather_location_candidate(raw: str) -> str:
 
 
 __all__ = [
+    "accepted_tool_args",
     "extract_single_weather_location",
     "missing_simple_required_fields",
     "repair_model_tool_arguments",
