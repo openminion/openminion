@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Ship a `blockchain-evm` agent skill that teaches the write order, the refusal
+  table and the prohibitions, and document the operator envelope next to it, including
+  the limits that do not exist yet (no per-transaction value cap and no cumulative
+  spend budget).
+
+
 - The PostgreSQL pool options are emitted as the factory's own `pool_size` and
   `pool_max_overflow`, so `storage.postgres_pool_min` / `postgres_pool_max` reach the pool
   instead of being silently dropped, with the 5 retained / 15 total default preserved
