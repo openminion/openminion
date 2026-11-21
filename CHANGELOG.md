@@ -24,6 +24,14 @@ This file tracks package-facing release notes for `openminion`.
   the final user `turn_input` while keeping bucket ordering, roles, cache/provenance
   metadata, secret redaction, and budget caps intact (Refs #483).
 
+- `RepoMapCache.refresh` now preserves `root`-relative symbol paths across nested
+  subdirectories via `AstRepoMapBuilder.parse_file` (falling back to a single
+  `builder.parse(root)` pass for protocol-only `RepoMapBuilder` implementations),
+  binds cached symbol reuse to the `root` that produced those relative paths across
+  both in-memory refreshes and `save_to` / `load_from` round-trips, and re-parses
+  legacy hash-only, malformed, root-changed, or version-changed cache entries instead
+  of returning empty or stale-root symbol maps (Refs #825).
+
 
 - Memory retrieval honours `expires_at`: search, listing and entity lookups skip expired
   records instead of serving them until someone runs `memory gc`, on both SQLite and
