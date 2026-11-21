@@ -2,8 +2,13 @@
   "channel": "stable",
   "distribution": "pypi",
   "product": "openminion",
-  "published_at": "2026-11-17T12:40:54Z",
+  "published_at": "2026-11-21T14:43:08Z",
   "releases": [
+    {
+      "manifest_sha256": "3c6be020886418252a6fb715d2fa29ebbd7cddbf00b670c312a4add5a22492bc",
+      "manifest_url": "https://raw.githubusercontent.com/openminion/openminion/1f3e334cefeb8bd90e63cc75123ebacc1745390d/releases/runtime/v1/pypi/releases/0.1.24/source.44912907020.1.json",
+      "runtime_version": "0.1.24"
+    },
     {
       "manifest_sha256": "2c7fd4ee37837da7f4baa69b3ee2354b4c35ed16dd8ddea6c136879954f3d48a",
       "manifest_url": "https://raw.githubusercontent.com/openminion/openminion/0d00194e3864079f6042323ee70e135532f79b69/releases/runtime/v1/pypi/releases/0.1.23/source.44079885597.1.json",
