@@ -1,7 +1,7 @@
 # Verified learning and ongoing responsibility
 
 Status: implemented in source; live acceptance incomplete
-Last updated: 2026-11-04
+Last updated: 2026-11-21
 
 OpenMinion can retain a reviewed procedure from an agent's completed work,
 evaluate its later usefulness, and admit an exact version for that agent.
@@ -19,10 +19,23 @@ editing alongside `exec.run`. Normal policy can direct read-only shell commands
 to structured tools, so an exec-only allowlist can prevent acquisition.
 Check the selected agent's stored evidence:
 
+Focus `/skills` shows retained observation counts even before a shape is ready.
+Its terminal command hints identify the active agent and config/home paths,
+and include the resolved runtime `--data-root`, including a nondefault root.
+Keep these roots when moving between commands. If a hint uses `SKILL_CONFIG`, replace it with
+the runtime's configuration file. Counts are structural evidence, not a claim
+that a procedure has been authored or proved useful.
+
 ```sh
 skillctl --config SKILL_CONFIG learning-observation-list --agent-id AGENT
 skillctl --config SKILL_CONFIG learning-shape-list --agent-id AGENT
+skillctl --config SKILL_CONFIG proposal-list
 ```
+
+Take `shape_id` from the shape listing and `proposal_id` from the proposal
+listing or the result of `learning-propose`. The proposal list is catalog-wide,
+not limited to the active agent. `learning-inspect --shape-json` is for an
+exported shape JSON file; use `learning-shape-list` for stored agent shapes.
 
 Use a stored `authoring_ready` shape with two distinct successful observations.
 Ask the model to author a `SkillProposalDraft` JSON file from the development
