@@ -37,6 +37,37 @@ explicitly from a trusted shell with `telemetryctl trace show <relative-path>
 and assistant-body capture remains separately controlled by
 `runtime.telemetry_exporter` and disabled by default.
 
+## Local trace artifacts
+
+Exact provider requests are recorded as local files, never exported. They are
+written only when `OPENMINION_TRACE_REQUESTS=1`, under
+`<data_root>/traces/llm/<agent>/<run>/stepNN-<label>-http.json`, through
+`write_protected_trace_file`: the run directory is created with mode `0700`,
+and each file is written to a temporary path in that directory, flushed and
+`fsync`ed, set to `0600` and renamed into place.
+
+Inside one artifact the same request appears twice. `json_body` is the exact
+serialized body sent on the wire and is deliberately raw, while `json` is its
+parsed copy. Only `url` and `headers` pass through domain redactors, so a
+credential carried in the request body remains present in both representations,
+and applying a generic redactor to the parsed copy would not repair the
+serialized body. Treat an artifact as sensitive input, not as a sanitized
+record of the call.
+
+There is no artifact export path in the current source: nothing in the tree
+reads these files in order to send them anywhere. The only readers are local
+inspection, the `telemetry trace list` and `telemetry trace show` commands and
+the interactive `/trace list` and `/trace show` surfaces that share them. That
+is an observation about this revision, not a guarantee about third-party tools
+that might be pointed at the directory.
+
+Deletion is invocation-scoped and is not exposed as an operator command:
+`TelemetryService.delete_invocation` removes an invocation's telemetry rows,
+its recorded artifacts and its pending exports together, and nothing in the
+tree calls it today. Retention planning covers telemetry database rows and does
+not establish a time-to-live for trace files, and no janitor prunes the trace
+root, so local artifacts persist until the operator removes them.
+
 ## Generic OTLP or OpenTelemetry Collector
 
 Use a Collector or backend that accepts traces, metrics, and logs on one gRPC
