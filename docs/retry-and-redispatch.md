@@ -8,7 +8,12 @@ state. Reading one of them tells you nothing about the other two.
 Owned by the LLM runtime (`modules/llm/runtime/flow.py`). `max_retries` and
 `backoff_ms` come from `llmctl.retries` and can be overridden per profile. When
 a provider response carries a `retry_after` fact, `error_facts.retry_after_seconds`
-turns it into the wait instead of the configured backoff.
+yields a not-before instant, and the wait becomes the later of that instant and
+the exponential backoff, not a replacement for the backoff. A hinted wait is
+only taken when the turn already has a finite deadline that it fits; otherwise
+the route returns its recorded rate-limit error unchanged so eligible fallback
+can proceed. The hinted wait polls turn cancellation every 50 ms while it runs;
+the unhinted path sleeps for the backoff step.
 
 A per-entry map keyed by `(provider, model)` holds a monotonic not-before
 instant together with the error response that set it, so a route already cooling
@@ -39,8 +44,17 @@ returning the duplicate as a failure. Tracking resets when a successful file
 mutation changed the workspace, because the previous result may no longer
 describe it.
 
+One narrower recovery is admitted first. A single repeated `file.write` is
+retried once when a complete `file.read` of the same path afterwards returned
+content whose digest contradicts what that write recorded.
+`consume_replacement_recovery` attaches the recorded `expected_content_sha256`,
+and `expected_version` when present, to that retry so it cannot overwrite a file
+that changed in between, and the entry is consumed on use. Reads are therefore
+not the only repeated-call path.
+
 A single failed tool call does not retry inside its iteration. The model decides
-whether to issue it again; only a repeated batch is eligible for redispatch.
+whether to issue it again; only a repeated batch, or the guarded write above, is
+eligible for redispatch.
 
 ## Two vocabularies that are not interchangeable
 
@@ -60,20 +74,27 @@ catalog, 117 tools are declared idempotent and 118 are read-only, so most
 idempotent reads are not redispatch-eligible: network fetches, cloud and
 Kubernetes reads, search providers and git inspection all sit outside the set.
 
-That is a cost and quota boundary rather than an oversight. For those tools
-`idempotent` means "no side effect", not "free to repeat", and retrying a paid
-search call or a rate-limited fetch on every timeout would turn a read retry
-into a spend decision. Widening the set is a policy question, not a
-consistency fix.
+No accepted decision in the tree records why the set stops here; this section
+reports the observed scope only. `idempotent` does not mean "no side effect":
+it is a declaration read by the action policy, and redispatch does not consult
+it. Widening the set would therefore be a policy decision, not a consistency
+fix.
 
 ## Attempt counts multiply
 
-A structured-output correction is a new request, and that request can itself be
-transport-retried. The worst case for one logical call is therefore the product
-of the structured-retry allowance and the transport `max_retries`, not the
-larger of the two. Neither limit is documented as a product anywhere, so budget
-arithmetic that adds them together underestimates the calls a failing turn can
-make.
+The transport loop is `range(max_retries + 1)`: an initial attempt is always
+made and `max_retries` adds retries on top, so `max_retries=0` still permits one
+attempt. A structured-output correction is a new request, and that request is
+itself subject to that loop.
+
+Scope the arithmetic to one route and one logical call. With `S` structured
+requests for the call and `max_retries + 1` transport attempts available per
+request, the ceiling on that route is `S * (max_retries + 1)` attempts. It
+assumes every request exhausts its retries, that the call stays on one route,
+and that no further corrections are requested. It is not a bound for an entire
+turn: fallback routes and other logical calls add to it, and since neither limit
+is documented as a product anywhere, adding the two together underestimates the
+calls a failing route can make.
 
 ## Where to look
 
