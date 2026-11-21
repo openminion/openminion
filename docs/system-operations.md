@@ -256,6 +256,12 @@ exact task run-now contract. Raw cron HTTP trigger/delete operations reject
 task-owned rows. Run details include the isolated result session when one was
 created, and compatible Desktop builds can open that exact conversation.
 
+One-time tasks use the existing ten-minute lateness window by default. If the
+daemon is unavailable past that window, the task records `schedule_missed`
+rather than claiming the instruction ran. Use `openminion tasks show TASK_ID
+--json` together with `openminion tasks scheduler status --json` to distinguish
+successful scheduling from execution and delivery.
+
 These controls do not promise cloud execution, webhook triggers, external
 exactly-once delivery, or cancellation of work already in flight.
 

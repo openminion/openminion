@@ -29,7 +29,9 @@ _FRESHNESS_CLASSIFIER_PROMPT = (
     "calendar assumptions would materially degrade the answer quality, including "
     "requests for latest/current/recent news, market-sensitive research, live "
     "stock baskets, or any answer that must be anchored to today's date rather "
-    "than an assumed month or year."
+    "than an assumed month or year. Local runtime actions such as scheduling "
+    "tasks and relative delays are local_only unless they depend on current "
+    "external evidence."
 )
 
 

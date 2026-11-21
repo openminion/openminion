@@ -480,6 +480,7 @@ class CronTurnExecutor:
             artifact_id=artifact_id,
             isolated_session_id=turn_result.get("isolated_session_id"),
         )
+        routine_result["metadata"]["watch_summary"] = routine_result["summary"]
         return finalize_watch_turn(
             cron_store=self._cron_store,
             watch_output_builder=watch_output,
