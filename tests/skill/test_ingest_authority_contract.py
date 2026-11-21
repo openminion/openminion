@@ -90,11 +90,22 @@ def test_ingest_rejects_cross_agent_skill_id_takeover_without_fallback(
 ) -> None:
     ctl = Skill(_config(tmp_path))
     try:
-        ctl.ingest_text(
+        skill_id, version, _ = ctl.ingest_text(
             "Deploy",
             _markdown("Run A"),
             scope="agent",
             agent_id="agent-a",
+        )
+        ctl.admit_skill_version(
+            skill_id=skill_id,
+            version_hash=version,
+            expected_active_version_hash=None,
+            target_status="verified",
+            reason="reviewed agent A fixture",
+            authority=_operator(),
+        )
+        admission = ctl.store.get_skill_admission(
+            skill_id=skill_id, version_hash=version
         )
         with pytest.raises(SkillError) as conflict:
             ctl.ingest_text(
@@ -104,6 +115,17 @@ def test_ingest_rejects_cross_agent_skill_id_takeover_without_fallback(
                 agent_id="agent-b",
             )
         assert conflict.value.code == "SKILL_SCOPE_OWNER_CONFLICT"
+        assert ctl.get_skill_owner(skill_id=skill_id) == {
+            "scope": "agent",
+            "agent_id": "agent-a",
+        }
+        assert ctl.get_skill(skill_id).version_hash == version
+        assert (
+            ctl.store.get_skill_admission(skill_id=skill_id, version_hash=version)
+            == admission
+        )
+        assert ctl.list_pending_skill_versions({"agent_id": "agent-b"}) == []
+        assert ctl.catalog_summaries("agent-b") == []
         assert not any((tmp_path / "fallback").rglob("*"))
     finally:
         ctl.close()
