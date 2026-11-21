@@ -311,7 +311,15 @@ def main(argv: Sequence[str] | None = None, *, owns_process: bool = False) -> in
                 return int(handler(args, app) or 0)
             return int(handler(args) or 0)
     except (ConfigError, RuntimeError, KeyError) as exc:
-        parser.exit(status=2, message=f"openminion: {exc}\n")
+        from openminion.cli.bootstrap.setup_hint import (
+            config_missing_hint,
+            is_missing_config_error,
+        )
+
+        message = f"openminion: {exc}\n"
+        if is_missing_config_error(exc):
+            message += f"{config_missing_hint()}\n"
+        parser.exit(status=2, message=message)
         return 2
     except KeyboardInterrupt:
         print("openminion: cancelled", file=sys.stderr)

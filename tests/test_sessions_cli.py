@@ -292,6 +292,29 @@ def test_run_sessions_list_startup_error(capsys) -> None:
     assert "startup error" in err
 
 
+def test_run_sessions_list_missing_config_returns_two_with_hint(capsys) -> None:
+    current = sys.modules.get("openminion.cli.commands.sessions", sessions_command)
+    args = SimpleNamespace(
+        agent=None,
+        status=None,
+        channel=None,
+        limit=10,
+        output_json=False,
+        config="/nonexistent.json",
+        home_root=None,
+        data_root=None,
+    )
+
+    # The real loader resolves the config path, so this exercises the shipped
+    # missing-config error instead of a patched stand-in.
+    result = current.run_sessions_list(args)
+
+    assert result == 2
+    err = capsys.readouterr().err
+    assert "config file not found" in err
+    assert "openminion setup" in err
+
+
 def test_run_sessions_delete_yes_flag(capsys) -> None:
     runtime = MagicMock()
     runtime.sessions.delete_session.return_value = True

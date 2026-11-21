@@ -5,6 +5,10 @@ from contextlib import closing
 import sys
 from typing import Any
 
+from openminion.cli.bootstrap.setup_hint import (
+    config_missing_hint,
+    is_missing_config_error,
+)
 from openminion.api.runtime import APIRuntime
 from openminion.base.config import resolve_agent_config
 from openminion.cli.config import load_cli_manager_from_args
@@ -134,7 +138,10 @@ def run_sessions_list(args) -> int:
     try:
         runtime = _load_session_storage(args)
     except Exception as exc:
-        print(f"openminion sessions: startup error — {exc}", file=sys.stderr)
+        print(f"openminion sessions: startup error: {exc}", file=sys.stderr)
+        if is_missing_config_error(exc):
+            print(config_missing_hint(), file=sys.stderr)
+            return 2
         return 1
 
     try:

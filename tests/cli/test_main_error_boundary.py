@@ -112,6 +112,24 @@ def test_config_errors_keep_exit_code_two(monkeypatch, capsys) -> None:
     assert "config file not found" in capsys.readouterr().err
 
 
+def test_missing_config_error_names_the_next_step(monkeypatch, capsys) -> None:
+    from openminion.base.config.manager import ConfigManagerError
+
+    def handler(_args):
+        raise ConfigManagerError("config file not found: /tmp/agents.json")
+
+    _parser_with_handler(monkeypatch, handler)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_main.main(["version"])
+
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "config file not found" in err
+    assert "openminion setup" in err
+    assert "openminion config init" in err
+
+
 def test_abort_on_sigint_prints_and_exits_130(monkeypatch, capsys) -> None:
     codes = []
     monkeypatch.setattr(cli_main.os, "_exit", lambda code: codes.append(code))
