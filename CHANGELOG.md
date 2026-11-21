@@ -1,11 +1,13 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-11-17
+Last updated: 2026-11-21
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
+
+## Current package line - 2026-11-21
 
 - The file family gains `file.mkdir` and `file.copy`: `file.mkdir` creates a
   directory (missing parents only with `parents`) and reports whether it created it,
