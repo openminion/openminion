@@ -190,6 +190,7 @@ def runtime_turn_request_from_manager_request(
     request: TurnRequest,
 ) -> RuntimeTurnRequest:
     meta = dict(request.meta or {})
+    request_id = _optional_text(meta.pop("request_id", None))
     reject_reserved_subagent_fields(meta, error_factory=TurnRequestError)
     run_profile_overrides = _parse_run_profile_overrides(meta)
     effective_run_profile_overrides = combine_run_profile_overrides(
@@ -221,7 +222,7 @@ def runtime_turn_request_from_manager_request(
             run_profile_overrides=effective_run_profile_overrides,
         ),
         session_id=str(request.session_id or "").strip() or None,
-        request_id=str(request.trace_id or "").strip() or None,
+        request_id=request_id,
         idempotency_key=str(meta.get("idempotency_key", "")).strip() or None,
         inbound_metadata=(
             MappingProxyType(dict(inbound_metadata))
@@ -321,6 +322,7 @@ def _manager_meta_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if isinstance(meta_raw, dict):
         meta.update(meta_raw)
     _lift_payload_fields(meta=meta, payload=payload)
+    meta["request_id"] = _optional_text(payload.get("trace_id"))
     return meta
 
 

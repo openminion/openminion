@@ -49,6 +49,7 @@ DEFAULT_POLICY: dict[str, Any] = {
             "exec.",
             "git.",
             "plan.",
+            "plugin.",
             "reactions.",
             "weather",
             "time",

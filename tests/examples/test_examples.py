@@ -13,6 +13,7 @@ import pytest
 import yaml
 
 from openminion import tool
+from openminion.api import TurnChunk
 from openminion.base.config import OpenMinionConfig
 from openminion.base.version import OPENMINION_VERSION
 from openminion.modules.policy.runtime.action_policy import build_action_policy_service
@@ -158,6 +159,15 @@ def test_sdk_examples_expose_help_without_provider_calls() -> None:
     for script in scripts:
         result = _run([str(script), "--help"], env=_demo_env(ROOT / ".tmp-help"))
         assert "usage:" in result.stdout
+
+
+def test_submitted_stream_ignores_additive_event_kinds() -> None:
+    chunk_line = run_path(str(SDK_EXAMPLES / "submitted_stream.py"))["_chunk_line"]
+
+    assert chunk_line(TurnChunk(trace_id="t", kind="status", sequence=1)) == (
+        "[status] sequence=1"
+    )
+    assert chunk_line(TurnChunk(trace_id="t", kind="future_kind", sequence=2)) is None
 
 
 def test_sdk_tool_example_uses_public_decorator_contract() -> None:

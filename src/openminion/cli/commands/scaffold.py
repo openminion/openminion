@@ -6,6 +6,9 @@ from pathlib import Path
 
 from openminion.base.version import OPENMINION_VERSION
 from openminion.cli.config import resolve_cli_roots
+from openminion.services.runtime.plugins.manifests import (
+    PLUGIN_MANIFEST_CONTRACT_VERSION,
+)
 
 VALID_NAME_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}$")
 
@@ -210,6 +213,7 @@ def _plugin_files(name: str) -> dict[str, str]:
             f'  "id": "example.{module}",\n'
             f'  "name": "{class_base} Plugin",\n'
             f'  "version": "{OPENMINION_VERSION}",\n'
+            f'  "contract_version": "{PLUGIN_MANIFEST_CONTRACT_VERSION}",\n'
             '  "description": "Scaffolded plugin manifest.",\n'
             '  "config_schema": {\n'
             '    "type": "object",\n'

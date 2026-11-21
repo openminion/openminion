@@ -1,7 +1,7 @@
 # OpenMinion Runtime Surfaces
 
 Status: active
-Last updated: 2026-10-06
+Last updated: 2026-11-21
 
 Purpose: give developers one package-local map of the public `openminion`
 surfaces and when to use each one.
@@ -61,6 +61,8 @@ Its `run_stream()` method is a synchronous turn with a progress callback. For
 iterator streaming, cancellation, or explicit approval resolution, call
 `APIRuntime.submit_turn()` and use the returned `RuntimeTurnHandle`.
 `examples/sdk/submitted_stream.py` shows that lifecycle using public imports.
+For an application boundary, identity mapping, stream semantics, restart
+limits, and plugin guidance, see `docs/building-agentic-applications.md`.
 
 `Agent.run()` and callback-progress `run_stream()` accept optional
 `timeout_seconds`, `approval_callback`, and `cancel_event` controls already

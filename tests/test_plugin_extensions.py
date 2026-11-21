@@ -12,8 +12,9 @@ from tests._csc_fixtures import _csc_install_default_agent
 
 from openminion.api.runtime import APIRuntime
 from openminion.base.config import OpenMinionConfig, save_config
-from openminion.services.runtime.plugins import Plugin, PluginContext
+from openminion.tools import Plugin, PluginContext
 from openminion.services.runtime.plugins import PluginRegistry
+from openminion.services.runtime.plugins.discovery import PluginDiscoveryError
 from openminion.services.runtime.errors import PluginActivationError
 from openminion.services.runtime.lifecycle import LifecycleService
 from openminion.modules.policy import SecurityPolicyEngine
@@ -341,6 +342,23 @@ class PluginExtensionTests(unittest.TestCase):
             self.assertIsInstance(context.exception.__cause__, ToolRuntimeError)
             self.assertIsInstance(context.exception.__cause__.__cause__, ValueError)
 
+    def test_plugin_contract_version_mismatch_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            plugin_root = tmp_path / "plugins"
+            _write_extension_plugin(plugin_root, contract_version="2")
+            config = OpenMinionConfig()
+            _csc_install_default_agent(config, provider="echo")
+            config.enabled_plugins = ["example.extension"]
+
+            with _plugin_paths_env([plugin_root]):
+                with self.assertRaises(PluginDiscoveryError) as context:
+                    LifecycleService.from_config(config).build(
+                        security_policy=SecurityPolicyEngine()
+                    )
+
+            self.assertIn("contract_version must be '1'", str(context.exception))
+
 
 def _write_extension_plugin(
     root: Path,
@@ -353,6 +371,7 @@ def _write_extension_plugin(
     runtime_tool_name: str = "plugin.example.extension.echo",
     register_twice: bool = False,
     registration_error: bool = False,
+    contract_version: str = "1",
 ) -> None:
     capabilities = list(requested_capabilities or [])
     provenance_payload = dict(
@@ -423,7 +442,7 @@ def _write_extension_plugin(
         else ""
     )
     (root / "extension.py").write_text(
-        "from openminion.services.runtime.plugins import Plugin\n"
+        "from openminion.tools import Plugin\n"
         + provider_import_block
         + "from openminion.modules.tool.base import Tool, ToolExecutionContext, ToolExecutionResult\n\n"
         + "from openminion.modules.tool.contracts import ModelToolDef, RuntimeBindingDef, ToolBindingManifest\n\n"
@@ -458,6 +477,7 @@ def _write_extension_plugin(
                 "id": "example.extension",
                 "name": "example-extension",
                 "version": "0.0.1",
+                "contract_version": contract_version,
                 "description": "test extension plugin",
                 "config_schema": {
                     "type": "object",

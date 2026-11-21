@@ -13,6 +13,7 @@ package source and release surface.
 | --- | --- |
 | Install the package from source and run local checks | [`getting-started.md`](getting-started.md) |
 | Understand supported CLI, Python, API, gateway, and runtime surfaces | [`runtime-surfaces.md`](runtime-surfaces.md) |
+| Build a product-shaped application on the public SDK | [`building-agentic-applications.md`](building-agentic-applications.md) |
 | Operate local diagnostics, status, evidence, and runtime tools | [`system-operations.md`](system-operations.md) |
 | Run bounded local Semgrep and Trivy audits | [`security-scanning.md`](security-scanning.md) |
 | Check and set up external tool dependencies | [`tool-dependency-readiness.md`](tool-dependency-readiness.md) |

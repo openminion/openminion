@@ -14,6 +14,7 @@ class APIRouteContext:
     runtime_bootstrap_error: str | None
     request_headers: Mapping[str, str] | None
     request_id: str
+    request_id_supplied: bool = True
 
 
 @dataclass(frozen=True)
