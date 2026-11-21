@@ -188,3 +188,145 @@ def test_repo_map_config_default_disabled():
     assert cfg.enabled is False
     assert cfg.token_budget == 1500
     assert "coding" in cfg.profile_gate
+
+
+def test_cache_refresh_preserves_subdirectory_symbols_and_incremental_updates(
+    tmp_path: Path,
+):
+    top = _write_fixture(tmp_path, name="top.py", body="def top_fn():\n    return 1\n")
+    pkg = tmp_path / "pkg" / "deep"
+    pkg.mkdir(parents=True)
+    sub = tmp_path / "pkg" / "sub.py"
+    sub.write_text(_FIXTURE_PY, encoding="utf-8")
+    leaf = pkg / "leaf.py"
+    leaf.write_text("def leaf_fn(a):\n    return a\n", encoding="utf-8")
+
+    builder = AstRepoMapBuilder()
+    cache = RepoMapCache()
+    refreshed = cache.refresh(tmp_path, builder=builder)
+    direct = builder.parse(tmp_path)
+    assert refreshed.symbols == direct.symbols
+
+    sub.write_text("def updated_sub():\n    return 2\n", encoding="utf-8")
+    leaf.unlink()
+    updated = cache.refresh(tmp_path, builder=builder)
+    assert {(s.path, s.name) for s in updated.symbols} == {
+        ("top.py", "top_fn"),
+        ("pkg/sub.py", "updated_sub"),
+    }
+    assert str(top) in cache.cached_symbols
+    assert str(leaf) not in cache.entries
+    assert str(leaf) not in cache.cached_symbols
+
+
+def test_cache_save_load_round_trip_and_root_change_rebinding(
+    tmp_path: Path,
+):
+    _write_fixture(tmp_path, name="top.py", body="def top_fn():\n    return 1\n")
+    pkg_dir = tmp_path / "pkg"
+    pkg_dir.mkdir()
+    (pkg_dir / "sub.py").write_text(_FIXTURE_PY, encoding="utf-8")
+    builder = AstRepoMapBuilder()
+    cache = RepoMapCache()
+    initial = cache.refresh(tmp_path, builder=builder)
+    save_path = tmp_path / "cache.json"
+    cache.save_to(save_path)
+
+    class _FailIfParsedBuilder:
+        parser_version = initial.parser_version
+
+        def parse(self, root: Path) -> RepoMap:
+            raise AssertionError(f"unexpected parse on fresh cache: {root}")
+
+    loaded = RepoMapCache.load_from(save_path)
+    reused = loaded.refresh(tmp_path, builder=_FailIfParsedBuilder())
+    assert reused.symbols == initial.symbols
+
+    config = RepoMapConfig(enabled=True, profile_gate=("coding",))
+    cached_section = build_repo_map_section(
+        tmp_path, config=config, profile="coding", cache=loaded
+    )
+    uncached_section = build_repo_map_section(tmp_path, config=config, profile="coding")
+    assert cached_section == uncached_section
+    assert "pkg/sub.py:" in cached_section
+
+    direct_pkg_map = builder.parse(pkg_dir)
+    direct_pkg_section = build_repo_map_section(
+        pkg_dir, config=config, profile="coding"
+    )
+    rebound_in_mem = cache.refresh(pkg_dir, builder=builder)
+    assert rebound_in_mem.symbols == direct_pkg_map.symbols
+    assert (
+        build_repo_map_section(pkg_dir, config=config, profile="coding", cache=cache)
+        == direct_pkg_section
+    )
+
+    loaded_for_subroot = RepoMapCache.load_from(save_path)
+    rebound_loaded_section = build_repo_map_section(
+        pkg_dir, config=config, profile="coding", cache=loaded_for_subroot
+    )
+    assert rebound_loaded_section == direct_pkg_section
+    assert "sub.py:" in rebound_loaded_section
+    assert "pkg/sub.py:" not in rebound_loaded_section
+
+
+def test_cache_reparses_legacy_hash_only_malformed_or_version_changed_cache(
+    tmp_path: Path,
+):
+    sub_dir = tmp_path / "pkg"
+    sub_dir.mkdir()
+    sub_file = sub_dir / "sub.py"
+    sub_file.write_text("def sub_fn():\n    return 1\n", encoding="utf-8")
+    cache = RepoMapCache()
+    cache.refresh(tmp_path, builder=AstRepoMapBuilder())
+
+    legacy_path = tmp_path / "legacy.json"
+    legacy_path.write_text(
+        f'{{"parser_version": "ast-1", "entries": {{"{sub_file}": "{cache.entries[str(sub_file)]}"}}}}',
+        encoding="utf-8",
+    )
+    legacy_loaded = RepoMapCache.load_from(legacy_path)
+    assert legacy_loaded.is_fresh(sub_file) is False
+    reparsed = legacy_loaded.refresh(tmp_path, builder=AstRepoMapBuilder())
+    assert [(s.path, s.name) for s in reparsed.symbols] == [("pkg/sub.py", "sub_fn")]
+
+    malformed_path = tmp_path / "malformed.json"
+    malformed_path.write_text('["not-an-object"]', encoding="utf-8")
+    assert RepoMapCache.load_from(malformed_path).entries == {}
+
+    upgraded = AstRepoMapBuilder(parser_version="ast-2")
+    version_refreshed = legacy_loaded.refresh(tmp_path, builder=upgraded)
+    assert version_refreshed.parser_version == "ast-2"
+    assert [(s.path, s.name) for s in version_refreshed.symbols] == [
+        ("pkg/sub.py", "sub_fn")
+    ]
+
+
+def test_cache_refresh_supports_protocol_only_builder_once_per_root(
+    tmp_path: Path,
+):
+    (tmp_path / "a.py").write_text("def fa():\n    pass\n", encoding="utf-8")
+    pkg_dir = tmp_path / "pkg"
+    pkg_dir.mkdir()
+    (pkg_dir / "b.py").write_text("def fb():\n    pass\n", encoding="utf-8")
+    calls: list[Path] = []
+
+    class _ProtocolOnlyBuilder:
+        def parse(self, root: Path) -> RepoMap:
+            calls.append(root)
+            return AstRepoMapBuilder().parse(root)
+
+    cache = RepoMapCache()
+    result = cache.refresh(tmp_path, builder=_ProtocolOnlyBuilder())
+    assert calls == [tmp_path]
+    assert {(s.path, s.name) for s in result.symbols} == {
+        ("a.py", "fa"),
+        ("pkg/b.py", "fb"),
+    }
+    reused = cache.refresh(tmp_path, builder=_ProtocolOnlyBuilder())
+    assert calls == [tmp_path]
+    assert reused.symbols == result.symbols
+
+    sub_result = cache.refresh(pkg_dir, builder=_ProtocolOnlyBuilder())
+    assert calls == [tmp_path, pkg_dir]
+    assert [(s.path, s.name) for s in sub_result.symbols] == [("b.py", "fb")]
