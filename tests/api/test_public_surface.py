@@ -41,6 +41,19 @@ EXPECTED_OPENMINION_API_PUBLIC = {
     "subagent",
 }
 
+EXPECTED_PLUGIN_AUTHOR_PUBLIC = {
+    "PLUGIN_MANIFEST_CONTRACT_VERSION",
+    "Plugin",
+    "PluginContext",
+    "ToolDecl",
+    "ToolDependencyDecl",
+    "ToolDependencyProbeContext",
+    "ToolDependencySetupHint",
+    "ToolDependencyStatus",
+    "ToolFamilySpec",
+    "build_registrar",
+}
+
 EXPECTED_OPENMINION_SINCE = dict.fromkeys(
     EXPECTED_OPENMINION_PUBLIC,
     "0.0.1",
@@ -74,6 +87,10 @@ def test_openminion_api_public_surface_pinned() -> None:
         "Update EXPECTED_OPENMINION_API_PUBLIC in this test together with "
         "the ISAP task that adds the symbol."
     )
+
+
+def test_openminion_plugin_author_surface_pinned() -> None:
+    assert EXPECTED_PLUGIN_AUTHOR_PUBLIC <= _public_names("openminion.tools")
 
 
 def test_openminion_apiruntime_importable_from_root() -> None:

@@ -965,6 +965,28 @@ class GatewayServiceCoreTests(GatewayServiceTestCase):
         self.assertEqual(len(provider.requests), 1)
         self.assertEqual(len(sink.sent), 1)
 
+    def test_gateway_rejects_idempotency_key_reuse_for_another_request(self) -> None:
+        asyncio.run(
+            self.gateway.run_once(
+                channel="console",
+                target="local-user",
+                message="first",
+                idempotency_key="idem-conflict",
+            )
+        )
+
+        with self.assertRaisesRegex(ValueError, "idempotency key conflicts"):
+            asyncio.run(
+                self.gateway.run_once(
+                    channel="console",
+                    target="local-user",
+                    message="second",
+                    idempotency_key="idem-conflict",
+                )
+            )
+
+        self.assertEqual(len(self.provider.requests), 1)
+
     def test_gateway_rejects_distinct_concurrent_explicit_session_turns(self) -> None:
         class _BlockingProvider(LLMProvider):
             name = "blocking-session-turn"

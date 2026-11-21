@@ -97,6 +97,7 @@ def _manifest_payload(plugin: DiscoveredPlugin) -> dict[str, Any]:
         "id": manifest.id,
         "name": manifest.name,
         "version": manifest.version,
+        "contract_version": manifest.contract_version,
         "dependencies": list(manifest.dependencies),
         "dependencies_enforced": False,
         "config_schema_enforced": False,

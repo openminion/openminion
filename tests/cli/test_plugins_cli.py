@@ -73,6 +73,7 @@ def test_plugin_preview_reports_dependencies_permissions_and_provenance(
     assert preview_plugin(_args(tmp_path, source=str(source))) == 0
 
     payload = json.loads(capsys.readouterr().out)
+    assert payload["plugin"]["contract_version"] == "1"
     assert payload["plugin"]["dependencies"] == ["example-runtime>=1"]
     assert payload["plugin"]["dependencies_enforced"] is False
     assert payload["plugin"]["config_schema_enforced"] is False

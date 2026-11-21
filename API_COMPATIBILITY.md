@@ -1,7 +1,7 @@
 # OpenMinion API Compatibility
 
 Status: active
-Last updated: 2026-10-14
+Last updated: 2026-11-21
 
 Purpose: record the supported public import roots and entrypoint compatibility
 posture for `openminion`.
@@ -53,6 +53,26 @@ Current documented exports:
 
 These are defined in `src/openminion/api/__init__.py`.
 
+### Plugin author package
+
+`openminion.plugins` is the narrow public authoring surface for local manifest
+plugins. It exports the existing `Plugin`, `PluginContext`, tool-family
+declarations, dependency declarations, `build_registrar`, and
+`PLUGIN_MANIFEST_CONTRACT_VERSION`. It does not make
+`openminion.modules.*` or `openminion.services.*` blanket public API.
+
+The canonical external plugin is a local manifest plugin discovered through
+`OPENMINION_PLUGIN_PATHS` and managed with `openminion plugins`. Its manifest
+`contract_version` is `1`. Omitted values retain pre-contract compatibility as
+version `1`; another value fails discovery before plugin code is loaded.
+Contributed tool IDs must stay in the manifest namespace and still pass normal
+exposure, policy, dependency, and approval enforcement.
+
+The `openminion.modules.tool.runtime.plugins` entry-point registrar loader is
+compatibility-only. `modules/tool/framework.py`, `plugin_api.py`,
+`plugin_contract/`, `interfaces.py`, and `runtime/plugin.py` remain internal
+owners; the public facade does not join them into another plugin system.
+
 `Agent.run_stream()` remains the synchronous `Agent` call with a progress
 callback. Applications that need an iterator, cancellation, or streamed
 approval resolution use `APIRuntime.submit_turn()` and its
@@ -85,6 +105,21 @@ and provider request timeouts. The exception retains `code`, `message`, and
 Provider failure is reported before structured-output validation. Successful
 `AgentRunResult` values are unchanged. Submitted-turn streaming and HTTP callers
 continue to use their existing runtime error envelopes.
+
+### Application turn contract
+
+`APIRuntime.submit_turn()` accepts the documented application fields in
+`docs/building-agentic-applications.md`. The handle's stream schema is
+`openminion.turn-stream.v1`. Known kinds are `status`, `approval`, and
+`final_text`; additive fields and unknown kinds must be ignored. Sequences are
+monotonic within one trace and event IDs identify one sequenced chunk.
+
+An `idempotency_key` applies to one exact request. Exact reuse returns the
+recorded result; conflicting reuse raises an error or returns the matching
+structured transport error. It is not an application-record uniqueness or
+external-effect guarantee. Active handles and stream reattachment remain
+process-local. Persisted session/task records support later lookup and later
+turns, not resurrection of an uncertain side effect.
 
 ```python
 from openminion import ProviderError

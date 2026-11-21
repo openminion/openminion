@@ -98,3 +98,21 @@ def test_agent_receives_a_pending_undelivered_reply_once(echo_runtime):
         pending["run_id"],
         follow_up.run_id,
     }
+
+
+def test_runtime_idempotency_replays_exact_request_and_rejects_conflict(
+    echo_runtime,
+):
+    payload = {
+        "message": "idempotent request",
+        "session_id": "sdk-idempotency",
+        "idempotency_key": "app-request-1",
+        "deliver": False,
+    }
+    first = echo_runtime.run_turn(payload=payload)
+    duplicate = echo_runtime.run_turn(payload=payload)
+
+    assert duplicate["id"] == first["id"]
+    assert duplicate["body"] == first["body"]
+    with pytest.raises(ValueError, match="idempotency key conflicts"):
+        echo_runtime.run_turn(payload={**payload, "message": "different request"})

@@ -425,18 +425,6 @@ class GatewayService:
         progress_callback: Callable[[object], None] | None = None,
         approval_callback: Callable[..., Any] | None = None,
     ) -> Message:
-        existing = self._idempotency.get(
-            method=self._METHOD_HANDLE_MESSAGE,
-            idempotency_key=idempotency_key,
-        )
-        if existing is not None and existing.status == "completed":
-            return _message_from_cache(existing.response)
-
-        inflight_key = (self._METHOD_HANDLE_MESSAGE, idempotency_key)
-        inflight = self._inflight.get(inflight_key)
-        if inflight is not None:
-            return await inflight
-
         request_hash = _request_hash(
             channel=channel,
             target=target,
@@ -446,6 +434,20 @@ class GatewayService:
             typed_turn_intent=typed_turn_intent,
             image_refs=image_refs,
         )
+        existing = self._idempotency.get(
+            method=self._METHOD_HANDLE_MESSAGE,
+            idempotency_key=idempotency_key,
+        )
+        if existing is not None and existing.request_hash != request_hash:
+            raise ValueError("idempotency key conflicts with an earlier request")
+        if existing is not None and existing.status == "completed":
+            return _message_from_cache(existing.response)
+
+        inflight_key = (self._METHOD_HANDLE_MESSAGE, idempotency_key)
+        inflight = self._inflight.get(inflight_key)
+        if inflight is not None:
+            return await inflight
+
         reserved = self._idempotency.reserve(
             method=self._METHOD_HANDLE_MESSAGE,
             idempotency_key=idempotency_key,
@@ -456,6 +458,8 @@ class GatewayService:
                 method=self._METHOD_HANDLE_MESSAGE,
                 idempotency_key=idempotency_key,
             )
+            if existing is not None and existing.request_hash != request_hash:
+                raise ValueError("idempotency key conflicts with an earlier request")
             if existing is not None and existing.status == "completed":
                 return _message_from_cache(existing.response)
             inflight = self._inflight.get(inflight_key)
