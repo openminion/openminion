@@ -75,13 +75,10 @@ _SEARCH_PRUNED_DIRS = frozenset(
 
 
 def _find_char_class_end(pattern: str, start: int) -> int | None:
-    """Return the index of the ``]`` closing a glob class at ``start``.
+    """Return the closing ``]`` index of a fnmatch class at ``start``.
 
-    A ``!`` immediately after ``[`` is a negation marker, and a ``]``
-    immediately after ``[`` (or after the marker) is a literal ``]``,
-    matching fnmatch. ``^`` is *not* a marker: fnmatch keeps it as a literal
-    inside the class. Returns ``None`` for an unterminated class, which the
-    caller then treats as a literal ``[``.
+    A leading ``!`` negates and a leading ``]`` is literal; ``^`` is literal.
+    ``None`` means unterminated, which the caller treats as a literal ``[``.
     """
     j = start + 1
     if j < len(pattern) and pattern[j] == "!":
@@ -99,13 +96,11 @@ def _escape_class_lead(body: str) -> str:
 
 
 def _translate_char_class(body: str) -> str:
-    """Translate a fnmatch ``[...]`` body into a regex character class.
+    """Translate a fnmatch class body to regex without crossing ``/``.
 
-    Mirrors :func:`fnmatch.translate` exactly: ``!`` is the only negation
-    operator (``^`` stays a literal), ``a-z`` ranges are preserved, and an
-    invalid/descending range such as ``z-a`` collapses to 'never match'
-    instead of raising. An empty negated body matches any non-separator
-    character; an empty plain body never matches.
+    ``!`` negates and ``^`` is literal; ranges are preserved, while a malformed
+    or descending range (``z-a``) never matches instead of raising. An empty
+    negated body matches any non-separator; an empty plain body never matches.
     """
     stuff = body
     if "-" not in stuff:
@@ -154,13 +149,12 @@ def _translate_char_class(body: str) -> str:
 
 @lru_cache(maxsize=128)
 def _glob_to_regex(pattern: str) -> re.Pattern[str]:
-    """Compile a glob ``pattern`` into an anchored, root-relative regex.
+    """Compile a root-relative glob into an anchored regex.
 
-    ``**/`` -> ``(?:.*/)?``, ``**`` -> ``.*``, ``*`` -> ``[^/]*``, ``?`` ->
-    ``[^/]``; a ``[...]`` class keeps fnmatch semantics (``!`` negates, ``^``
-    is literal, a malformed class stays literal) but never consumes the
-    separator. Anchored with ``^``/``\\Z`` so a trailing newline cannot satisfy
-    it, and compiled with ``re.S`` so ``*``/``**`` also match a newline.
+    ``**`` spans directories; ``*``, ``?`` and classes never cross ``/``, and
+    classes keep fnmatch semantics (``!`` negation, literal ``^``, malformed
+    range never matches, unterminated class literal). ``^``/``\\Z`` with
+    ``re.S`` matches newline-bearing names but not a trailing-newline suffix.
     """
     tokens: list[str] = []
     i = 0
@@ -192,11 +186,8 @@ def _glob_to_regex(pattern: str) -> re.Pattern[str]:
 
 
 def _matches_glob(pattern: str, name: str, relative_path: str) -> bool:
-    """Return whether ``name`` matches ``pattern`` at the search root.
-
-    Basename-only patterns keep ``fnmatch`` recursion across directories;
-    patterns with a separator match the whole root-relative path (see
-    :func:`_glob_to_regex`).
+    """Match separator-free patterns by basename, else the whole root-relative
+    path; the basename case keeps ``fnmatch`` recursion across directories.
     """
     if "/" not in pattern:
         return fnmatch.fnmatch(name, pattern)
