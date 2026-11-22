@@ -54,7 +54,11 @@ delivery, and `AgentRunResult.session_id` exposes the resolved continuity key.
 `Agent` also supports `with Agent(...) as agent:` for deterministic cleanup.
 `tools=None` keeps the configured default tool exposure; `tools=[]` disables
 application and orchestration tools for the turn. Explicit `handoffs` add their
-transfer tools to the list. Forced tool requests do not override an empty
+transfer tools to the list; each `Handoff` may also set keyword-only
+`timeout_seconds` (tightening, never widening, any target subagent bound) and
+`approval_callback` (for child-turn tool confirmations, distinct from the
+transfer tool's own parent-policy check and inheriting nothing when omitted).
+Forced tool requests do not override an empty
 allowlist. Internal structured-output schemas may still be used for runtime
 reasoning; they cannot dispatch application tools.
 Its `run_stream()` method is a synchronous turn with a progress callback. For
