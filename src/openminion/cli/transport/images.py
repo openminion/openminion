@@ -19,7 +19,18 @@ from openminion.modules.artifact.control import ArtifactCtl
 from openminion.modules.artifact.errors import ArtifactCtlError
 
 
-def read_selected_images(paths: list[str]) -> list[tuple[bytes, str]]:
+def _validated_image_mime(data: bytes) -> str:
+    if not data or len(data) > MAX_IMAGE_BYTES:
+        raise ValueError("Each image must be between 1 byte and 10 MiB")
+    image_format = detect_image_bytes(data)
+    if image_format not in {"png", "jpeg", "webp"}:
+        raise ValueError("Select a PNG, JPEG or WebP image")
+    return f"image/{image_format}"
+
+
+def read_selected_images(
+    paths: list[str], *, include_clipboard: bool = False
+) -> list[tuple[bytes, str]]:
     if len(paths) > MAX_TURN_IMAGES:
         raise ValueError("Select at most four images")
     images = []
@@ -27,16 +38,91 @@ def read_selected_images(paths: list[str]) -> list[tuple[bytes, str]]:
     for path in paths:
         with Path(path).expanduser().open("rb") as stream:
             data = stream.read(MAX_IMAGE_BYTES + 1)
-        if not data or len(data) > MAX_IMAGE_BYTES:
-            raise ValueError("Each image must be between 1 byte and 10 MiB")
-        image_format = detect_image_bytes(data)
-        if image_format not in {"png", "jpeg", "webp"}:
-            raise ValueError("Select a PNG, JPEG or WebP image")
+        mime = _validated_image_mime(data)
         total += len(data)
         if total > MAX_IMAGE_BATCH_BYTES:
             raise ValueError("Selected images exceed the 20 MiB request limit")
-        images.append((data, f"image/{image_format}"))
+        images.append((data, mime))
+    if include_clipboard:
+        data = read_clipboard_image()
+        mime = _validated_image_mime(data)
+        if len(images) >= MAX_TURN_IMAGES:
+            raise ValueError("Select at most four images")
+        if total + len(data) > MAX_IMAGE_BATCH_BYTES:
+            raise ValueError("Selected images exceed the 20 MiB request limit")
+        images.append((data, mime))
     return images
+
+
+_PNGPASTE = ("pngpaste", "-")
+_WL_PASTE = ("wl-paste", "--type", "image/png", "--no-newline")
+_XCLIP = ("xclip", "-selection", "clipboard", "-t", "image/png", "-o")
+_CLIPBOARD_IMAGE_COMMANDS = (_WL_PASTE, _XCLIP, _PNGPASTE)
+_CLIPBOARD_TIMEOUT_SECONDS = 5
+_CLIPBOARD_OK = "ok"
+_CLIPBOARD_MISSING = "missing"
+_CLIPBOARD_FAILED = "failed"
+
+
+def _clipboard_command_output(command: tuple[str, ...]) -> tuple[bytes | None, str]:
+    """Bounded stdout from one clipboard command, and how it ended: ok, missing or failed."""
+    import subprocess
+    import threading
+
+    try:
+        process = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+        )
+    except FileNotFoundError:
+        return None, _CLIPBOARD_MISSING
+    watchdog = threading.Timer(_CLIPBOARD_TIMEOUT_SECONDS, process.kill)
+    watchdog.start()
+    data = b""
+    try:
+        stdout = process.stdout
+        data = stdout.read(MAX_IMAGE_BYTES + 1) if stdout is not None else b""
+        if len(data) > MAX_IMAGE_BYTES:
+            process.kill()
+            process.wait()
+            return data, _CLIPBOARD_FAILED
+        try:
+            process.wait(timeout=_CLIPBOARD_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+    finally:
+        watchdog.cancel()
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+        if process.stdout is not None:
+            process.stdout.close()
+    if process.returncode != 0 or not data:
+        return None, _CLIPBOARD_FAILED
+    return data, _CLIPBOARD_OK
+
+
+def read_clipboard_image() -> bytes:
+    """One image from the system clipboard, or a ValueError naming what went wrong."""
+    failed: list[str] = []
+    for command in _CLIPBOARD_IMAGE_COMMANDS:
+        data, status = _clipboard_command_output(command)
+        if data is not None and len(data) > MAX_IMAGE_BYTES:
+            raise ValueError("The clipboard image exceeds 10 MiB")
+        if status != _CLIPBOARD_OK or data is None:
+            if status != _CLIPBOARD_MISSING:
+                failed.append(command[0])
+            continue
+        return data
+    if failed:
+        raise ValueError(
+            f"{', '.join(failed)} did not return an image (failed or timed out). "
+            "Copy a PNG, JPEG or WebP first."
+        )
+    raise ValueError(
+        "No clipboard image tool found. Install pngpaste on macOS, or "
+        "wl-clipboard or xclip on Linux."
+    )
 
 
 def ingest_selected_images(

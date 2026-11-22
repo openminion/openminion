@@ -7,6 +7,15 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `openminion run --image-clipboard` and Focus `/image paste` attach one image from
+  the system clipboard instead of requiring a saved file first. Both feed the existing
+  selected-image path, so the same bounds apply: PNG/JPEG/WebP only, 10 MiB per image,
+  20 MiB per request and at most four images, with `/image paste` stored through the
+  existing `images/<session>/` owner. The read tries `wl-paste`, `xclip` and
+  `pngpaste` in that order; a missing tool, a non-image payload or an oversized one
+  fails with one line and starts no turn, and Windows keeps `--image`. (Refs #806)
+
+
 - The PostgreSQL pool options are emitted as the factory's own `pool_size` and
   `pool_max_overflow`, so `storage.postgres_pool_min` / `postgres_pool_max` reach the pool
   instead of being silently dropped, with the 5 retained / 15 total default preserved
