@@ -53,23 +53,21 @@ class ConfigManager:
         normalized: str | None = None
         if raw:
             candidate = Path(raw).expanduser()
-            resolved = str(candidate.resolve(strict=False))
-            normalized = resolved if candidate.is_absolute() else raw
-        resolved_home_root = home_root or resolve_home_root(config_path=normalized)
-        resolved_config_path = resolve_config_path(
-            normalized, home_root=resolved_home_root
-        )
-        if not resolved_config_path.exists():
-            raise ConfigMissingError(f"config file not found: {resolved_config_path}")
-        data_root = data_root or resolve_data_root(resolved_home_root, env=env_config)
-        base_config = load_config(
-            str(resolved_config_path), home_root=resolved_home_root
-        )
+            if candidate.is_absolute():
+                normalized = str(candidate.resolve(strict=False))
+            else:
+                normalized = raw
+        resolved_home = home_root or resolve_home_root(config_path=normalized)
+        resolved_path = resolve_config_path(normalized, home_root=resolved_home)
+        if not resolved_path.exists():
+            raise ConfigMissingError(f"config file not found: {resolved_path}")
+        data_root = data_root or resolve_data_root(resolved_home, env=env_config)
+        base_config = load_config(str(resolved_path), home_root=resolved_home)
         return cls(
             base_config=base_config,
-            home_root=resolved_home_root,
+            home_root=resolved_home,
             data_root=data_root,
-            config_path=resolved_config_path,
+            config_path=resolved_path,
         )
 
     def register(self, name: str, factory: ModuleConfigFactory[Any]) -> None:

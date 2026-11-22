@@ -11,8 +11,9 @@ This file tracks package-facing release notes for `openminion`.
   now point at `openminion config init --provider <name>` or `--config <path>`
   instead of printing a bare path. The hint is added only for the typed
   `ConfigMissingError` the config owner raises for an absent resolved path, so an
-  unrelated runtime error keeps its own message; the message text, the stream and
-  the exit statuses are unchanged (Refs #573).
+  unrelated runtime error keeps its own message. The original error text is
+  preserved, the displayed message gains the hint, and the stream and exit
+  statuses are unchanged (Refs #573).
 
 - `import_omx` and `export_omx` now confine table payload paths inside `omx_dir`
   (normalizing Windows separators while rejecting `..` escapes, absolute paths, and

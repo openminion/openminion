@@ -48,13 +48,10 @@ _MISSING_CONFIG_HINT = (
 
 
 def format_cli_error(exc: BaseException) -> str:
-    """Render a CLI error, adding the next step only for an absent config file.
+    """Add the next step only for the typed missing-config error.
 
-    The decision comes from the error's origin, not from the filesystem: only
-    ``ConfigMissingError``, raised by the config owner when the resolved path
-    does not exist, gains the guidance. A malformed config, a permission failure
-    or an unrelated runtime error keeps its own message even when the config
-    path happens to be absent.
+    The hint follows the exception's origin, not the filesystem, so an unrelated
+    error keeps its own text even when the config path is absent.
     """
     message = str(exc)
     if isinstance(exc, ConfigMissingError):
@@ -332,9 +329,6 @@ def main(argv: Sequence[str] | None = None, *, owns_process: bool = False) -> in
                 )
                 return int(handler(args, app) or 0)
             return int(handler(args) or 0)
-    except ConfigMissingError as exc:
-        parser.exit(status=2, message=f"openminion: {format_cli_error(exc)}\n")
-        return 2
     except (ConfigError, RuntimeError, KeyError) as exc:
         parser.exit(status=2, message=f"openminion: {format_cli_error(exc)}\n")
         return 2
