@@ -7,13 +7,16 @@ state. Reading one of them tells you nothing about the other two.
 
 Owned by the LLM runtime (`modules/llm/runtime/flow.py`). `max_retries` and
 `backoff_ms` come from `llmctl.retries` and can be overridden per profile. When
-a provider response carries a `retry_after` fact, `error_facts.retry_after_seconds`
-yields a not-before instant, and the wait becomes the later of that instant and
-the exponential backoff, not a replacement for the backoff. A hinted wait is
-only taken when the turn already has a finite deadline that it fits; otherwise
-the route returns its recorded rate-limit error unchanged so eligible fallback
-can proceed. The hinted wait polls turn cancellation every 50 ms while it runs;
-the unhinted path sleeps for the backoff step.
+a provider response carries a `retry_after` fact,
+`error_facts.retry_after_seconds` returns a relative duration in seconds, not an
+absolute instant. The runtime's `_hint_not_before` adds that duration to
+`time.monotonic()` to produce a monotonic not-before deadline, and the wait
+becomes the later of that deadline and the exponential backoff, not a
+replacement for the backoff. A hinted wait is only taken when the turn already
+has a finite deadline that it fits; otherwise the route returns its recorded
+rate-limit error unchanged so eligible fallback can proceed. The hinted wait
+polls turn cancellation every 50 ms while it runs; the unhinted path sleeps for
+the backoff step.
 
 A per-entry map keyed by `(provider, model)` holds a monotonic not-before
 instant together with the error response that set it, so a route already cooling
@@ -69,10 +72,9 @@ repeating this call safe". Redispatch consults the first and not the second.
 ## What redispatch covers today
 
 Eligibility is an explicit set of local read tools: `code.grep`, `file.find`,
-`file.list_dir`, `file.read`, `file.read_range` and `file_read`. In the same
-catalog, 117 tools are declared idempotent and 118 are read-only, so most
-idempotent reads are not redispatch-eligible: network fetches, cloud and
-Kubernetes reads, search providers and git inspection all sit outside the set.
+`file.list_dir`, `file.read`, `file.read_range` and `file_read`. Tools outside
+that set, including network fetches, cloud and Kubernetes reads, search providers
+and git inspection, are not redispatch-eligible even when declared idempotent.
 
 No accepted decision in the tree records why the set stops here; this section
 reports the observed scope only. `idempotent` does not mean "no side effect":
