@@ -353,7 +353,7 @@ def _turn(
     with Agent(runtime=runtime, forced_tools=forced_tools) as agent:
         result = agent.run(MESSAGE, session_id=session_id, **run_kwargs)
     assert result.run_state == "completed"
-    assert result.text == f"{AGENT_ID}: {reply}"
+    assert (result.text, result.metadata["reply_sender"]) == (reply, AGENT_ID)
     return result, provider.requests[mark:]
 
 

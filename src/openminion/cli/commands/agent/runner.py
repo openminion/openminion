@@ -5,6 +5,11 @@ import asyncio
 from types import SimpleNamespace
 
 from openminion.base.config.core import resolve_default_agent_id
+from openminion.base.constants import (
+    REPLY_BODY_FORM_CANONICAL,
+    REPLY_BODY_FORM_KEY,
+    REPLY_SENDER_KEY,
+)
 from openminion.cli.commands.agent.control import add_agent_operator_subcommands
 from openminion.cli.parser.flags import add_json_output_flag
 from openminion.cli.presentation.json_output import print_json_payload
@@ -53,6 +58,9 @@ def _render_agent_response(*, args, response, session_id: str, agent_name: str) 
             }
         )
     else:
+        metadata = response.metadata
+        if metadata.get(REPLY_BODY_FORM_KEY) == REPLY_BODY_FORM_CANONICAL:
+            text = f"{metadata.get(REPLY_SENDER_KEY) or 'assistant'}: {text}"
         print(text)
 
 

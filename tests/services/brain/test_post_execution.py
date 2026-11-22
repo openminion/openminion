@@ -24,6 +24,9 @@ from openminion.modules.llm.providers.base import ProviderError, ProviderRespons
 from openminion.modules.llm.schemas import UsageInfo
 from openminion.services.agent.constants import PRIOR_TURN_CONTEXT_CHAR_LIMIT
 from openminion.services.brain.post_execution import BrainBridgeTurnMixin
+from openminion.services.brain.post_execution import (
+    postprocess_response as postprocess_response_module,
+)
 from openminion.services.security.policy import SecurityPolicyEngine
 from openminion.services.brain.post_execution.context import (
     _attach_watch_resume_context,
@@ -3166,8 +3169,62 @@ def test_postprocess_turn_prefixes_response_with_selected_runtime_agent() -> Non
         )
     )
 
-    assert response.text.startswith("minimax-m2-5: Here is the answer.")
+    assert response.text.startswith("Here is the answer.")
+    assert response.metadata["reply_sender"] == "minimax-m2-5"
     assert response.metadata["agent"] == "minimax-m2-5"
+
+
+def test_postprocess_turn_idle_tick_noop_skips_reply_sender_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bridge = DummyBridge()
+    config = OpenMinionConfig.from_dict(
+        {
+            "default_agent": "minimax-m2-5",
+            "agents": {"minimax-m2-5": {"name": "minimax-m2-5", "provider": "openai"}},
+        }
+    )
+    bridge._config = build_runtime_config(config, agent_id="minimax-m2-5")
+    bridge._provider = SimpleNamespace(name="fake-provider")
+    bridge._telemetryctl = None
+    bridge._identity_metadata = dict
+
+    def _no_lookup(_config: object) -> str:
+        raise AssertionError("idle tick must not resolve the reply sender")
+
+    monkeypatch.setattr(
+        postprocess_response_module, "resolve_default_agent_id", _no_lookup
+    )
+    step_out = SimpleNamespace(
+        message="",
+        status="done",
+        pae_idle_tick_noop=True,
+        action_result=SimpleNamespace(outputs={}),
+        working_state=SimpleNamespace(
+            pending_confirmation_command=None,
+            plan=SimpleNamespace(steps=[]),
+            llm_calls_used=0,
+            active_mode_name="act",
+            unresolved_clarify_items=[],
+        ),
+    )
+
+    response = asyncio.run(
+        bridge._postprocess_turn(
+            runner=_DummyRunner({}),
+            step_out=step_out,
+            message=Message(channel="console", target="user", body="tick"),
+            history=[],
+            session_id="s-idle-tick",
+            request_id="trace-idle-tick",
+            turn_id="turn-idle-tick",
+            turn_start_time=0.0,
+        )
+    )
+
+    assert response.text == ""
+    assert "body_form" not in response.metadata
+    assert "reply_sender" not in response.metadata
 
 
 def test_postprocess_turn_preserves_explicit_duplicate_termination_reason() -> None:

@@ -47,6 +47,13 @@ STATE_KEY_WORKING = "working_state"
 STATE_KEY_ACTIVE = "active_state"
 STATE_KEY_SOURCE_OUTCOME = "source_outcome_status"
 
+# Reply-body contract (#567): a reply the response owner writes carries body_form=canonical
+# and its speaker in reply_sender, and its body is exactly the reply text. Unmarked bodies
+# keep their legacy handling indefinitely; nothing classifies a body by its text.
+REPLY_BODY_FORM_KEY = "body_form"
+REPLY_BODY_FORM_CANONICAL = "canonical"
+REPLY_SENDER_KEY = "reply_sender"
+
 __all__ = [
     "BASE_BOOL_FALSE_VALUES",
     "BASE_BOOL_TRUE_VALUES",
@@ -84,6 +91,9 @@ __all__ = [
     "OPENMINION_STORAGE_POSTGRES_URL_ENV",
     "OPENMINION_STORAGE_POSTGRES_POOL_MIN_ENV",
     "OPENMINION_STORAGE_POSTGRES_POOL_MAX_ENV",
+    "REPLY_BODY_FORM_CANONICAL",
+    "REPLY_BODY_FORM_KEY",
+    "REPLY_SENDER_KEY",
     "STATE_KEY_ACTIVE",
     "STATE_KEY_FINALIZATION_STATUS",
     "STATE_KEY_SOURCE_OUTCOME",

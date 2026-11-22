@@ -11,6 +11,9 @@ from openminion.base.constants import (
     BASE_COLOR_FORCE_TRUE_VALUES,
     NO_COLOR_ENV,
     OPENMINION_COLOR_ENV,
+    REPLY_BODY_FORM_CANONICAL,
+    REPLY_BODY_FORM_KEY,
+    REPLY_SENDER_KEY,
 )
 from .interface import Channel
 from openminion.base.types import Message
@@ -21,7 +24,11 @@ class ConsoleChannel(Channel):
 
     def send(self, message: Message) -> None:
         timestamp = _chat_timestamp(message.timestamp)
-        sender, content = _split_sender_and_content(message.body)
+        if message.metadata.get(REPLY_BODY_FORM_KEY) == REPLY_BODY_FORM_CANONICAL:
+            sender = str(message.metadata.get(REPLY_SENDER_KEY) or "assistant")
+            content = message.body.strip()
+        else:
+            sender, content = _split_sender_and_content(message.body)
         plain_prefix = f"{timestamp} {sender}:"
         wrapped_lines = _wrap_content(content, prefix_width=len(plain_prefix) + 1) or [
             ""

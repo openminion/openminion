@@ -21,6 +21,14 @@ This file tracks package-facing release notes for `openminion`.
   review bind the candidate; separate operator application and a fresh source
   follow-up remain required for resolution.
 
+- A reply written by the response owner now carries exactly the reply text as its
+  body, with `body_form="canonical"` and the speaker in `reply_sender` metadata, so
+  SDK `text`, streamed `final_text`, ACP updates and stored outbound bodies no longer
+  start with a `"<agent>: "` label. The console and interactive renderers take the
+  speaker from that metadata; unmarked bodies (stored earlier or built by a direct
+  channel caller) keep their existing handling, and empty idle-tick no-ops stay
+  unmarked (Refs #567).
+
 - The PostgreSQL pool options are emitted as the factory's own `pool_size` and
   `pool_max_overflow`, so `storage.postgres_pool_min` / `postgres_pool_max` reach the pool
   instead of being silently dropped, with the 5 retained / 15 total default preserved

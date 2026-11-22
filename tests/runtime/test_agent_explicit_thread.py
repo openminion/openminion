@@ -172,7 +172,7 @@ def test_reply_without_thread_id_keeps_the_default_routing(
     assert reply.metadata["thread_decision_action"] == "fork_thread"
     assert reply.metadata["thread_decision_reason"] == "settled_without_resume"
     assert reply.metadata["thread_id"] != first.metadata["thread_id"]
-    assert reply.text == f"{AGENT_ID}: {REPLY}"
+    assert (reply.text, reply.metadata["reply_sender"]) == (REPLY, AGENT_ID)
     assert handled == []
 
 
@@ -194,15 +194,16 @@ def test_reply_on_its_thread_answers_the_confirmation_once(
     finally:
         runtime.close()
 
-    assert first.text.startswith(f"{AGENT_ID}: {PENDING_REPLY}")
+    assert first.text.startswith(PENDING_REPLY)
+    assert first.metadata["reply_sender"] == AGENT_ID
     assert first.thread_id == first.metadata["thread_id"]
     _assert_resumed(answer, first.thread_id)
     assert answer.session_id == first.session_id
-    assert answer.text == f"{AGENT_ID}: {REPLY}"
+    assert (answer.text, answer.metadata["reply_sender"]) == (REPLY, AGENT_ID)
     # The waiting call ran once, with the model's arguments.
     assert ran == [ARGS]
     _assert_resumed(again, first.thread_id)
-    assert again.text == f"{AGENT_ID}: {REPLY}"
+    assert (again.text, again.metadata["reply_sender"]) == (REPLY, AGENT_ID)
     assert handled == [ARGS]
 
 
@@ -221,9 +222,9 @@ def test_denied_confirmation_does_not_run_on_a_later_reply(
         runtime.close()
 
     _assert_resumed(denied, first.thread_id)
-    assert denied.text == f"{AGENT_ID}: {DENIED_REPLY}"
+    assert (denied.text, denied.metadata["reply_sender"]) == (DENIED_REPLY, AGENT_ID)
     _assert_resumed(later, first.thread_id)
-    assert later.text == f"{AGENT_ID}: {REPLY}"
+    assert (later.text, later.metadata["reply_sender"]) == (REPLY, AGENT_ID)
     assert handled == []
 
 
@@ -313,7 +314,7 @@ def test_thread_of_another_session_runs_no_waiting_call(
     for (session_id, thread_id), reply in zip(crossed, replies, strict=True):
         assert reply.session_id == session_id
         _assert_resumed(reply, thread_id)
-        assert reply.text == f"{AGENT_ID}: {REPLY}"
+        assert (reply.text, reply.metadata["reply_sender"]) == (REPLY, AGENT_ID)
     # Each session's own reply still runs its own call, once.
     _assert_resumed(own[0], first.thread_id)
     _assert_resumed(own[1], other.thread_id)
@@ -344,7 +345,7 @@ def test_thread_of_another_agent_runs_no_waiting_call(
     assert ran == []
     assert borrowed.session_id == helper.session_id
     _assert_resumed(borrowed, first.thread_id)
-    assert borrowed.text == f"{HELPER_ID}: {REPLY}"
+    assert (borrowed.text, borrowed.metadata["reply_sender"]) == (REPLY, HELPER_ID)
     _assert_resumed(own, first.thread_id)
     assert handled == [ARGS]
 
@@ -385,7 +386,10 @@ def test_approval_callback_still_decides_on_an_explicit_thread(
     _assert_resumed(reply, first.thread_id)
     assert _model_args(approvals) == [("memory.write", expected)]
     assert handled == ([expected] if approve else [])
-    assert reply.text == f"{AGENT_ID}: {REPLY if approve else DENIED_REPLY}"
+    assert (reply.text, reply.metadata["reply_sender"]) == (
+        REPLY if approve else DENIED_REPLY,
+        AGENT_ID,
+    )
 
 
 def test_run_stream_answers_on_its_thread_with_progress(
@@ -412,7 +416,7 @@ def test_run_stream_answers_on_its_thread_with_progress(
         runtime.close()
 
     _assert_resumed(answer, first.thread_id)
-    assert answer.text == f"{AGENT_ID}: {REPLY}"
+    assert (answer.text, answer.metadata["reply_sender"]) == (REPLY, AGENT_ID)
     assert ran == [ARGS]
     # on_delta got the turn's progress while it ran: the tool's start before
     # the handler ran and its completion after it, and phase statuses on both
