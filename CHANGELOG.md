@@ -7,6 +7,14 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `TurnResponse.telemetry.tokens_in` / `tokens_out` now read from the turn's `RunStats`,
+  the same authoritative totals projected into `TurnResponse.stats`, instead of
+  `usage_prompt_tokens` / `usage_completion_tokens` metadata keys that have no in-tree
+  turn producer and yielded 0 when absent (though explicitly supplied metadata keys could
+  produce nonzero totals). `RunStats` takes precedence over legacy metadata keys, turn
+  metadata is preserved unchanged, and empty or absent `RunStats` report 0 without
+  falling back to metadata. (Refs #773)
+
 - The PostgreSQL pool options are emitted as the factory's own `pool_size` and
   `pool_max_overflow`, so `storage.postgres_pool_min` / `postgres_pool_max` reach the pool
   instead of being silently dropped, with the 5 retained / 15 total default preserved

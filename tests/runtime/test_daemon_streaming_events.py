@@ -4,6 +4,7 @@ from threading import Event
 from types import SimpleNamespace
 from unittest import mock
 
+from openminion.modules.telemetry.usage.types import RunStats
 from openminion.services.runtime.daemon import execute_turn
 from openminion.services.runtime.manager import TurnRequest
 
@@ -54,7 +55,7 @@ def test_execute_turn_maps_structural_progress_payloads_to_chunk_kinds() -> None
         return SimpleNamespace(
             body="final",
             metadata={},
-            stats=SimpleNamespace(has_any_data=False, as_payload=lambda: {}),
+            stats=RunStats(),
         )
 
     with (
