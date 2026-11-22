@@ -41,10 +41,12 @@ def test_blockchain_config_defaults_round_trip_when_present() -> None:
             "signer_secret_namespace": "blockchain",
             "writes_enabled": False,
             "max_total_fee_wei": "10000000000000000",
+            "max_value_wei": "",
             "receipt_timeout_seconds": 60,
             "confirmation_depth": 1,
         }
     }
+    assert coerce_tool_runtime_config(tool_runtime_config_to_dict(config)) == config
 
 
 def test_omitted_blockchain_config_stays_omitted() -> None:
@@ -91,6 +93,10 @@ def test_agent_blockchain_config_replaces_system_object_whole() -> None:
         _enabled_config(confirmation_depth=True),
         _enabled_config(max_total_fee_wei="01"),
         _enabled_config(max_total_fee_wei="0"),
+        _enabled_config(max_value_wei="01"),
+        _enabled_config(max_value_wei="-1"),
+        _enabled_config(max_value_wei="1.5"),
+        _enabled_config(max_value_wei="1e18"),
         _enabled_config(signer_secret_namespace=""),
         {"enabled": True, "chain_id": 31337},
         {"enabled": True, "rpc_url": "http://localhost:8545"},
@@ -137,3 +143,25 @@ def test_enabled_blockchain_config_allows_no_configured_network() -> None:
         signer_secret_key="local-signer",
         confirmation_depth=2,
     )
+
+
+def test_value_cap_defaults_empty_and_trims_padding() -> None:
+    default = coerce_tool_runtime_config({"blockchain": _enabled_config()})
+    assert default.blockchain is not None
+    assert default.blockchain.max_value_wei == ""
+
+    configured = coerce_tool_runtime_config(
+        {"blockchain": _enabled_config(max_value_wei=" 2500000000000000000 ")}
+    )
+    assert configured.blockchain is not None
+    assert configured.blockchain.max_value_wei == "2500000000000000000"
+
+
+def test_an_agent_override_carries_the_value_cap() -> None:
+    merged = merge_tool_runtime_overrides(
+        system_tools={"blockchain": _enabled_config(max_value_wei="5")},
+        agent_tools={"blockchain": _enabled_config(max_value_wei="7")},
+    )
+
+    assert merged.blockchain is not None
+    assert merged.blockchain.max_value_wei == "7"
