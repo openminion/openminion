@@ -1,12 +1,41 @@
 # OpenMinion Getting Started
 
 Status: active
-Last updated: 2026-09-06
+Last updated: 2026-11-21
 
-Purpose: give contributors and automation authors a package-local bootstrap and
-execution summary for work inside the `openminion` repo.
+Purpose: give users a working install and give contributors a package-local
+bootstrap and execution summary for work inside the `openminion` repo.
 
-## Fast bootstrap
+## Quickstart for users
+
+An installed package needs no manually managed virtualenv and no checkout:
+`pipx` and `uv tool install` each place OpenMinion in an isolated environment of
+their own. Run commands from the workspace you intend to work in.
+
+```bash
+pipx install openminion        # or: uv tool install openminion
+openminion
+```
+
+The first bare launch enters setup only when no configuration resolves; an
+existing config is reused and setup is skipped. Setup needs an interactive
+terminal, and without one the command exits with its remediation line instead of
+prompting. On the default root it writes `~/.openminion/agents.json`;
+`--home-root` or `--config` changes that canonical path. After writing, the
+setup doctor must pass, and the provider connection check is optional. Declining
+that check still enters the interactive CLI with the connection untested. A
+requested check that fails, cancellation, or `--no-chat` prevents entry;
+cancelling exits 130. To upgrade later, use whichever tool installed it:
+
+```bash
+pipx upgrade openminion        # or: uv tool upgrade openminion
+```
+
+Everything below this point describes working inside a checkout. Skip to
+[First run](#first-run) for the installed-package guidance, which does not
+require any of it.
+
+## Fast bootstrap (contributors)
 
 ```bash
 python3.11 -m venv .venv
