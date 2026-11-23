@@ -38,6 +38,8 @@ package source and release surface.
   provider graph inspection through GraphFakos.
 - [`turn-budgets.md`](turn-budgets.md): turn limits, context-pack targets,
   token cost, and the automatic fact-extraction call.
+- [`retry-and-redispatch.md`](retry-and-redispatch.md): the three retry layers,
+  the `retryable` versus `idempotent` split, and which tools may be redispatched.
 - [`provider-capabilities.md`](provider-capabilities.md): explicit provider
   capability facts, request requirements, and deterministic pre-call routing.
 - [`configuration-compatibility.md`](configuration-compatibility.md): settings
