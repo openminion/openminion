@@ -25,6 +25,7 @@ from openminion.modules.context.retrieval.materials import (
     RetrievedContextMaterialsCollector,
 )
 from openminion.modules.context.schemas import BuildConstraints, SkillSnippetRef
+from openminion.modules.context.service import ContextCtlService
 from openminion.modules.identity.models import AgentProfile
 from openminion.modules.identity.runtime.service import IdentityCtl
 from openminion.modules.identity.storage.memory import InMemoryIdentityStore
@@ -35,6 +36,12 @@ from openminion.modules.skill.interfaces import (
 )
 from openminion.services.brain.post_execution.mixin import _bind_tool_workspace_root
 from openminion.tools.skill.plugin import _h_skill_get, _h_skill_ingest, _h_skill_list
+from tests.context.test_decide_skill_snippet_packing import (
+    _DecideArtifactClient,
+    _DecideIdentityClient,
+    _DecideMemoryClient,
+    _DecideSessionClient,
+)
 
 
 @pytest.fixture
@@ -290,6 +297,50 @@ def test_context_adapter_does_not_trust_repository_hint(tmp_path):
         hints={"repository_root": str(tmp_path)},
     )
     assert captured[0].repository_root is None
+
+
+def test_context_cache_does_not_reuse_foreign_repository_snippets(catalog):
+    skill, roots, versions = catalog
+    service = ContextCtlService(
+        identityctl=_DecideIdentityClient(),
+        sessctl=_DecideSessionClient(),
+        memctl=_DecideMemoryClient(),
+        artifactctl=_DecideArtifactClient(),
+        skillctl=skill,
+    )
+    context = ContextCtlAdapter(service)
+    tools = ToolAdapter(workspace_root=roots[0], artifactctl=SimpleNamespace())
+    try:
+        for root, visible in (
+            (roots[0], True),
+            (roots[1], False),
+            (None, False),
+            (roots[0], True),
+        ):
+            with tools.workspace_override(
+                roots[0], repository_root=str(root) if root else None
+            ):
+                pack = context.build(
+                    session_id="same-session",
+                    agent_id="agent-a",
+                    purpose="act",
+                    budget={},
+                    hints={
+                        "query": "read the reference",
+                        "skill_id": "local",
+                        "skill_version_hash": versions["local"],
+                    },
+                )
+            assert (
+                any(
+                    "Skill ID: local" in message["content"]
+                    for message in pack["messages"]
+                )
+                == visible
+            )
+    finally:
+        tools.close()
+        service.close()
 
 
 def test_recursive_match_and_render_receive_same_scope():

@@ -16,6 +16,9 @@ from tests.cli.interactive.test_openminion_runtime import _FakeRuntime
 class _RuntimeControls(RuntimeControlsMixin):
     agent_id = "agent-1"
     _working_dir = None
+    security_lab_required = False
+    _target = "focus"
+    _session_metadata_patch = OpenMinionRuntime._session_metadata_patch
 
     def __init__(self, runtime: object) -> None:
         self._rt = runtime
@@ -74,20 +77,46 @@ def test_repository_skill_list_and_detail_follow_workspace_switch(
             reason="Reviewed local skill",
             authority=authority,
         )
+        shared_ids = set()
+        for scope in ("global", "agent"):
+            shared_id, shared_version, _ = skill.ingest_text(
+                name=f"{scope}-procedure",
+                markdown=(
+                    f"---\nname: {scope}-procedure\n---\n"
+                    "## Procedure\nRead the shared note.\n"
+                    "## Verification\nConfirm the note matches.\n"
+                ),
+                scope=scope,
+                agent_id="agent-1" if scope == "agent" else None,
+                authority=authority,
+            )
+            skill.admit_skill_version(
+                skill_id=shared_id,
+                version_hash=shared_version,
+                expected_active_version_hash=None,
+                target_status="verified",
+                reason="Reviewed shared skill",
+                authority=authority,
+            )
+            shared_ids.add(shared_id)
     finally:
         skill.close()
     controls = _RuntimeControls(runtime)
-    for workspace, visible in (
-        (str(repo_a), True),
-        (str(repo_b), False),
-        (None, False),
-        (str(repo_a), True),
+    for workspace, visible, lab_required in (
+        (str(repo_a), True, False),
+        (str(repo_b), False, False),
+        (None, False, False),
+        (str(repo_a), False, True),
+        (str(repo_a), True, False),
     ):
         controls._working_dir = workspace
+        controls.security_lab_required = lab_required
         controls._added_workspace_roots = (str(repo_a),)
-        assert [row["id"] for row in controls.list_skill_rows()] == (
-            [skill_id] if visible else []
+        assert {row["id"] for row in controls.list_skill_rows()} == shared_ids | (
+            {skill_id} if visible else set()
         )
+        for shared_id in shared_ids:
+            assert "Read the shared note." in controls.skills_report(shared_id)
         if visible:
             assert "Read the repository note." in controls.skills_report(skill_id)
         else:

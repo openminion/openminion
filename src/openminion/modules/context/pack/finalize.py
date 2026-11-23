@@ -152,6 +152,7 @@ def build_runtime_cache_lookup_key(
         continuity_query_hash,
         gateway_context_hash,
         _stable_hash([span.model_dump() for span in request.gateway_memory_spans]),
+        request.repository_root or "",
     )
 
 

@@ -25,7 +25,6 @@ from openminion.modules.memory.interfaces import (
 from openminion.modules.llm.config import resolve_provider_identity_translation
 from openminion.modules.skill import Skill
 from openminion.modules.skill.errors import SkillError
-from openminion.modules.runtime.project_instructions import resolve_repository_root
 
 from .skill_status import skill_learning_summary
 
@@ -684,8 +683,7 @@ class RuntimeControlsMixin:
         agent_id = str(getattr(self, "agent_id", "") or "").strip()
         if agent_id:
             scopes.append(f"agent:{agent_id}")
-        scopes.append("global:system")
-        return scopes
+        return [*scopes, "global:system"]
 
     def _configured_skill_ids(self) -> list[str]:
         config = getattr(self._rt, "config", None)
@@ -708,6 +706,7 @@ class RuntimeControlsMixin:
         return list(dict.fromkeys(configured))
 
     def _catalog_skill_rows(self) -> list[dict[str, Any]]:
+        metadata = self._session_metadata_patch()
         with closing(
             Skill(
                 getattr(self._rt, "config_path", None) or {},
@@ -716,7 +715,7 @@ class RuntimeControlsMixin:
         ) as skill:
             summaries = skill.catalog_summaries(
                 agent_id=self.agent_id,
-                repository_root=resolve_repository_root(self._working_dir),
+                repository_root=metadata["repository_root"] or None,
             )
         return [{**summary, "source": "catalog"} for summary in summaries]
 
@@ -733,6 +732,7 @@ class RuntimeControlsMixin:
     def skills_report(self, skill_id: str = "") -> str:
         requested_id = str(skill_id or "").strip()
         if requested_id:
+            metadata = self._session_metadata_patch()
             try:
                 with closing(
                     Skill(
@@ -743,7 +743,7 @@ class RuntimeControlsMixin:
                     package = skill.get_runtime_skill(
                         requested_id,
                         agent_id=self.agent_id,
-                        repository_root=resolve_repository_root(self._working_dir),
+                        repository_root=metadata["repository_root"] or None,
                     )
             except SkillError as exc:
                 if (
