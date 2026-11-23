@@ -6,16 +6,18 @@ capability is enabled:
 - `blockchain.resolve_contract` verifies one public RPC, researched chain
   identity, contract address, deployed code, direct or EIP-1967 lineage, and
   Sourcify ABI. It stores an immutable session resolution for later calls.
-- `blockchain.inspect` reads chain, balance, bytecode, contract, transaction,
-  and receipt facts. It can also read a resolved contract at a pinned block and
-  inspect a submitted resolved operation by preparation digest.
+- `blockchain.inspect` reads a configured chain summary (`chain_id` and
+  `latest_block_number`), balance, bytecode, contract, transaction, and receipt
+  facts. It can also read a resolved contract at a pinned block and inspect a
+  submitted resolved operation by preparation digest.
 - `blockchain.debug` simulates calls and decodes calldata, revert data, or
   events from one transaction receipt. It is read-only and never signs or
   sends.
 - `blockchain.prepare_transaction` builds and simulates one native transfer,
   raw call, or contract call without broadcasting it.
 - `blockchain.send_transaction` revalidates one prepared transaction, requires
-  exact one-time approval, signs it, and submits it once.
+  exact one-time approval, signs it, and submits it at most once per approved
+  call.
 
 The model can research an EVM network, public RPC, deployment, and readable
 sources through the ordinary agent loop, then submit one candidate bundle to
@@ -58,10 +60,12 @@ the autonomous path.
 The resolver accepts one model-researched candidate. The RPC must be public
 HTTPS without credentials, a query, or a fragment. The request includes the
 expected chain ID and genesis hash, an optional checkpoint, the contract
-address, and bounded display/source URLs. OpenMinion pins the vetted endpoint,
-checks chain identity and code lineage, and uses the fixed official Sourcify v2
-lookup for the ABI. A successful result proves internal consistency; it does
-not establish that a deployment or network is official.
+address, and bounded display/source URLs. The configured chain summary returns
+the chain ID and latest block, not a genesis hash; the expected genesis hash is
+a researched input to the resolver. OpenMinion pins the vetted endpoint, checks
+chain identity and code lineage, and uses the fixed official Sourcify v2 lookup
+for the ABI. A successful result proves internal consistency; it does not
+establish that a deployment or network is official.
 
 Resolved reads and writes refer only to the stored resolution digest. They
 cannot replace the endpoint, address, lineage, or ABI on a later call.
@@ -180,8 +184,9 @@ without a separate workflow layer:
 2. debug a call or revert with an explicit ABI;
 3. prepare and simulate one transaction;
 4. review and allow once or deny the complete approval preview;
-5. inspect the operation by preparation digest until the configured
-   confirmation depth is reached; and
+5. inspect the result by route: `action=operation_status` by preparation digest
+   for a resolved send, `action=receipt` by the returned hash for a configured
+   send; and
 6. decode the receipt event and read the resulting contract state.
 
 If receipt status is temporarily unavailable after one submission, inspect by
@@ -189,7 +194,10 @@ the returned hash. Do not send the prepared transaction again.
 
 ## Terminal states
 
-The configured compatibility send keeps its original receipt states.
+The configured compatibility send returns its original receipt states and
+writes an audit event. It does not create the durable operation record that
+`operation_status` reads, so follow a configured send with `blockchain.inspect`
+`action=receipt` and the returned transaction hash.
 
 A resolved send creates a durable operation before its single permitted
 broadcast. `blockchain.inspect` with `action=operation_status` returns:
@@ -203,10 +211,10 @@ broadcast. `blockchain.inspect` with `action=operation_status` returns:
 - `postcondition_failed` when a confirmed status-1 receipt does not satisfy an
   exact equality postcondition.
 
-Pending and unknown outcomes are non-retryable. Inspect the stored operation;
-never send the preparation again. Restart loads the same endpoint, resolution,
-preparation, and precomputed transaction hash without new research or a second
-broadcast.
+Pending and unknown outcomes are non-retryable. For a resolved send, inspect the
+stored operation; never send the preparation again. A resolved-send restart
+loads the same endpoint, resolution, preparation, and precomputed transaction
+hash without new research or a second broadcast.
 
 ## Disposable-testnet acceptance
 
@@ -361,3 +369,33 @@ reviewed quoting, token and allowance handling, slippage and deadline controls,
 chain-specific fee policy, disposable-testnet evidence, monitoring, and
 operator runbooks. Keep public-mainnet writes disabled until those owners and
 acceptance gates exist.
+
+## Ship it to an agent as a skill
+
+The tools are the capability; the procedure still has to be taught. Ingest the
+bundled skill so the model reads the write order, the refusal table, and the
+prohibitions before it touches a chain:
+
+```bash
+openminion skill ingest --name blockchain-evm \
+  --file docs/skills/blockchain-evm/SKILL.md
+```
+
+Skills are immutable, versioned, and admitted by the operator; bundled scripts are
+stored with `executable=false` and never run, so a skill cannot act on its own
+authority. It only changes what the model knows, never what the runtime permits.
+
+Give the agent an envelope at the same time, because the skill can only describe
+these settings, not change them:
+
+| Setting | Safe starting point | Why it matters |
+| --- | --- | --- |
+| `writes_enabled` | `false` until a write is needed | send refuses at runtime; the tool stays registered |
+| signer | one key per agent or task, funded with what that task may spend | the wallet balance is the real budget |
+| `rpc_url` / `chain_id` | set together, or omit both and use resolution | a lone value is rejected, and the pair never overrides a resolution |
+| `confirmation_depth` | `1` on a disposable chain, more where reorgs matter | controls when a resolved operation is reported final |
+| `max_total_fee_wei` | the smallest fee the task tolerates | bounds fee spend per transaction |
+
+OpenMinion does not yet have a per-transaction value cap or a cumulative spend
+budget; the approval preview and the funded wallet are the current limits. State
+that plainly to an operator rather than implying a monetary cap exists.
