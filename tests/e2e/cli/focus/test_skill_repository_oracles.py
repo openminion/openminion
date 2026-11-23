@@ -223,6 +223,50 @@ def test_turn_oracle_rejects_missing_or_unsafe_proof(
         repository._assert_turn(evidence, manifest, available=available)
 
 
+@pytest.mark.parametrize("count", [8, 9])
+@pytest.mark.parametrize("name", ["tool.request", "skill.get"])
+@pytest.mark.parametrize("duplicate_ids", [False, True])
+def test_turn_budget_counts_controls_denials_and_duplicate_ids(
+    count, name, duplicate_ids
+):
+    events = [
+        {
+            "type": "skill.prerouting",
+            "payload": {"effective_skill_count": 0, "selected_skill_count": 0},
+        }
+    ]
+    for index in range(count):
+        call_id = "duplicate" if duplicate_ids else str(index)
+        events.append(
+            {
+                "type": "tool.call.requested",
+                "payload": {
+                    "call_id": call_id,
+                    "canonical_name": name,
+                    "sanitized_normalized_arguments": {"name": "skill.list"}
+                    if name == "tool.request"
+                    else {},
+                },
+            }
+        )
+        if name == "skill.get":
+            events.append(
+                {
+                    "type": "tool.call.blocked",
+                    "payload": {"call_id": call_id, "error": {"code": "NOT_FOUND"}},
+                }
+            )
+    evidence = {"brain_events": events, "answer": "SKILL_UNAVAILABLE"}
+    if count == 8:
+        repository._assert_turn(evidence, {}, available=False)
+    else:
+        with pytest.raises(
+            AssertionError,
+            match="tool request budget exceeded: observed=9, ceiling=8",
+        ):
+            repository._assert_turn(evidence, {}, available=False)
+
+
 def test_prompts_and_limits_do_not_leak_fact_or_authorize_effects():
     assert len(repository.SCENARIOS) == 2
     for scenario in repository.SCENARIOS:

@@ -202,11 +202,13 @@ def _assert_turn(evidence: dict, manifest: dict, *, available: bool) -> None:
         assert selected == []
         assert all(p["selected_skill_count"] == 0 for p in summaries)
         assert evidence["answer"] == "SKILL_UNAVAILABLE"
-    requests = {
-        e["payload"]["call_id"]: e["payload"]
-        for e in events
-        if e["type"] == "tool.call.requested"
-    }
+    requested = [e["payload"] for e in events if e["type"] == "tool.call.requested"]
+    observed = len(requested)
+    ceiling = LIMITS["MAX_TOOL_CALLS"]
+    assert observed <= ceiling, (
+        f"tool request budget exceeded: observed={observed}, ceiling={ceiling}"
+    )
+    requests = {request["call_id"]: request for request in requested}
     for request in requests.values():
         name = request["canonical_name"]
         assert name in _TOOLS | _DISCOVERY, f"unplanned capability: {name}"
