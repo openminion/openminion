@@ -87,6 +87,9 @@ if TYPE_CHECKING:
 _WORKSPACE_OVERRIDE: ContextVar[Path | None] = ContextVar(
     "openminion_tool_workspace_override", default=None
 )
+_REPOSITORY_ROOT: ContextVar[str | None] = ContextVar(
+    "openminion_repository_root", default=None
+)
 _ADDED_WORKSPACE_ROOTS: ContextVar[tuple[Path, ...]] = ContextVar(
     "openminion_tool_added_workspace_roots",
     default=(),
@@ -126,6 +129,10 @@ def _availability_error(
             details=dict(exc.details or {}),
         )
     return None
+
+
+def current_repository_root() -> str | None:
+    return _REPOSITORY_ROOT.get()
 
 
 class ToolAdapter:
@@ -367,9 +374,10 @@ class ToolAdapter:
         *,
         added_roots: tuple[Path, ...] = (),
         security_scan_context: str | None = None,
+        repository_root: str | None = None,
     ) -> Iterator[None]:
-        workspace = Path(workspace_root).expanduser()
-        workspace_token = _WORKSPACE_OVERRIDE.set(workspace)
+        workspace_token = _WORKSPACE_OVERRIDE.set(Path(workspace_root).expanduser())
+        repository_token = _REPOSITORY_ROOT.set(repository_root)
         roots_token = _ADDED_WORKSPACE_ROOTS.set(
             tuple(Path(root).expanduser().resolve() for root in added_roots)
         )
@@ -377,6 +385,7 @@ class ToolAdapter:
         try:
             yield
         finally:
+            _REPOSITORY_ROOT.reset(repository_token)
             _SECURITY_SCAN_CONTEXT.reset(scan_token)
             _ADDED_WORKSPACE_ROOTS.reset(roots_token)
             _WORKSPACE_OVERRIDE.reset(workspace_token)
@@ -470,9 +479,10 @@ class ToolAdapter:
                 capabilities=getattr(spec, "capabilities", None),
             )
         try:
-            args_model = spec.args_model
-            if hasattr(args_model, "model_validate"):
-                validated_args = validate_model_tool_args(args, args_model, tool_name)
+            if hasattr(spec.args_model, "model_validate"):
+                validated_args = validate_model_tool_args(
+                    args, spec.args_model, tool_name
+                )
             else:
                 validated_args = dict(args)
         except (TypeError, ValueError) as exc:
@@ -580,13 +590,12 @@ class ToolAdapter:
         ctx = RuntimeContext(
             policy=policy_for_run,
             workspace=effective_workspace_root,
+            repository_root=current_repository_root(),
             run_root=run_root,
             env=env_owner,
             scope=policy_for_run.max_scope(),
             confirm=auto_confirm,
             repositories=build_runtime_repositories(context_metadata=context_metadata),
-            logs=[],
-            artifacts=[],
             safety_adapter=AllowAllSafetyAdapter(),
             policy_adapter=policy_adapter,
             skill_api=self.skill_api,
@@ -912,7 +921,6 @@ class ToolAdapter:
                 "source": str(getattr(result, "source", "") or "openminion"),
             }
         )
-        summary = content if ok else error_message or content or "Tool execution failed"
         error_code = ""
         error_details: dict[str, Any] = {}
         if isinstance(data, Mapping):
@@ -938,22 +946,17 @@ class ToolAdapter:
             )
             if replay is not None:
                 return replay
-        status = BRAIN_ACTION_STATUS_SUCCESS
-        if not ok:
-            status = (
-                BRAIN_ACTION_STATUS_NEEDS_USER
-                if requires_confirm
-                else BRAIN_STATE_ERROR
-            )
+        status = BRAIN_ACTION_STATUS_SUCCESS if ok else BRAIN_STATE_ERROR
+        if not ok and requires_confirm:
+            status = BRAIN_ACTION_STATUS_NEEDS_USER
         response: dict[str, Any] = {
             "status": status,
-            "summary": summary,
+            "summary": content
+            if ok
+            else error_message or content or "Tool execution failed",
             "outputs": outputs,
             "artifact_refs": _normalized_artifact_refs(
-                outputs.get("artifact_refs")
-                or outputs.get("artifacts")
-                or data.get("artifact_refs")
-                or data.get("artifacts")
+                outputs.get("artifact_refs") or outputs.get("artifacts")
             ),
             "memory_refs": [],
             "metrics": {

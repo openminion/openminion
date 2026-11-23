@@ -27,6 +27,7 @@ def generate(
     constraints: RLMConstraints | dict[str, Any] | None = None,
     meta_directive: MetaDirective | dict[str, Any] | None = None,
     agent_policy: dict[str, Any] | None = None,
+    repository_root: str | None = None,
 ) -> RLMResponse:
     task_state = ts if isinstance(ts, TaskState) else TaskState.model_validate(ts or {})
     budget_cfg = (
@@ -63,9 +64,7 @@ def generate(
     max_bad_streak = int(
         meta.max_bad_retrieval_streak or self.config.bad_retrieval_escalation_ticks
     )
-    effective_policy = dict(self.config.default_agent_policy)
-    if agent_policy:
-        effective_policy.update(agent_policy)
+    effective_policy = {**self.config.default_agent_policy, **(agent_policy or {})}
 
     wm_state = self._load_wm_state(session_id=session_id)
     final_text = ""
@@ -124,6 +123,7 @@ def generate(
         retrieved = self.retrieve(
             session_id=session_id,
             agent_id=agent_id,
+            repository_root=repository_root,
             query=current_query,
             k=target_k,
             purpose=purpose,
@@ -133,9 +133,7 @@ def generate(
 
         phases.append("EVALUATE_RETRIEVAL")
         retrieval_eval = self._evaluate_retrieval_quality(retrieved)
-        retrieval_stats[retrieval_eval.quality] = (
-            retrieval_stats.get(retrieval_eval.quality, 0) + 1
-        )
+        retrieval_stats[retrieval_eval.quality] += 1
         retrieval_stats["sm"] += sum(1 for item in retrieved if item.source == "sm")
         retrieval_stats["em"] += sum(1 for item in retrieved if item.source == "em")
         retrieval_stats["skill"] += sum(
@@ -169,6 +167,7 @@ def generate(
                     alt_items = self.retrieve(
                         session_id=session_id,
                         agent_id=agent_id,
+                        repository_root=repository_root,
                         query=current_query,
                         k=target_k,
                         purpose=purpose,

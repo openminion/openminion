@@ -48,18 +48,16 @@ def _model_visible_package(
     version_hash: str | None,
     agent_id: str,
     owned_only: bool = False,
+    repository_root: str | None = None,
 ) -> Any:
-    package = skill.get_skill(skill_id=skill_id, version_hash=version_hash)
     if not owned_only:
-        lifecycle = skill.get_skill_version_state(
-            skill_id=skill_id,
-            version_hash=package.version_hash,
+        return skill.get_runtime_skill(
+            skill_id,
+            version_hash,
+            agent_id=agent_id,
+            repository_root=repository_root,
         )
-        if (
-            lifecycle is None
-            or lifecycle["active_version_hash"] != package.version_hash
-        ):
-            raise SkillError("NOT_FOUND", "Skill not found")
+    package = skill.get_skill(skill_id=skill_id, version_hash=version_hash)
     is_owned = package.scope == "agent" and package.agent_id == agent_id
     if not is_owned and (owned_only or package.scope != "global"):
         raise SkillError("NOT_FOUND", "Skill not found")
@@ -259,9 +257,17 @@ def _h_skill_list(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
 
     try:
         skills = [
-            row
-            for row in skill.list_skills(filters)
-            if row.get("scope") == "global" or row.get("agent_id") == agent_id
+            {key: value for key, value in row.items() if key != "repository_root"}
+            for row in skill.list_skills(
+                filters, repository_root=getattr(ctx, "repository_root", None)
+            )
+            if row.get("scope") == "global"
+            or row.get("agent_id") == agent_id
+            or (
+                row.get("scope") == "project"
+                and getattr(ctx, "repository_root", None) is not None
+                and row.get("repository_root") == ctx.repository_root
+            )
         ]
     except Exception as exc:
         return _error("SKILL_LIST_FAILED", str(exc))
@@ -298,6 +304,7 @@ def _h_skill_get(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
             skill_id=skill_id,
             version_hash=version_hash,
             agent_id=agent_id,
+            repository_root=getattr(ctx, "repository_root", None),
         )
         if parsed_args.resource_path:
             return {
@@ -356,7 +363,7 @@ def _h_skill_remove(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
             )
         else:
             owner = skill.get_skill_owner(skill_id=skill_id)
-            if owner != {"scope": "agent", "agent_id": agent_id}:
+            if not owner or owner["scope"] != "agent" or owner["agent_id"] != agent_id:
                 raise SkillError("NOT_FOUND", "Skill not found")
         deleted = skill.delete_skill(skill_id=skill_id, version_hash=version_hash)
     except Exception as exc:

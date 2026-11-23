@@ -287,6 +287,8 @@ class SkillAPI(Protocol):
         self,
         agent_id: str,
         status_filter: list[str] | str | None = None,
+        *,
+        repository_root: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
     def match(
@@ -296,6 +298,8 @@ class SkillAPI(Protocol):
         agent_id: str,
         k: int = 3,
         status_filter: list[str] | str | None = None,
+        *,
+        repository_root: str | None = None,
     ) -> list[Any]: ...
 
     def get_recipe(
@@ -304,6 +308,15 @@ class SkillAPI(Protocol):
         version_hash: str | None = None,
     ) -> Any | None: ...
 
+    def get_runtime_skill(
+        self,
+        skill_id: str,
+        version_hash: str | None = None,
+        *,
+        agent_id: str,
+        repository_root: str | None = None,
+    ) -> Any: ...
+
     def get_workflow(
         self,
         workflow_id: str,
@@ -311,6 +324,7 @@ class SkillAPI(Protocol):
         agent_id: str | None = None,
         status_filter: list[str] | str | None = None,
         scope: str | None = None,
+        repository_root: str | None = None,
     ) -> Any: ...
 
     def log_run(
@@ -330,6 +344,9 @@ class SkillAPI(Protocol):
         version_hash: str | None = None,
         purpose: str = "plan",
         max_tokens: int = 500,
+        *,
+        agent_id: str | None = None,
+        repository_root: str | None = None,
     ) -> tuple[str, str]: ...
 
 

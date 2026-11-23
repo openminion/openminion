@@ -33,6 +33,11 @@ This file tracks package-facing release notes for `openminion`.
   review bind the candidate; separate operator application and a fresh source
   follow-up remain required for resolution.
 
+- Project-scoped skills can be bound to an explicit local repository at ingest.
+  Admitted skills appear in that repository's runtime catalog and Focus details,
+  with the same scope boundary on selection and resource reads. Discovery remains
+  read-only, approval stays explicit, and cross-owner skill IDs are rejected.
+
 - The PostgreSQL pool options are emitted as the factory's own `pool_size` and
   `pool_max_overflow`, so `storage.postgres_pool_min` / `postgres_pool_max` reach the pool
   instead of being silently dropped, with the 5 retained / 15 total default preserved

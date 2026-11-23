@@ -190,6 +190,8 @@ def _render_skill_items(
                 version_hash=None,
                 purpose=purpose,
                 max_tokens=request_tokens,
+                agent_id=profile.agent_id,
+                repository_root=None,
             )
         except Exception:
             warnings.append(f"skill_render_failed:{skill_id}")

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import uuid
 from pathlib import Path
-from typing import Any, Iterable, Mapping, TypedDict, cast
+from typing import Any, Iterable, Mapping, cast
 
 from openminion.modules.skill.runtime.bundle_metadata import (
     BUNDLE_METADATA_TRUST_UNTRUSTED_LOCAL,
@@ -26,6 +26,7 @@ from openminion.modules.skill.constants import (
 )
 from openminion.modules.skill.errors import SkillError
 from openminion.modules.skill.interfaces import SkillIngestAuthority
+from openminion.modules.runtime.project_instructions import resolve_repository_root
 from openminion.base.time import utc_now_iso as iso_now
 from openminion.modules.skill.models import (
     LintIssue,
@@ -83,26 +84,6 @@ _REFERENCE_FILE_SUFFIXES = (
 )
 
 
-class _CapabilityMetadata(TypedDict):
-    teaches: list[str]
-    requires_tools: list[str]
-    safe_for_domains: list[str]
-    forbidden_claims: list[str]
-    evidence_expectations: list[str]
-
-
-def _capability_metadata(front_matter: Mapping[str, Any]) -> _CapabilityMetadata:
-    return {
-        "teaches": normalize_text_list(front_matter.get("teaches")),
-        "requires_tools": normalize_text_list(front_matter.get("requires_tools")),
-        "safe_for_domains": normalize_text_list(front_matter.get("safe_for_domains")),
-        "forbidden_claims": normalize_text_list(front_matter.get("forbidden_claims")),
-        "evidence_expectations": normalize_text_list(
-            front_matter.get("evidence_expectations")
-        ),
-    }
-
-
 def _package_tools(
     *,
     front_matter: Mapping[str, Any],
@@ -117,7 +98,7 @@ def _package_tools(
     section_tools = [
         tool for value in sections.values() for tool in detect_tools(value)
     ]
-    authoritative = _dedupe(front_tools + bundle_tools)
+    authoritative = normalize_text_list(front_tools + bundle_tools)
     promoted = [
         tool
         for tool in section_tools
@@ -127,8 +108,10 @@ def _package_tools(
             known_tools=known_tools,
         )
     ]
-    tools = _dedupe(authoritative + promoted)
-    return tools, _dedupe([tool for tool in section_tools if tool not in set(tools)])
+    tools = normalize_text_list(authoritative + promoted)
+    return tools, normalize_text_list(
+        [tool for tool in section_tools if tool not in set(tools)]
+    )
 
 
 def _package_applies_to(front_matter: Mapping[str, Any]) -> dict[str, list[str]]:
@@ -138,6 +121,17 @@ def _package_applies_to(front_matter: Mapping[str, Any]) -> dict[str, list[str]]
         "intents": normalize_text_list(raw.get("intents")),
         "steps": normalize_text_list(raw.get("steps")),
     }
+
+
+def _validated_repository_root(repository_root: str | None) -> str | None:
+    if repository_root is None:
+        return None
+    resolved = resolve_repository_root(repository_root)
+    if resolved is None:
+        raise SkillError(
+            "INVALID_ARGUMENT", "repository_root must identify a local Git checkout"
+        )
+    return resolved
 
 
 class SkillIngestMixin:
@@ -204,6 +198,8 @@ class SkillIngestMixin:
         trust: str | None = None,
         promotion_path: str = "operator",
         authority: SkillIngestAuthority | None = None,
+        *,
+        repository_root: str | None = None,
     ) -> tuple[str, str, list[str]]:
         resolved_authority = authority or SkillIngestAuthority.runtime(
             surface="python.skill.ingest_text", source_kind="local"
@@ -219,6 +215,7 @@ class SkillIngestMixin:
             trust=trust,
             remote_source=False,
             authority=resolved_authority,
+            repository_root=repository_root,
         )
 
     def ingest_file(
@@ -231,6 +228,7 @@ class SkillIngestMixin:
         trust: str | None = None,
         promotion_path: str = "operator",
         authority: SkillIngestAuthority | None = None,
+        repository_root: str | None = None,
     ) -> tuple[str, str, list[str]]:
         src = Path(path).expanduser()
         try:
@@ -262,6 +260,7 @@ class SkillIngestMixin:
                 trust=trust,
                 remote_source=False,
                 authority=resolved_authority,
+                repository_root=repository_root,
             )
         except Exception as exc:
             self._emit_event(
@@ -284,6 +283,7 @@ class SkillIngestMixin:
         trust: str | None = None,
         promotion_path: str = "operator",
         authority: SkillIngestAuthority | None = None,
+        repository_root: str | None = None,
     ) -> tuple[str, str, list[str]]:
         if self._artifact_loader is None:
             raise SkillError(
@@ -311,6 +311,7 @@ class SkillIngestMixin:
             trust=trust,
             remote_source=False,
             authority=resolved_authority,
+            repository_root=repository_root,
         )
 
     def ingest_url(
@@ -324,6 +325,7 @@ class SkillIngestMixin:
         trust: str | None = None,
         promotion_path: str = "runtime",
         authority: SkillIngestAuthority | None = None,
+        repository_root: str | None = None,
     ) -> tuple[str, str, list[str]]:
         resolved_authority = authority or SkillIngestAuthority.runtime(
             surface="python.skill.ingest_url", source_kind="remote"
@@ -340,6 +342,7 @@ class SkillIngestMixin:
             remote_source=True,
             source_url=url,
             authority=resolved_authority,
+            repository_root=repository_root,
         )
 
     def _build_and_finalize_ingest(
@@ -355,7 +358,20 @@ class SkillIngestMixin:
         remote_source: bool,
         authority: SkillIngestAuthority,
         source_url: str | None = None,
+        repository_root: str | None = None,
     ) -> tuple[str, str, list[str]]:
+        scope = (scope or "global").strip().lower()
+        repository_root = _validated_repository_root(repository_root)
+        if scope == "project":
+            if repository_root is None:
+                raise SkillError(
+                    "INVALID_ARGUMENT", "project ingest requires repository_root"
+                )
+            agent_id = None
+        elif repository_root is not None:
+            raise SkillError(
+                "INVALID_ARGUMENT", "repository_root requires project scope"
+            )
         package, parse_warnings = self._build_package(
             markdown=markdown,
             explicit_name=explicit_name,
@@ -370,11 +386,10 @@ class SkillIngestMixin:
         return self._finalize_ingest(
             package=package,
             parse_warnings=parse_warnings,
-            source_ref=source_ref,
-            scope=scope,
             markdown=markdown,
             source_url=source_url,
             authority=authority,
+            repository_root=repository_root,
         )
 
     def _store_source(self, *, name: str, markdown: str) -> str:
@@ -398,34 +413,16 @@ class SkillIngestMixin:
         )
         return f"artifact://sha256/{ref.hash}"
 
-    def _collect_bundle_resources(
-        self, bundle_root: Path | None
-    ) -> tuple[list[dict[str, Any]], list[str]]:
-        return collect_bundle_resources(bundle_root, blob_store=self._blob_store)
-
     def _persist_package(
         self,
         *,
         package: SkillPackage,
         index_keywords: list[str],
         admission_authority_class: str | None = None,
+        repository_root: str | None = None,
     ) -> list[str]:
         warnings: list[str] = []
         try:
-            owner_preserved = self.store.upsert_skill(
-                skill_id=package.skill_id,
-                name=package.name,
-                status=package.status,
-                scope=package.scope,
-                agent_id=package.agent_id,
-                ts=package.updated_at,
-            )
-            if not owner_preserved:
-                raise SkillError(
-                    "SKILL_SCOPE_OWNER_CONFLICT",
-                    "Skill ID is already owned by another scope or agent.",
-                    {"skill_id": package.skill_id},
-                )
             self.store.insert_skill_version(
                 skill_id=package.skill_id,
                 version_hash=package.version_hash,
@@ -462,6 +459,7 @@ class SkillIngestMixin:
                     "status": package.status,
                     "scope": package.scope,
                     "agent_id": package.agent_id,
+                    "repository_root": repository_root,
                     "source_artifact_ref": package.source_artifact_ref,
                     "package_json": canonical_json(package.to_dict()),
                     "ts": iso_now(),
@@ -511,7 +509,9 @@ class SkillIngestMixin:
             companion.setdefault("bundle_metadata", {})["agent_skills"] = (
                 portable_metadata
             )
-        resources, resource_warnings = self._collect_bundle_resources(bundle_root)
+        resources, resource_warnings = collect_bundle_resources(
+            bundle_root, blob_store=self._blob_store
+        )
         warnings.extend(resource_warnings)
         return companion, resources, warnings
 
@@ -538,7 +538,7 @@ class SkillIngestMixin:
             if promoted_procedure:
                 sections["procedure"] = promoted_procedure
 
-        description = _front_matter_description(front_matter)
+        description = str(front_matter.get("description", "")).strip()
         short_description = _front_matter_short_description(front_matter)
         companion_metadata, resources, bundle_warnings = self._load_bundle_context(
             front_matter=front_matter,
@@ -583,7 +583,6 @@ class SkillIngestMixin:
             )
         if "status" in front_matter:
             parse_warnings.append("frontmatter.status_non_authoritative")
-        status = SKILL_STATUS_DRAFT
         risk_class = normalize_risk(str(front_matter.get("risk", RISK_CLASS_LOW)))
 
         scope_norm = (scope or "global").strip().lower()
@@ -599,14 +598,9 @@ class SkillIngestMixin:
             known_tools=self._known_tools,
         )
 
-        tags = normalize_text_list(front_matter.get("tags"))
-        applies_to = _package_applies_to(front_matter)
-
         inputs_schema = [
             item for item in front_matter.get("inputs", []) if isinstance(item, dict)
         ]
-        snippets = build_default_snippets(sections)
-
         recipe, recipe_warnings = build_recipe(
             front_matter=front_matter,
             skill_name=name,
@@ -615,11 +609,11 @@ class SkillIngestMixin:
         )
         parse_warnings.extend(recipe_warnings)
 
-        verification_rules = _dedupe(
+        verification_rules = normalize_text_list(
             normalize_text_list(front_matter.get("verification"))
             + _extract_lines(sections.get("verification", ""))
         )
-        rollback_hints = _dedupe(
+        rollback_hints = normalize_text_list(
             normalize_text_list(front_matter.get("rollback"))
             + _extract_lines(sections.get("rollback", ""))
         )
@@ -634,16 +628,16 @@ class SkillIngestMixin:
             default_prompt=companion_metadata.get("default_prompt"),
             dependency_hints=dict(companion_metadata.get("dependency_hints") or {}),
             bundle_metadata=dict(companion_metadata.get("bundle_metadata") or {}),
-            status=status,
+            status=SKILL_STATUS_DRAFT,
             version_hash="",
             source_artifact_ref=source_artifact_ref,
-            tags=tags,
+            tags=normalize_text_list(front_matter.get("tags")),
             tools=tools,
             reference_hints=reference_hints,
             risk_class=risk_class,
-            applies_to=applies_to,
+            applies_to=_package_applies_to(front_matter),
             inputs_schema=inputs_schema,
-            snippets=snippets,
+            snippets=build_default_snippets(sections),
             recipe=recipe,
             verification_rules=verification_rules,
             rollback_hints=rollback_hints,
@@ -657,7 +651,13 @@ class SkillIngestMixin:
             created_at=now,
             updated_at=now,
             resources=resources,
-            **_capability_metadata(front_matter),
+            teaches=normalize_text_list(front_matter.get("teaches")),
+            requires_tools=normalize_text_list(front_matter.get("requires_tools")),
+            safe_for_domains=normalize_text_list(front_matter.get("safe_for_domains")),
+            forbidden_claims=normalize_text_list(front_matter.get("forbidden_claims")),
+            evidence_expectations=normalize_text_list(
+                front_matter.get("evidence_expectations")
+            ),
         )
         package.version_hash = package.to_version_hash()
         return package, parse_warnings
@@ -764,21 +764,19 @@ class SkillIngestMixin:
         *,
         package: SkillPackage,
         parse_warnings: list[str],
-        source_ref: str,
-        scope: str,
         markdown: str,
         source_url: str | None = None,
         authority: SkillIngestAuthority,
+        repository_root: str | None = None,
     ) -> tuple[str, str, list[str]]:
         lint_issues = self._lint_package(package)
         errors = [item for item in lint_issues if item.severity == "error"]
         warnings = [item for item in lint_issues if item.severity != "error"]
 
-        warning_msgs = list(parse_warnings)
-        warning_msgs.extend(
-            f"lint.{item.severity}:{item.code}:{item.message}" for item in warnings
-        )
-        warning_msgs.extend(f"lint.error:{item.code}:{item.message}" for item in errors)
+        warning_msgs = parse_warnings + [
+            f"lint.{item.severity}:{item.code}:{item.message}"
+            for item in warnings + errors
+        ]
 
         if errors and package.status != SKILL_STATUS_DRAFT:
             package.status = SKILL_STATUS_DRAFT
@@ -786,11 +784,23 @@ class SkillIngestMixin:
             package.version_hash = package.to_version_hash()
             warning_msgs.append("lint.forced_status_draft")
 
-        index_keywords = package.keyword_candidates()
-        fingerprint = package.to_content_fingerprint()
+        if not self.store.upsert_skill(
+            skill_id=package.skill_id,
+            name=package.name,
+            status=package.status,
+            scope=package.scope,
+            agent_id=package.agent_id,
+            ts=package.updated_at,
+            repository_root=repository_root,
+        ):
+            raise SkillError(
+                "SKILL_SCOPE_OWNER_CONFLICT",
+                "Skill ID is already owned by another scope, agent or repository.",
+                {"skill_id": package.skill_id},
+            )
         existing = self.store.find_skill_version_by_fingerprint(
             skill_id=package.skill_id,
-            content_fingerprint=fingerprint,
+            content_fingerprint=package.to_content_fingerprint(),
         )
         version_hash = (
             str(existing["version_hash"])
@@ -801,8 +811,9 @@ class SkillIngestMixin:
             warning_msgs.extend(
                 self._persist_package(
                     package=package,
-                    index_keywords=index_keywords,
+                    index_keywords=package.keyword_candidates(),
                     admission_authority_class=authority.authority_class,
+                    repository_root=repository_root,
                 )
             )
         admission = self.store.get_skill_admission(
@@ -825,9 +836,9 @@ class SkillIngestMixin:
             {
                 "skill_id": package.skill_id,
                 "version_hash": package.version_hash,
-                "source_ref": source_ref,
+                "source_ref": package.source_artifact_ref,
                 "source_url": source_url,
-                "scope": scope,
+                "scope": package.scope,
                 "scope_key": (
                     "global:legacy"
                     if package.scope == "global"
@@ -899,18 +910,6 @@ def _extract_lines(text: str) -> list[str]:
     return out
 
 
-def _dedupe(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
-    for value in values:
-        text = str(value).strip()
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        out.append(text)
-    return out
-
-
 def _promote_procedure_from_freeform_sections(sections: dict[str, str]) -> str:
     blocks: list[str] = []
 
@@ -927,10 +926,6 @@ def _promote_procedure_from_freeform_sections(sections: dict[str, str]) -> str:
         blocks.append(f"{key.replace('_', ' ').title()}:\n{text}")
 
     return "\n\n".join(blocks).strip()
-
-
-def _front_matter_description(front_matter: dict[str, Any]) -> str:
-    return str(front_matter.get("description", "")).strip()
 
 
 def _front_matter_short_description(front_matter: dict[str, Any]) -> str:
@@ -959,9 +954,7 @@ def _is_probable_reference_hint(value: str) -> bool:
     if "/" in text or "\\" in text:
         return True
     parts = [part for part in text.split(".") if part]
-    if any(part[:1].isupper() for part in parts):
-        return True
-    return False
+    return any(part[:1].isupper() for part in parts)
 
 
 def _is_high_confidence_runtime_tool(

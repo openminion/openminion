@@ -84,6 +84,54 @@ def _admit_skill(*, skill_id: str, version_hash: str, config: Path) -> None:
     assert payload["ok"] is True
 
 
+def test_project_skill_operator_journey(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / "data"))
+    config_path = _write_skill_config(tmp_path)
+    repo = tmp_path / "repo-a"
+    (repo / ".git").mkdir(parents=True)
+    other = tmp_path / "repo-b"
+    (other / ".git").mkdir(parents=True)
+    parser = argparse.ArgumentParser()
+    register(parser.add_subparsers(dest="command"))
+    ingest_args = parser.parse_args(
+        [
+            "skill",
+            "ingest",
+            "--file",
+            str(_bundle_skill_fixture()),
+            "--scope",
+            "project",
+            "--repository-root",
+            str(repo),
+            "--config",
+            str(config_path),
+        ]
+    )
+    code, imported = _run(_run_skill_ingest, ingest_args)
+    assert code == 0
+    assert imported["repository_root"] == str(repo)
+    _admit_skill(
+        skill_id=imported["skill_id"],
+        version_hash=imported["version_hash"],
+        config=config_path,
+    )
+    for root, expected in ((repo, [imported["skill_id"]]), (other, [])):
+        args = parser.parse_args(
+            [
+                "skill",
+                "list",
+                "--repository-root",
+                str(root),
+                "--json",
+                "--config",
+                str(config_path),
+            ]
+        )
+        code, listed = _run(_run_skill_list, args)
+        assert code == 0
+        assert [row["skill_id"] for row in listed["skills"]] == expected
+
+
 def test_skill_cli_admit_records_operator_verification_evidence(
     tmp_path: Path, monkeypatch
 ) -> None:

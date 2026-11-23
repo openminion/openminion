@@ -391,7 +391,13 @@ def bind_runner_tool_workspace(
 
     workspace_override = getattr(tool_api, "workspace_override", None)
     if callable(workspace_override):
-        with workspace_override(lease.worktree):
+        from openminion.modules.runtime.project_instructions import (
+            resolve_repository_root,
+        )
+
+        with workspace_override(
+            lease.worktree, repository_root=resolve_repository_root(lease.worktree)
+        ):
             yield
         return
 

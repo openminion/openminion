@@ -137,6 +137,68 @@ def test_cli_ingest_persists_explicit_trust(tmp_path: Path) -> None:
     assert payload["skill"]["bundle_metadata"]["trust"] == "trusted_local"
 
 
+def test_cli_project_ingest_requires_binding_and_lists_only_matching_repository(
+    tmp_path: Path,
+) -> None:
+    cfg = _config_path(tmp_path)
+    repo = tmp_path / "repo-a"
+    (repo / ".git").mkdir(parents=True)
+    other = tmp_path / "repo-b"
+    (other / ".git").mkdir(parents=True)
+    bundle = repo / ".agents" / "skills" / "demo"
+    bundle.mkdir(parents=True)
+    source = bundle / "SKILL.md"
+    source.write_text(DEMO_SKILL_MD)
+    args = [
+        "--config",
+        str(cfg),
+        "ingest",
+        "--file",
+        str(source),
+        "--name",
+        "demo",
+        "--scope",
+        "project",
+    ]
+    code, failure = _run_cli_expect_failure(args)
+    assert code == 1
+    assert json.loads(failure)["error"]["code"] == "INVALID_ARGUMENT"
+
+    imported = json.loads(_run_cli([*args, "--repository-root", str(bundle)]))
+    assert imported["repository_root"] == str(repo)
+    assert (
+        json.loads(
+            _run_cli(["--config", str(cfg), "list", "--repository-root", str(repo)])
+        )["skills"]
+        == []
+    )
+    _run_cli(
+        [
+            "--config",
+            str(cfg),
+            "admit",
+            "--skill-id",
+            imported["skill_id"],
+            "--version-hash",
+            imported["version_hash"],
+            "--expected-active-version-hash",
+            "none",
+            "--target-status",
+            "verified",
+            "--reason",
+            "Reviewed repository skill",
+        ]
+    )
+    visible = json.loads(
+        _run_cli(["--config", str(cfg), "list", "--repository-root", str(repo)])
+    )["skills"]
+    assert [item["skill_id"] for item in visible] == [imported["skill_id"]]
+    for extra in ([], ["--repository-root", str(other)]):
+        assert (
+            json.loads(_run_cli(["--config", str(cfg), "list", *extra]))["skills"] == []
+        )
+
+
 def test_cli_invocation_warnings_preserve_duplicate_package_and_pending_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

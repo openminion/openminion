@@ -198,6 +198,8 @@ class RetrievedContextMaterialsCollector:
         if recalled_memory_cards:
             memory_cards = _dedupe_memory_cards([*recalled_memory_cards, *memory_cards])
         skill_snippet_text, skill_segment_id = self.resolve_skill_snippet(
+            agent_id=request.agent_id,
+            repository_root=request.repository_root,
             constraints=constraints,
             purpose=request.purpose,
             mode_name=request.mode_name,
@@ -229,6 +231,8 @@ class RetrievedContextMaterialsCollector:
         purpose: str,
         mode_name: str | None,
         skills_tokens: int,
+        agent_id: str,
+        repository_root: str | None = None,
     ) -> tuple[str | None, str | None]:
         skill_snippet_text = None
         skill_segment_id = constraints.skill_id
@@ -251,6 +255,8 @@ class RetrievedContextMaterialsCollector:
                         purpose=purpose,
                         max_tokens=per_skill_budget,
                         mode_name=mode_name,
+                        agent_id=agent_id,
+                        repository_root=repository_root,
                     )
                 except Exception:
                     continue

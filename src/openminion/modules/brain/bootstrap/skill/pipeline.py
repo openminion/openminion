@@ -1,6 +1,7 @@
 from dataclasses import dataclass, replace
 import re
 from typing import TYPE_CHECKING, Any
+from openminion.modules.brain.adapters.tool.runtime import current_repository_root
 
 from openminion.base.config import SKILL_SELECTION_AUTO, skill_value_to_list
 from openminion.modules.brain.constants import SKILL_SELECTION_REASON_ENTRY
@@ -629,7 +630,9 @@ def _load_catalog(*, skill_api: Any, agent_id: str) -> list[dict[str, Any]]:
     if skill_api is None or not hasattr(skill_api, "catalog_summaries"):
         return []
     try:
-        raw_catalog = skill_api.catalog_summaries(agent_id=agent_id)
+        raw_catalog = skill_api.catalog_summaries(
+            agent_id=agent_id, repository_root=current_repository_root()
+        )
     except Exception:
         return []
     if not isinstance(raw_catalog, list):

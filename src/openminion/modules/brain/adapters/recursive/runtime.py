@@ -1,4 +1,5 @@
 from typing import Any
+from openminion.modules.brain.adapters.tool.runtime import current_repository_root
 
 from openminion.modules.brain.interfaces import RLMAPI, BRAIN_ADAPTER_INTERFACE_VERSION
 
@@ -28,6 +29,7 @@ class RLMAdapter(RLMAPI):
         response = self._service.generate(
             session_id=session_id,
             agent_id=agent_id,
+            repository_root=current_repository_root(),
             purpose=purpose,
             query=query,
             ts=ts,

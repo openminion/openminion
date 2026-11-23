@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from openminion.modules.brain.adapters.tool.runtime import current_repository_root
 
 from openminion.modules.brain.loop.services import runner_from_context
 from openminion.modules.brain.schemas.base import new_uuid
@@ -398,7 +399,9 @@ def _validate_workflow_id(
         )
     try:
         entry = skill_api.get_workflow(
-            workflow_id, agent_id=_agent_id(loop_ctx) or None
+            workflow_id,
+            agent_id=_agent_id(loop_ctx) or None,
+            repository_root=current_repository_root(),
         )
     except Exception:
         return _failed_result(

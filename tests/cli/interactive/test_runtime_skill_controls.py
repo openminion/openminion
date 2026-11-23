@@ -1,14 +1,21 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from openminion.cli.interactive.runtime.controls import RuntimeControlsMixin
+from openminion.cli.interactive.runtime import OpenMinionRuntime
 from openminion.cli.presentation.visible_parity import render_skills_report
+from openminion.modules.skill import Skill
+from openminion.modules.skill.errors import SkillError
+from openminion.modules.skill.interfaces import SkillIngestAuthority
+from tests.cli.interactive.test_openminion_runtime import _FakeRuntime
 
 
 class _RuntimeControls(RuntimeControlsMixin):
     agent_id = "agent-1"
+    _working_dir = None
 
     def __init__(self, runtime: object) -> None:
         self._rt = runtime
@@ -23,6 +30,111 @@ def _runtime(tmp_path: Path, *, profile: object) -> SimpleNamespace:
     )
 
 
+def test_repository_skill_list_and_detail_follow_workspace_switch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(tmp_path, profile=SimpleNamespace(skill=None, skill_catalog=[]))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(runtime.data_root))
+    runtime.config_path.write_text(
+        json.dumps(
+            {
+                "skill": {
+                    "sqlite_path": str(runtime.data_root / "skill.db"),
+                    "blob_root": str(runtime.data_root / "blobs"),
+                    "fallback_root": str(runtime.data_root / "fallback"),
+                }
+            }
+        )
+    )
+    repo_a, repo_b = tmp_path / "repo-a", tmp_path / "repo-b"
+    for root in (repo_a, repo_b):
+        (root / ".git").mkdir(parents=True)
+    authority = SkillIngestAuthority.local_operator(
+        surface="test.focus", principal_id="local:test"
+    )
+    skill = Skill(runtime.config_path, home_root=tmp_path)
+    try:
+        skill_id, version, _ = skill.ingest_text(
+            name="repository-procedure",
+            markdown=(
+                "---\nname: repository-procedure\n---\n"
+                "## Procedure\nRead the repository note.\n"
+                "## Verification\nConfirm the quoted note matches the source.\n"
+            ),
+            scope="project",
+            repository_root=str(repo_a),
+            authority=authority,
+        )
+        skill.admit_skill_version(
+            skill_id=skill_id,
+            version_hash=version,
+            expected_active_version_hash=None,
+            target_status="verified",
+            reason="Reviewed local skill",
+            authority=authority,
+        )
+    finally:
+        skill.close()
+    controls = _RuntimeControls(runtime)
+    for workspace, visible in (
+        (str(repo_a), True),
+        (str(repo_b), False),
+        (None, False),
+        (str(repo_a), True),
+    ):
+        controls._working_dir = workspace
+        controls._added_workspace_roots = (str(repo_a),)
+        assert [row["id"] for row in controls.list_skill_rows()] == (
+            [skill_id] if visible else []
+        )
+        if visible:
+            assert "Read the repository note." in controls.skills_report(skill_id)
+        else:
+            with pytest.raises(SkillError) as exc:
+                controls.skills_report(skill_id)
+            assert exc.value.code == "NOT_FOUND"
+
+
+def test_host_session_binding_is_refreshed_on_repository_switch(tmp_path):
+    runtime = _FakeRuntime()
+    controls = OpenMinionRuntime(runtime, target="focus")
+    roots = [tmp_path / name for name in ("a", "b")]
+    for root in roots:
+        (root / ".git").mkdir(parents=True)
+    for root in (*roots, None):
+        controls._working_dir = str(root) if root else None
+        controls.bind_session("repository-switch")
+        assert runtime.sessions.get_session("repository-switch").metadata[
+            "repository_root"
+        ] == (str(root) if root else "")
+
+
+def test_immediate_host_binding_clears_stale_authority(tmp_path):
+    runtime = _FakeRuntime()
+    roots = [tmp_path / name for name in ("a", "b")]
+    for root in roots:
+        (root / ".git").mkdir(parents=True)
+    for root, lab_required in (
+        (roots[0], False),
+        (roots[1], False),
+        (None, False),
+        (roots[0], True),
+    ):
+        runtime.config.runtime.security_lab = SimpleNamespace(
+            agent_identity_id="alpha" if lab_required else ""
+        )
+        controls = OpenMinionRuntime(
+            runtime,
+            target="focus",
+            session_id="immediate-binding",
+            working_dir=str(root) if root else None,
+        )
+        assert runtime.sessions.get_session(controls.session_id).metadata[
+            "repository_root"
+        ] == (str(root) if root and not lab_required else "")
+
+
 def test_skill_rows_merge_catalog_with_config_only_entries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -35,7 +147,9 @@ def test_skill_rows_merge_catalog_with_config_only_entries(
             self.closed = False
             instances.append(self)
 
-        def catalog_summaries(self, *, agent_id: str) -> list[dict[str, object]]:
+        def catalog_summaries(
+            self, *, agent_id: str, repository_root: str | None = None
+        ) -> list[dict[str, object]]:
             assert agent_id == "agent-1"
             return [
                 {
@@ -86,7 +200,9 @@ def test_skills_report_surfaces_catalog_failure_and_closes_resource(
             self.closed = False
             instances.append(self)
 
-        def catalog_summaries(self, *, agent_id: str) -> list[dict[str, object]]:
+        def catalog_summaries(
+            self, *, agent_id: str, repository_root: str | None = None
+        ) -> list[dict[str, object]]:
             raise RuntimeError(f"catalog unavailable for {agent_id}")
 
         def close(self) -> None:
@@ -135,7 +251,9 @@ def test_skills_report_renders_catalog_skill_details_and_closes_resource(
             self.closed = False
             instances.append(self)
 
-        def get_skill(self, skill_id: str) -> object:
+        def get_runtime_skill(
+            self, skill_id: str, *, agent_id: str, repository_root: str | None = None
+        ) -> object:
             assert skill_id == "demo_skill"
             return package
 
@@ -169,7 +287,9 @@ def test_skills_report_explains_configured_only_skill(
         def __init__(self, _config: object, *, home_root: Path) -> None:
             self.home_root = home_root
 
-        def get_skill(self, skill_id: str) -> object:
+        def get_runtime_skill(
+            self, skill_id: str, *, agent_id: str, repository_root: str | None = None
+        ) -> object:
             from openminion.modules.skill.errors import SkillError
 
             raise SkillError("NOT_FOUND", "Skill not found", {"skill_id": skill_id})
@@ -198,7 +318,9 @@ def test_skills_report_discloses_catalog_truncation(
         def __init__(self, _config: object, *, home_root: Path) -> None:
             self.home_root = home_root
 
-        def catalog_summaries(self, *, agent_id: str) -> list[dict[str, object]]:
+        def catalog_summaries(
+            self, *, agent_id: str, repository_root: str | None = None
+        ) -> list[dict[str, object]]:
             return [{"id": f"skill-{index}"} for index in range(21)]
 
         def close(self) -> None:
@@ -233,7 +355,9 @@ def test_skills_report_includes_read_only_learning_status(
             self.closed = False
             instances.append(self)
 
-        def catalog_summaries(self, *, agent_id: str) -> list[dict[str, object]]:
+        def catalog_summaries(
+            self, *, agent_id: str, repository_root: str | None = None
+        ) -> list[dict[str, object]]:
             assert agent_id == "agent-1"
             return []
 
@@ -318,7 +442,9 @@ def test_skills_report_keeps_catalog_when_learning_data_is_invalid(
             self.home_root = home_root
             self.store = object()
 
-        def catalog_summaries(self, *, agent_id: str) -> list[dict[str, object]]:
+        def catalog_summaries(
+            self, *, agent_id: str, repository_root: str | None = None
+        ) -> list[dict[str, object]]:
             assert agent_id == "agent-1"
             return [{"id": "working-skill", "display_name": "Working Skill"}]
 

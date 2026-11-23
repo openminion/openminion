@@ -161,3 +161,42 @@ def test_skill_harness_distinguishes_same_named_skills_across_roots(
         path.relative_to(tmp_path): path.read_bytes() if path.is_file() else None
         for path in tmp_path.rglob("*")
     } == before
+
+
+def test_repository_skill_discovery_is_read_only_and_keeps_nested_bundle(
+    tmp_path: Path,
+) -> None:
+    bundle = tmp_path / ".agents" / "skills" / "hello"
+    child = bundle / "child"
+    child.mkdir(parents=True)
+    for directory in (bundle, child):
+        (directory / "SKILL.md").write_text(SKILL_BODY)
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+
+    report = run_skill_harness(tmp_path)
+
+    assert report.ok
+    assert report.total_skills == 1
+    assert report.results[0].skill_root == str(bundle)
+    assert report.results[0].nested_skill_candidates == ("child/SKILL.md",)
+    assert {
+        path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()
+    } == before
+
+
+def test_repository_skill_discovery_excludes_symlinked_sources(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "SKILL.md").write_text(SKILL_BODY)
+    repo = tmp_path / "repository"
+    candidates = repo / ".agents" / "skills"
+    candidates.mkdir(parents=True)
+    (candidates / "linked").symlink_to(outside, target_is_directory=True)
+    bundle = candidates / "linked-file"
+    bundle.mkdir()
+    (bundle / "SKILL.md").symlink_to(outside / "SKILL.md")
+    assert run_skill_harness(repo).total_skills == 0
+
+    (repo / ".agents" / "skills").rename(repo / ".agents" / "original")
+    candidates.symlink_to(outside, target_is_directory=True)
+    assert run_skill_harness(repo).total_skills == 0
