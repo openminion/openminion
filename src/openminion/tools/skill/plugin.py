@@ -41,29 +41,6 @@ def _invalid_args_error(exc: ValidationError) -> dict[str, Any]:
     return _error("INVALID_ARGS", str(exc))
 
 
-def _model_visible_package(
-    skill: Any,
-    *,
-    skill_id: str,
-    version_hash: str | None,
-    agent_id: str,
-    owned_only: bool = False,
-    repository_root: str | None = None,
-) -> Any:
-    if not owned_only:
-        return skill.get_runtime_skill(
-            skill_id,
-            version_hash,
-            agent_id=agent_id,
-            repository_root=repository_root,
-        )
-    package = skill.get_skill(skill_id=skill_id, version_hash=version_hash)
-    is_owned = package.scope == "agent" and package.agent_id == agent_id
-    if not is_owned and (owned_only or package.scope != "global"):
-        raise SkillError("NOT_FOUND", "Skill not found")
-    return package
-
-
 def _authority_override_error(
     args: dict[str, Any], *, surface: str, source_kind: str
 ) -> dict[str, Any] | None:
@@ -299,10 +276,9 @@ def _h_skill_get(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
         )
 
     try:
-        package = _model_visible_package(
-            skill,
-            skill_id=skill_id,
-            version_hash=version_hash,
+        package = skill.get_runtime_skill(
+            skill_id,
+            version_hash,
             agent_id=agent_id,
             repository_root=getattr(ctx, "repository_root", None),
         )
@@ -354,13 +330,9 @@ def _h_skill_remove(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
 
     try:
         if version_hash:
-            _model_visible_package(
-                skill,
-                skill_id=skill_id,
-                version_hash=version_hash,
-                agent_id=agent_id,
-                owned_only=True,
-            )
+            package = skill.get_skill(skill_id=skill_id, version_hash=version_hash)
+            if package.scope != "agent" or package.agent_id != agent_id:
+                raise SkillError("NOT_FOUND", "Skill not found")
         else:
             owner = skill.get_skill_owner(skill_id=skill_id)
             if not owner or owner["scope"] != "agent" or owner["agent_id"] != agent_id:

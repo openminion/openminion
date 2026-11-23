@@ -76,11 +76,14 @@ def test_shared_store_denies_foreign_and_absent_binding(admitted_repository):
         (True, "unpinned-resource"),
         (True, "corrupt-resource"),
         (True, "wrong-answer"),
+        (True, "wrong-list-id"),
+        (True, "wrong-list-version"),
         (False, None),
         (False, "missing-routing"),
         (False, "failed-selector"),
         (False, "foreign-selection"),
         (False, "foreign-read"),
+        (False, "foreign-list"),
         (False, "wrong-denial"),
         (False, "wrong-answer"),
         (False, "forbidden-tool"),
@@ -135,8 +138,33 @@ def test_turn_oracle_rejects_missing_or_unsafe_proof(
         output["content"] = "incorrect fact"
     elif defect == "wrong-denial":
         output["error"]["code"] = "INVALID_ARGUMENT"
+    listing = checks["listing"]
+    if defect == "foreign-list":
+        listing = repository._scope_reads(probes[0], probes[0].workdir, manifest)[
+            "listing"
+        ]
+    elif defect == "wrong-list-id":
+        listing["skills"][0]["skill_id"] = "foreign_skill"
+    elif defect == "wrong-list-version":
+        listing["skills"][0]["version_hash"] = "0" * 64
     events.extend(
         [
+            {
+                "type": "tool.call.requested",
+                "payload": {
+                    "call_id": "list",
+                    "canonical_name": "skill.list",
+                    "sanitized_normalized_arguments": {"limit": 50},
+                },
+            },
+            {
+                "type": "tool.call.completed",
+                "payload": {
+                    "call_id": "list",
+                    "status": "success",
+                    "output": {"outputs": listing},
+                },
+            },
             {
                 "type": "tool.call.requested",
                 "payload": {

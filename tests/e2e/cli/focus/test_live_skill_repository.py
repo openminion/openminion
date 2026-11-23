@@ -18,7 +18,7 @@ from openminion.modules.skill.interfaces import (
     SkillVerificationEvidence,
 )
 from openminion.modules.skill.runtime.skill import Skill
-from openminion.tools.skill.plugin import _h_skill_get
+from openminion.tools.skill.plugin import _h_skill_get, _h_skill_list
 from tests.e2e.cli.focus.conftest import require_live_focus
 from tests.e2e.cli.focus.harness import FocusProbe, FocusScenario
 from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
@@ -66,7 +66,7 @@ LIMITS = {
     "MAX_A2A_CALLS": 0,
     "MAX_ELAPSED_MS": 300000,
 }
-_TOOLS = {"skill.get", "respond", "clarify"}
+_TOOLS = {"skill.get", "skill.list", "respond", "clarify"}
 _DISCOVERY = {"tool.request", "tool.search", "tool.list"}
 
 
@@ -150,12 +150,18 @@ def _scope_reads(probe: FocusProbe, repository: Path | None, manifest: dict) -> 
         }
         package = _h_skill_get(args, ctx)
         resource = _h_skill_get({**args, "resource_path": RESOURCE}, ctx)
+        listing = _h_skill_list({"limit": 50}, ctx)
+        assert listing["ok"] is True
         catalog = skill.catalog_summaries(probe.agent_id, repository_root=root)
         if root == manifest["owner"]["repository_root"]:
             assert [(r["id"], r["version_hash"]) for r in catalog] == [
                 (manifest["skill_id"], manifest["version_hash"])
             ]
             assert package["ok"] is True
+            assert [(r["skill_id"], r["version_hash"]) for r in listing["skills"]] == [
+                (manifest["skill_id"], manifest["version_hash"])
+            ]
+            assert listing["total"] == 1
             _assert_resource(
                 [("skill.get", {**args, "resource_path": RESOURCE}, resource)],
                 manifest,
@@ -164,10 +170,16 @@ def _scope_reads(probe: FocusProbe, repository: Path | None, manifest: dict) -> 
             assert resource["content"].strip() == FACT
         else:
             assert catalog == []
+            assert listing["skills"] == [] and listing["total"] == 0
             for output in (package, resource):
                 assert output["ok"] is False and output["error"]["code"] == "NOT_FOUND"
                 assert FACT not in json.dumps(output)
-        return {"catalog": catalog, "package": package, "resource": resource}
+        return {
+            "catalog": catalog,
+            "package": package,
+            "resource": resource,
+            "listing": listing,
+        }
 
 
 def _assert_turn(evidence: dict, manifest: dict, *, available: bool) -> None:
@@ -209,6 +221,19 @@ def _assert_turn(evidence: dict, manifest: dict, *, available: bool) -> None:
         if event["type"] == "tool.call.blocked":
             assert not available and request["canonical_name"] == "skill.get"
             assert result["error"]["code"] == "NOT_FOUND"
+            continue
+        if request["canonical_name"] == "skill.list":
+            output = result["output"]["outputs"]
+            assert result["status"] == "success" and output["ok"] is True
+            expected = (
+                {(manifest["skill_id"], manifest["version_hash"])}
+                if available
+                else set()
+            )
+            assert {
+                (r["skill_id"], r["version_hash"]) for r in output["skills"]
+            } <= expected
+            assert output["total"] == len(output["skills"])
             continue
         if request["canonical_name"] != "skill.get":
             continue

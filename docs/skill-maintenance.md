@@ -47,6 +47,13 @@ Use the returned ID and exact version, not the bundle folder name. For an
 update, pass the current active hash instead of `none`. New versions remain
 pending while the previously approved version stays active.
 
+Admission requires verification. The example assumes the skill contains
+verification rules. For a low-risk skill without them, supply all three of
+`--verification-check`, `--verification-result passed`, and
+`--verification-evidence-ref` describing a genuinely completed check and its
+evidence. A reason alone is not verification. Medium/high-risk skills still
+require embedded verification rules.
+
 Focus sessions started with `--dir /path/to/repository` see admitted global,
 current-agent and matching-repository skills. `/skills` lists them and
 `/skills RETURNED_ID` shows details. Requests outside that repository cannot
