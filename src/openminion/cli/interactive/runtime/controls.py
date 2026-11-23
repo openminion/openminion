@@ -709,12 +709,8 @@ class RuntimeControlsMixin:
 
     def _catalog_skill_rows(self) -> list[dict[str, Any]]:
         metadata = self._session_metadata_patch()
-        with closing(
-            Skill(
-                getattr(self._rt, "config_path", None) or {},
-                home_root=Path(self._rt.home_root),
-            )
-        ) as skill:
+        config = getattr(self._rt, "config_path", None) or {}
+        with closing(Skill(config, home_root=Path(self._rt.home_root))) as skill:
             summaries = skill.catalog_summaries(
                 agent_id=self.agent_id,
                 repository_root=metadata["repository_root"] or None,
