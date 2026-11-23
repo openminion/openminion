@@ -186,7 +186,7 @@ def accepted_tool_args(
     dumped = validated.model_dump()
     if not isinstance(accepted, Mapping):
         return dumped
-    if not _model_dump_accepts_input_keys(validated):
+    if not _model_dump_accepts_input_keys(validated, dumped):
         return dict(accepted)
     if input_keys is not None and not set(dumped) <= set(input_keys):
         return dict(accepted)
@@ -232,11 +232,14 @@ def _validation_alias_contains_key(validation_alias: Any, key: str) -> bool:
 
 
 def _model_dump_accepts_input_keys(
-    model: BaseModel, seen: set[int] | None = None
+    model: BaseModel, dumped: Any, seen: set[int] | None = None
 ) -> bool:
     # RootModel serializes its root value directly; preserve the accepted input shape.
     if getattr(type(model), "__pydantic_root_model__", False):
         return False
+    if not isinstance(dumped, Mapping):
+        return False
+
     visited = seen if seen is not None else set()
     identity = id(model)
     if identity in visited:
@@ -253,25 +256,53 @@ def _model_dump_accepts_input_keys(
                 or getattr(field_info, "alias", None)
                 or field_name
             )
+        if serialized_key not in dumped:
+            continue
         if not _field_accepts_input_key(
             type(model), field_name, field_info, serialized_key
         ):
             return False
-        if not _nested_models_accept_input_keys(getattr(model, field_name), visited):
+        if not _nested_models_accept_input_keys(
+            getattr(model, field_name), dumped[serialized_key], visited
+        ):
             return False
     return True
 
 
-def _nested_models_accept_input_keys(value: Any, seen: set[int]) -> bool:
+def _nested_models_accept_input_keys(
+    value: Any, dumped: Any, seen: set[int]
+) -> bool:
     if isinstance(value, BaseModel):
-        return _model_dump_accepts_input_keys(value, seen)
+        return _model_dump_accepts_input_keys(value, dumped, seen)
     if isinstance(value, Mapping):
+        if not isinstance(dumped, Mapping):
+            return not _contains_base_model(value)
         return all(
-            _nested_models_accept_input_keys(item, seen) for item in value.values()
+            _nested_models_accept_input_keys(item, dumped[key], seen)
+            for key, item in value.items()
+            if key in dumped
         )
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return all(_nested_models_accept_input_keys(item, seen) for item in value)
+    if isinstance(value, (list, tuple)):
+        if not isinstance(dumped, (list, tuple)) or len(value) != len(dumped):
+            return not _contains_base_model(value)
+        return all(
+            _nested_models_accept_input_keys(item, dumped_item, seen)
+            for item, dumped_item in zip(value, dumped, strict=True)
+        )
+    if isinstance(value, (set, frozenset)):
+        # Serialized set order is not stable enough to pair nested models safely.
+        return not _contains_base_model(value)
     return True
+
+
+def _contains_base_model(value: Any) -> bool:
+    if isinstance(value, BaseModel):
+        return True
+    if isinstance(value, Mapping):
+        return any(_contains_base_model(item) for item in value.values())
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return any(_contains_base_model(item) for item in value)
+    return False
 
 
 def _model_alias_map(args_model: Any) -> dict[str, str]:

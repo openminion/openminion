@@ -22,9 +22,10 @@ This file tracks package-facing release notes for `openminion`.
   persisted preparation digests, and one-time send authorization. (Refs #663)
 
 - Preserve accepted Pydantic argument contracts through SDK tool
-  sanitizing and execution. Alias-only inputs remain usable; serialized aliases
-  are reused only when they are valid input keys for the model, and transformed
-  values are retained without an extra validation pass (Refs #454).
+  sanitizing and execution. Alias-only inputs remain usable; recursive checks
+  follow only fields and nested values present in the actual `model_dump()`
+  output, so excluded fields do not discard unrelated transformed values.
+  Transformed values are retained without an extra validation pass (Refs #454).
 
 - The freshness classifier is skipped only for the explicit `tool <name>` request form. Verb phrasing — including
   `use the time tool to get now`, which previously took the shortcut — is classified again, because punctuation or a

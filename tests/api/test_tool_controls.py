@@ -776,6 +776,40 @@ def test_sdk_tool_nested_serialize_alias_input_preserves_transform(sdk_tools):
     assert "VALUE 4" in result.text
 
 
+def test_sdk_tool_nested_excluded_defaulted_alias_preserves_transform(sdk_tools):
+    class _Query(BaseModel):
+        model_config = ConfigDict(serialize_by_alias=True, extra="forbid")
+
+        value: int
+        hidden: int = Field(default=0, alias="external_hidden", exclude=True)
+
+        @field_validator("value")
+        @classmethod
+        def increment(cls, value):
+            return value + 1
+
+    received = []
+
+    @tool(
+        name="nested_excluded_default_alias_probe",
+        min_scope="READ_ONLY",
+        idempotent=True,
+    )
+    def operation(query: _Query) -> str:
+        received.append(query.value)
+        return f"VALUE {query.value}"
+
+    result = _run_alias_tool(
+        sdk_tools,
+        "nested_excluded_default_alias_probe",
+        {"query": {"value": 1}},
+        operation,
+    )
+
+    assert received == [4]
+    assert "VALUE 4" in result.text
+
+
 def test_sdk_tool_nested_serialize_by_alias_config_rejects_output_key(sdk_tools):
     if not _SERIALIZE_BY_ALIAS_CONFIG:
         return
