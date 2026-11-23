@@ -1,7 +1,7 @@
 path	loc	callables	max_callable_loc	max_parameters
 __init__.py	18	0	0	0
 channel/__init__.py	10	0	0	0
-channel/console.py	95	7	21	2
+channel/console.py	100	7	21	2
 channel/interface.py	11	1	2	2
 channel/registry.py	34	6	7	2
 config/__init__.py	15	2	4	1
@@ -47,7 +47,7 @@ config/tool_selection/__init__.py	25	0	0	0
 config/tool_selection/models.py	179	3	63	5
 config/tool_selection/normalization.py	42	4	14	1
 config/tool_selection/parser.py	158	6	62	3
-constants.py	91	0	0	0
+constants.py	99	0	0	0
 debug.py	146	12	20	6
 errors/__init__.py	41	0	0	0
 errors/adapt.py	149	9	29	7

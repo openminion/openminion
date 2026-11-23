@@ -97,7 +97,9 @@ scope	max_python_files	max_loc
 # pre/post-turn boundaries, child binding propagation and canonical candidate count.
 # Independently reviewed +42 feature LOC consumes 2 existing headroom; 209 files
 # remain unchanged. Measured on aa7d5b6b6: 42572 (+40 over prior cap).
-services	209	42572
+# RBC (#567, 2026-11-23) marks canonical reply bodies in the existing response,
+# policy-event and room-aggregation owners: +7 LOC (3 import lines), no new file.
+services	209	42579
 services/security	6	187
 services/stats	1	25
 services/tool	3	50
