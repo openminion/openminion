@@ -415,6 +415,7 @@ def test_security_scan_detail_keeps_current_attempt_separate(tmp_path, latest):
         "comparison_ref": None,
         "baseline_ref": None,
         "private_payload": "not a public field",
+        "candidate_count": 1,
     }
     if latest != "none":
         manager.mutate_task_metadata(
@@ -472,6 +473,12 @@ def test_security_scan_detail_keeps_current_attempt_separate(tmp_path, latest):
     task = surface.show_task(record.task_id)
     scan = task["security_scan"]
     assert scan["checks"] == ["code"]
+    assert (scan["repair_handoff"] is not None) == (latest == "completed")
+    if latest == "completed":
+        assert scan["repair_handoff"] == {
+            "report_ref": first["report_ref"],
+            "review_tool": "security.review_report",
+        }
     assert scan["expires_at"] == scope.model_dump(mode="json")["expires_at"]
     assert scan["max_runs"] == 2
     assert "private_payload" not in str(scan)

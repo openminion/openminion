@@ -111,6 +111,66 @@ review, explicit parent acceptance, a fresh-revision rescan and follow-up review
 Project launch remains an operator decision. Partial reports cannot enter the
 first review lifecycle, and follow-up does not automatically launch another fix.
 
+## Prepare a repair from a scheduled scan
+
+For an enrolled finite local `code` scan, task detail exposes the latest canonical
+report and a review handoff when it contains candidates. Select one independently
+accepted finding, pause its exact source task, and prepare a clean, separate Git
+worktree at the reviewed revision. The candidate must share the source Git common
+directory and stay outside the monitored root. The reproducer and its fixtures
+must already be tracked at that reviewed revision; keep them outside the approved
+write paths.
+
+```bash
+openminion tasks pause TASK_ID --agent-id SCANNER_AGENT
+git -C SOURCE_ROOT worktree add --detach PATCH_DIR REVIEWED_SHA
+openminion autonomy start \
+  --goal "Prepare the selected reviewed local repair" \
+  --workspace PATCH_DIR --repository PATCH_DIR \
+  --verify-command "python -B verify.py" \
+  --max-iterations 6 --max-tool-calls 28 --max-wall-clock-ms 600000 \
+  --security-source-task-id TASK_ID \
+  --security-review-ref REVIEW_REF --security-finding-id FINDING_ID \
+  --security-write-path app.py
+```
+
+Replace these values with observed IDs and absolute paths. Use the configured
+repair agent, provider configuration and project permissions. The four security
+arguments are required together; repeat `--security-write-path` for each approved
+tracked file. All other tracked files, including the operator's reproducer and
+fixtures, remain protected. The verifier must fail normally before repair and
+pass unchanged afterward. A missing command, timeout or already-passing baseline
+blocks the repair.
+
+Terminal invocation authorizes that bounded launch. In Focus, use `/project start`
+with the same security, repository, verifier and budget arguments and approve its
+prepared request; the session workspace boundary must contain `PATCH_DIR`.
+Evidence or scope changes after preparation require a new request. Ordinary
+projects without security arguments retain their existing behavior.
+
+The parent coordinates a synchronous code-bearing child, a distinct readonly
+reviewer and explicit acceptance. Only the child can change the approved files.
+Model shell execution, mutating Git and arbitrary or nested delegation are unavailable;
+the runtime executes only the approved verifier. These restrictions do not claim
+operating-system confinement of trusted verifier code.
+
+Successful completion delivers a candidate and proof. It leaves the monitored
+root unchanged and the finding unresolved. Inspect the candidate diff, obtain
+separate operator approval, and apply that exact change using ordinary Git.
+Resume the same paused source task without resetting its run count or expiry.
+A complete fresh source rescan and independent follow-up review establish the
+finding outcome. Supply the source task ID as `source_task_id` on that follow-up
+review to link it to task detail. Generic independent review remains available
+without this optional link.
+
+Use the returned run ID to resume an interrupted project. Its original scope,
+verifier and consumed budgets survive; a missing checkpoint is reported rather
+than recreated. Retained evidence uses existing artifact owners
+`security-project:RUN_ID` and `security-schedule:JOB_ID`. After archiving the
+required evidence, release only the intended owner with the existing
+`artifactctl refs remove-owner collection OWNER_ID` command against the same
+configured artifact store.
+
 ## Results and evidence
 
 Results contain scanner identity/version, bounded normalized findings, target,

@@ -5,6 +5,14 @@ import logging
 import re
 from typing import Any, cast
 
+from openminion.modules.telemetry.usage.coverage import (
+    INPUT_TOKEN_KEYS,
+    OUTPUT_TOKEN_KEYS,
+    REASONING_TOKEN_KEYS,
+    CACHE_READ_TOKEN_KEYS,
+    CACHE_WRITE_TOKEN_KEYS,
+    TOTAL_TOKEN_KEYS,
+)
 
 _SENSITIVE_FIELDS = frozenset(
     {
@@ -147,6 +155,14 @@ _STRUCTURAL_SECURITY_FIELDS = frozenset(
         "tool_results",
         "total_findings",
         "trace_id",
+        "llm_call_id",
+        "provider",
+        "provider_name",
+        "model",
+        "purpose",
+        "provider_calls_total",
+        "provider_input_tokens",
+        "provider_output_tokens",
     }
 )
 
@@ -238,6 +254,42 @@ def structural_tool_payload(payload: dict[str, Any]) -> dict[str, Any]:
         for key, value in payload.items()
         if key in _STRUCTURAL_SECURITY_FIELDS or key == "structural_only"
     }
+    usage = payload.get("usage")
+    if isinstance(usage, dict):
+        structural["usage"] = {
+            key: value
+            for key, value in usage.items()
+            if key
+            in (
+                *INPUT_TOKEN_KEYS,
+                *OUTPUT_TOKEN_KEYS,
+                *REASONING_TOKEN_KEYS,
+                *CACHE_READ_TOKEN_KEYS,
+                *CACHE_WRITE_TOKEN_KEYS,
+                *TOTAL_TOKEN_KEYS,
+            )
+            and type(value) is int
+            and value >= 0
+        }
+    attempts = payload.get("provider_attempts")
+    if isinstance(attempts, list):
+        structural["provider_attempts"] = [
+            {
+                key: item[key]
+                for key in (
+                    "logical_call_id",
+                    "semantic_purpose",
+                    "attempt",
+                    "provider",
+                    "model",
+                    "latency_ms",
+                    "outcome",
+                )
+                if key in item
+            }
+            for item in attempts
+            if isinstance(item, dict)
+        ]
     if "artifact_refs" in structural:
         structural["artifact_refs"] = _canonical_artifact_refs(
             structural["artifact_refs"]

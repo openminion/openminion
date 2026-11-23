@@ -1243,7 +1243,8 @@ def test_responsibility_usage_retains_structural_readonly_phase_records(input_to
             "provider_calls_total": 3,
         },
     }
-    usage = _observed_phase_usage([completion, phase], [role])
+    options = {"provider": "fixture", "model": "fixture", "token_limit": 250000}
+    usage = _observed_phase_usage([completion, phase], [role], **options)
     assert usage["usage_by_role"] == {role: [phase]}
     assert usage["observed_tokens"] == {
         "input_tokens": input_tokens,
@@ -1251,6 +1252,90 @@ def test_responsibility_usage_retains_structural_readonly_phase_records(input_to
     }
     assert usage["phase_usage_fields_complete"] is (input_tokens is not None)
     assert usage["per_call_accounting_complete"] is False
-    absent = _observed_phase_usage([completion], [role])
+    absent = _observed_phase_usage([completion], [role], **options)
     assert absent["observed_tokens"] == {"input_tokens": None, "output_tokens": None}
     assert absent["phase_usage_fields_complete"] is False
+
+
+@pytest.mark.parametrize(
+    "change", ["", "missing_usage", "duplicate_phase", "orphan", "provider"]
+)
+def test_responsibility_physical_usage_requires_complete_correlated_turns(change):
+    from tests.e2e.cli.focus.test_live_security_responsibility import (
+        _observed_phase_usage,
+    )
+
+    role = "security-researcher-readonly"
+    call = {
+        "event_type": "llm.call.completed",
+        "agent_id": role,
+        "data": {
+            "llm_call_id": "response-1",
+            "trace_id": "turn-1",
+            "usage": {"prompt_tokens": 80, "completion_tokens": 30},
+        },
+    }
+    phase = {
+        "event_type": "chat.phase_timing",
+        "agent_id": role,
+        "data": {
+            "turn_id": "turn-1",
+            "provider_input_tokens": 80,
+            "provider_output_tokens": 30,
+            "provider_calls_total": 1,
+            "provider_attempts": [
+                {"provider": "fixture", "model": "fixture", "outcome": "ok"}
+            ],
+        },
+    }
+    events = [call, phase]
+    if change == "missing_usage":
+        call["data"]["usage"] = {}
+    elif change == "duplicate_phase":
+        events.append(phase)
+    elif change == "orphan":
+        call["data"]["trace_id"] = "unknown-turn"
+    elif change == "provider":
+        phase["data"]["provider_attempts"][0]["provider"] = "different"
+    result = _observed_phase_usage(
+        events, [role], provider="fixture", model="fixture", token_limit=100
+    )
+    assert result["physical_calls"] == [call]
+    assert result["per_call_accounting_complete"] is (not change)
+    if not change:
+        assert result["turns"] == [
+            {
+                "agent_id": role,
+                "turn_id": "turn-1",
+                "tokens": 110,
+                "overshoot_tokens": 10,
+            }
+        ]
+
+
+def test_candidate_delivery_requires_separate_operator_application(tmp_path):
+    from tests.e2e.cli.focus.test_live_security_responsibility import _apply_candidate
+
+    monitored = tmp_path / "monitored"
+    base = source._fixture(monitored)
+    candidate = tmp_path / "candidate"
+    source._git(monitored, "worktree", "add", "--detach", str(candidate), base)
+    (candidate / "app.py").write_text(
+        "def authorize(role):\n    return role == 'admin'\n"
+    )
+    try:
+        declined = _apply_candidate(monitored, candidate, base, approved=False)
+        assert declined["operator_decision"] == "declined" and not declined["applied"]
+        assert source._git(monitored, "rev-parse", "HEAD") == base
+        assert not source._git(monitored, "status", "--porcelain")
+        applied = _apply_candidate(monitored, candidate, base, approved=True)
+        assert applied["candidate_patch_sha256"] == declined["candidate_patch_sha256"]
+        assert applied["operator_decision"] == "approved" and applied["applied"]
+        assert applied["result_revision"] != base
+        assert (monitored / "app.py").read_bytes() == (
+            candidate / "app.py"
+        ).read_bytes()
+        with pytest.raises(AssertionError):
+            _apply_candidate(monitored, candidate, base, approved=True)
+    finally:
+        source._git(monitored, "worktree", "remove", "--force", str(candidate))

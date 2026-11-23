@@ -10,11 +10,11 @@ from typing import Any
 
 import pytest
 
-from openminion.cli.commands.autonomy_project import (
+from openminion.cli.commands.project_launch import (
     build_project_launch_request,
-    launch_project,
     parse_focus_project_launch,
 )
+from openminion.cli.commands.autonomy_project import launch_project
 from openminion.modules.brain.adapters.tool import ToolAdapter
 from openminion.modules.brain.adapters.tool.project_git import git_push_action_scope
 from openminion.modules.brain.execution.child_tasks import SubtaskSpec

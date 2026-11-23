@@ -1,7 +1,7 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-11-21
+Last updated: 2026-11-23
 
 This file tracks package-facing release notes for `openminion`.
 
@@ -15,6 +15,11 @@ This file tracks package-facing release notes for `openminion`.
   being checked before it. The shared execution-path fix is separate and already
   released; this closes the caller it did not cover (Refs #612).
 
+- Scheduled local source findings can enter an explicitly approved, isolated
+  repair project through the four `--security-*` launch arguments. Canonical
+  review evidence, exact writable files, a failing baseline and independent child
+  review bind the candidate; separate operator application and a fresh source
+  follow-up remain required for resolution.
 
 - The PostgreSQL pool options are emitted as the factory's own `pool_size` and
   `pool_max_overflow`, so `storage.postgres_pool_min` / `postgres_pool_max` reach the pool

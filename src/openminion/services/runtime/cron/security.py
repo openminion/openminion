@@ -138,6 +138,9 @@ def complete_run(
         if brain_status != "done"
         else "partial",
         "report_ref": ref,
+        "candidate_count": sum(
+            finding.disposition == "candidate" for finding in report.findings
+        ),
         "sarif_ref": exported["artifact_ref"],
         "comparison_ref": comparison_ref,
         "baseline_ref": admission.baseline_ref,

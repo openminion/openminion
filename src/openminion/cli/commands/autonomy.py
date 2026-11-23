@@ -8,14 +8,13 @@ from typing import Any, cast
 
 from openminion.base.errors import error_info_from_exception
 from openminion.base.types import Message
+from openminion.cli.commands.project_launch import build_terminal_project_request
 from openminion.cli.commands.autonomy_project import (
     apply_resume_overrides,
-    build_project_launch_request,
     cancel_project_task_wake,
     launch_project,
     persisted_verification_waiver,
     project_task_manager,
-    resolve_project_repository,
     run_project_turn,
     resume_project_run,
     schedule_unattended_project,
@@ -24,6 +23,12 @@ from openminion.cli.commands.autonomy_project import (
     workspace_path_from_ref,
     write_terminal_proof,
     ensure_project_daemon_ready,
+)
+from openminion.cli.commands.project_security import (
+    add_security_project_args,
+    prepare_security_project,
+    security_project_selection,
+    validate_security_project_resume,
 )
 from openminion.cli.commands.autonomy_inspect import (
     list_autonomy_runs,
@@ -45,7 +50,6 @@ from openminion.modules.task.autonomy import (
     EvidenceStatus,
     TestEvidence,
     TestEvidenceStatus,
-    VerificationDomain,
     VerificationWaiver,
     build_local_workspace_ref,
     now_ms,
@@ -107,51 +111,24 @@ def run_autonomy(args: argparse.Namespace) -> int:
 
 
 def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
-    goal = _resolve_goal(args)
-    workspace_boundary = _resolve_workspace(args)
-    raw_repository = _clean(getattr(args, "repository", None))
-    repository = resolve_project_repository(workspace_boundary, raw_repository)
-    turn_timeout_seconds = int(
-        getattr(args, "turn_timeout_seconds", None)
-        or DEFAULT_PROJECT_TURN_TIMEOUT_SECONDS
+    request = build_terminal_project_request(
+        args,
+        goal=_resolve_goal(args),
+        workspace_boundary=_resolve_workspace(args),
+        waiver=_verification_waiver(args),
     )
-    verification_timeout_seconds = int(
-        getattr(args, "verification_timeout_seconds", None)
-        or DEFAULT_PROJECT_VERIFICATION_TIMEOUT_SECONDS
-    )
-    waiver = _verification_waiver(args)
-    request = build_project_launch_request(
-        goal=goal,
-        session_id=_clean(getattr(args, "session", None)) or "autonomy",
-        agent_id=_clean(getattr(args, "agent", None)) or "default",
-        workspace_boundary=workspace_boundary,
-        repository=repository,
-        require_git_repository=bool(raw_repository),
-        max_iterations=max(0, int(getattr(args, "max_iterations", 1))),
-        max_wall_clock_ms=getattr(args, "max_wall_clock_ms", None),
-        max_tool_calls=getattr(args, "max_tool_calls", None),
-        permission_profile_id=_clean(getattr(args, "permission_profile", None))
-        or "local-safe",
-        config_ref=_clean(getattr(args, "config", None)) or None,
-        verification_domain=cast(
-            VerificationDomain,
-            str(getattr(args, "verification_domain", "coding")),
-        ),
-        verification_commands=tuple(getattr(args, "verify_command", ()) or ()),
-        turn_timeout_seconds=turn_timeout_seconds,
-        verification_timeout_seconds=verification_timeout_seconds,
-        verification_waiver_reason=waiver.reason if waiver is not None else None,
-        goal_id=_clean(getattr(args, "goal_id", None)) or None,
-        task_plan_required=True,
-        expected_checks=tuple(getattr(args, "expected_check", ()) or ()),
-        success_criteria=tuple(getattr(args, "success_criterion", ()) or ()),
-        source_request=goal,
-    )
-    run = request.run
     manager = project_task_manager(args)
+    selection = security_project_selection(args)
+    if selection is not None:
+        request = prepare_security_project(
+            request, selection, args=args, manager=manager
+        )
+    run = request.run
+    repository = request.repository
+    waiver = persisted_verification_waiver(run)
     paused_state = TaskLifecycleState.PAUSED
     if run.continuation_policy.max_iterations < 1:
-        running = launch_project(request, store=store, manager=manager)
+        running = launch_project(request, store=store, manager=manager, args=args)
         assert running.task_id is not None
         manager.transition_task(task_id=running.task_id, to_state=paused_state)
         error = AutonomyRunError(
@@ -179,7 +156,7 @@ def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
         waiver=waiver,
     )
     if verifier_error is not None:
-        running = launch_project(request, store=store, manager=manager)
+        running = launch_project(request, store=store, manager=manager, args=args)
         assert running.task_id is not None
         manager.transition_task(task_id=running.task_id, to_state=paused_state)
         blocked = store.transition(
@@ -201,7 +178,9 @@ def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
         ensure_project_daemon_ready(
             args, config_ref=request.run.execution_selectors.config_ref
         )
-    running = launch_project(request, store=store, manager=manager)
+    running = launch_project(request, store=store, manager=manager, args=args)
+    if running.status == AutonomyRunStatus.BLOCKED:
+        return _print_run(args, running)
     if bool(getattr(args, "unattended", False)):
         scheduled = schedule_unattended_project(args, store, manager, running)
         return _print_run(args, scheduled)
@@ -214,8 +193,9 @@ def _resume(args: argparse.Namespace, store: AutonomyRunStore) -> int:
         raise RuntimeError(f"autonomy run cannot be resumed from {run.status}")
     workspace = workspace_path_from_ref(run.workspace_ref) or Path.cwd()
     waiver = _verification_waiver(args)
-    run = apply_resume_overrides(args, store, run, waiver=waiver)
     manager = project_task_manager(args)
+    validate_security_project_resume(args, run, manager=manager, waiver=waiver)
+    run = apply_resume_overrides(args, store, run, waiver=waiver)
     if (
         bool(getattr(args, "unattended", False))
         and verifier_preflight_error(
@@ -950,6 +930,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     start.add_argument("--cycle-interval-seconds", type=int, default=None)
     start.add_argument("--task-db", default="", help=argparse.SUPPRESS)
     _add_execution_proof_args(start)
+    add_security_project_args(start)
     add_json_output_flag(start)
     start.set_defaults(handler=run_autonomy, needs_app=False)
 

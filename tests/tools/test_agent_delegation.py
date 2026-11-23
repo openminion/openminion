@@ -927,11 +927,11 @@ def test_code_bearing_delegate_releases_worktree_when_delegate_raises(
         lambda **_kwargs: lease,
     )
     monkeypatch.setattr(
-        "openminion.tools.agent.plugin.load_latest_project_checkpoint",
+        "openminion.modules.task.project.policy.load_latest_project_checkpoint",
         lambda *_args, **_kwargs: checkpoint,
     )
     monkeypatch.setattr(
-        "openminion.tools.agent.plugin.repository_project_launch_approved",
+        "openminion.modules.task.project.policy.repository_project_launch_approved",
         lambda _checkpoint: True,
     )
 
@@ -1010,7 +1010,7 @@ def test_code_bearing_delegate_requires_project_artifact_owner_and_verifier(
 
     (tmp_path / ".git").mkdir()
     monkeypatch.setattr(
-        "openminion.tools.agent.plugin.load_latest_project_checkpoint",
+        "openminion.modules.task.project.policy.load_latest_project_checkpoint",
         lambda *_args, **_kwargs: SimpleNamespace(
             project_run=SimpleNamespace(
                 workspace_ref=f"local:{tmp_path}",
@@ -1019,7 +1019,7 @@ def test_code_bearing_delegate_requires_project_artifact_owner_and_verifier(
         ),
     )
     monkeypatch.setattr(
-        "openminion.tools.agent.plugin.repository_project_launch_approved",
+        "openminion.modules.task.project.policy.repository_project_launch_approved",
         lambda _checkpoint: True,
     )
     with pytest.raises(ToolRuntimeError) as missing_verifier:
@@ -1134,13 +1134,13 @@ def test_code_bearing_delegate_requires_approved_project_launch(
 ) -> None:
     (tmp_path / ".git").mkdir()
     monkeypatch.setattr(
-        "openminion.tools.agent.plugin.load_latest_project_checkpoint",
+        "openminion.modules.task.project.policy.load_latest_project_checkpoint",
         lambda *_args, **_kwargs: SimpleNamespace(
             project_run=SimpleNamespace(workspace_ref=f"local:{tmp_path}")
         ),
     )
     monkeypatch.setattr(
-        "openminion.tools.agent.plugin.repository_project_launch_approved",
+        "openminion.modules.task.project.policy.repository_project_launch_approved",
         lambda _checkpoint: False,
     )
     monkeypatch.setattr(

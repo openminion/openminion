@@ -490,3 +490,122 @@ def test_redaction_expansion_returns_typed_error_without_publication(audit_conte
         _h_review_report(args, reviewer)
     assert failure.value.code == "INVALID_ARGUMENT"
     assert reviewer.artifacts == []
+
+
+@pytest.fixture
+def linked_followup(audit_context, tmp_path):
+    from tests.task.test_lifecycle import _manager
+    from tests.tools.security.test_schedule import admission
+
+    ctx, revision = audit_context
+    source = _source(ctx, revision)
+    prior = _h_review_report(_initial(source), _reviewer(ctx))["review_ref"]
+    rescan = _source(ctx, "b" * 40, finding_ids=())
+    manager = _manager(tmp_path)
+    scheduled = manager.schedule_user_task(
+        name="source scan",
+        instruction="scan",
+        agent_id="researcher",
+        schedule={"kind": "every", "every_ms": 60000},
+        security_scan=admission(ctx.workspace).model_dump(mode="json"),
+    )
+    task_id = scheduled["record"].task_id
+    manager.record_scheduled_outcome(
+        cron_job_id=scheduled["job"]["job_id"],
+        run={
+            "run_id": "rescan-run",
+            "state": "finished",
+            "attempts": 1,
+            "output": {
+                "security_scan": {
+                    "status": "completed",
+                    "job_id": scheduled["job"]["job_id"],
+                    "run_id": "rescan-run",
+                    "report_ref": rescan,
+                    "revision": "b" * 40,
+                }
+            },
+        },
+    )
+    manager.mutate_task_metadata(
+        task_id=task_id,
+        mutate=lambda metadata: {
+            **metadata,
+            "security_repair": {
+                "run_id": "repair-run",
+                "review_ref": prior,
+                "finding_id": "F-1",
+            },
+        },
+    )
+    try:
+        yield (
+            _reviewer(ctx, task_manager=manager),
+            _followup(prior, rescan, source_task_id=task_id),
+        )
+    finally:
+        manager.close()
+
+
+def test_followup_links_exact_source_and_preserves_prior_review(linked_followup):
+    ctx, args = linked_followup
+    prior = ctx.artifactctl.read_bytes(args["prior_review_ref"])
+    result = _h_review_report(args, ctx)
+    record = ctx.task_manager.get_task(args["source_task_id"])
+    assert record.metadata["security_repair"] == {
+        "run_id": "repair-run",
+        "review_ref": args["prior_review_ref"],
+        "finding_id": "F-1",
+        "follow_up_review_ref": result["review_ref"],
+        "rescan_report_ref": args["rescan_report_ref"],
+        "finding_outcome": "resolved",
+    }
+    assert ctx.artifactctl.read_bytes(args["prior_review_ref"]) == prior
+    assert (
+        result["review_ref"].rsplit("/", 1)[1]
+        in ctx.artifactctl.index.active_reference_shas()
+    )
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "missing_task",
+        "missing_manager",
+        "wrong_review",
+        "wrong_rescan",
+        "failed_latest",
+        "stale_completed_run",
+        "wrong_finding",
+    ],
+)
+def test_followup_refuses_mismatched_source_without_publishing(
+    linked_followup, invalid
+):
+    ctx, args = linked_followup
+    manager = ctx.task_manager
+    task_id = args["source_task_id"]
+    metadata = manager.get_task(task_id).metadata
+    if invalid == "missing_task":
+        args["source_task_id"] = "missing-task"
+    elif invalid == "missing_manager":
+        ctx.task_manager = None
+    elif invalid == "wrong_review":
+        metadata["security_repair"]["review_ref"] = "cas://sha256/" + "a" * 64
+    elif invalid == "wrong_rescan":
+        metadata["security_scan"]["last_attempt"]["report_ref"] = (
+            "cas://sha256/" + "c" * 64
+        )
+    elif invalid == "failed_latest":
+        metadata["security_scan"]["last_attempt"]["status"] = "failed"
+    elif invalid == "stale_completed_run":
+        metadata["security_scan"]["completed_run_id"] = "other-run"
+    else:
+        metadata["security_repair"]["finding_id"] = "other-finding"
+    manager.mutate_task_metadata(task_id=task_id, mutate=lambda _: metadata)
+    before = manager.get_task(task_id).metadata
+    with pytest.raises(ToolRuntimeError) as failure:
+        _h_review_report(args, ctx)
+    assert failure.value.code == "POLICY_DENIED"
+    assert ctx.artifacts == []
+    assert manager.get_task(task_id).metadata == before

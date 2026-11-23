@@ -3,14 +3,23 @@
 import json
 import hashlib
 import sys
+from argparse import Namespace
 from pathlib import Path
 
 import pytest
 
+from openminion.cli.commands.project_launch import build_project_launch_request
 from openminion.cli.commands.autonomy_project import (
-    build_project_launch_request,
+    configured_cron_store,
     launch_project,
 )
+from openminion.cli.commands.project_security import prepare_security_project
+from openminion.modules.artifact.config import (
+    ArtifactCtlConfig,
+    BlobStoreConfig,
+    IndexConfig,
+)
+from openminion.modules.artifact.control import ArtifactCtl
 from openminion.modules.brain.adapters.tool import ToolAdapter
 from openminion.modules.brain.schemas import ActionResult
 from openminion.modules.brain.loop.tools.iteration.helpers import (
@@ -41,7 +50,6 @@ from tests.tools.security.test_audit_report import (
     _git,
     _publish_args,
     _scan,
-    _store_scan,
 )
 from tests.tools.security.test_review_report import (
     _decision,
@@ -50,7 +58,11 @@ from tests.tools.security.test_review_report import (
     _reviewer,
 )
 
-from tests.tools.security.test_repair_preflight import operator_handoff
+from tests.tools.security.test_repair_preflight import (
+    operator_handoff,
+    paused_security_repair,
+)
+from tests.e2e.cli.focus.test_live_security_responsibility import _apply_candidate
 
 pytestmark = pytest.mark.e2e
 
@@ -77,7 +89,12 @@ def _report(ctx, revision, *, installed, repaired):
         scan.configuration_identity.config_sha256 = hashlib.sha256(
             (ctx.workspace / "rule.yml").read_bytes()
         ).hexdigest()
-        scan_ref = _store_scan(ctx, scan)
+        scan_ref = ctx.write_artifact(
+            "security/scan.json",
+            scan.model_dump_json().encode(),
+            "application/json",
+            durable=True,
+        ).canonical_ref
         scan = scan.model_dump(mode="json")
     findings = (
         []
@@ -111,7 +128,24 @@ def _report(ctx, revision, *, installed, repaired):
 
 
 def run_security_lifecycle(ctx, tmp_path, *, installed=False):
+    original_ctl = ctx.artifactctl
+    artifact_path = tmp_path / "data" / "artifact"
+    with ArtifactCtl(
+        ArtifactCtlConfig(
+            blob_store=BlobStoreConfig(root_dir=str(artifact_path)),
+            index=IndexConfig(sqlite_path=str(artifact_path / "index.db")),
+        )
+    ) as ctl:
+        ctx.artifactctl = ctl
+        try:
+            return _run_security_lifecycle(ctx, tmp_path, installed=installed)
+        finally:
+            ctx.artifactctl = original_ctl
+
+
+def _run_security_lifecycle(ctx, tmp_path, *, installed):
     repo = ctx.workspace
+    monitored = repo
     (repo / "app.py").write_text("def authorize(role):\n    return True\n")
     (repo / "verify.py").write_text(
         "from app import authorize\nassert authorize('admin')\nassert not authorize('guest')\n"
@@ -131,6 +165,30 @@ def run_security_lifecycle(ctx, tmp_path, *, installed=False):
     review = _h_review_report(_initial(source, [decision]), _reviewer(ctx))
     commands = (f"{sys.executable} -B verify.py", "git status")
 
+    store = AutonomyRunStore(root=tmp_path / "autonomy")
+    task_db = tmp_path / "tasks.db"
+    config = tmp_path / "config.json"
+    config.write_text("{}")
+    args = Namespace(
+        config=str(config),
+        home_root=str(tmp_path / "home"),
+        data_root=str(tmp_path / "data"),
+        task_db=str(task_db),
+    )
+    cron_repository = configured_cron_store(args, config_ref=str(config))
+    manager = TaskManager.from_cron_repository(cron_repository, db_path=task_db)
+    selection, env = paused_security_repair(
+        ctx,
+        base,
+        manager,
+        root=tmp_path,
+        report_ref=source,
+        review_ref=review["review_ref"],
+    )
+    config.write_text(json.dumps({"runtime": {"env": env}}))
+    repo = tmp_path / "candidate"
+    _git("worktree", "add", "--detach", str(repo), base, cwd=monitored)
+
     def verify():
         return run_project_verification_commands(
             commands, workspace=repo, timeout_seconds=20
@@ -148,9 +206,9 @@ def run_security_lifecycle(ctx, tmp_path, *, installed=False):
         paths=["app.py"],
         commands=list(commands),
     )
-    store = AutonomyRunStore(root=tmp_path / "autonomy")
-    task_db = tmp_path / "tasks.db"
-    manager = TaskManager.for_lifecycle_db(db_path=task_db)
+    guidance = json.loads(handoff)
+    guidance.pop("operator_approved")
+    handoff = json.dumps(guidance)
     request = build_project_launch_request(
         goal="Repair the accepted fixture finding",
         session_id="repair-session",
@@ -160,10 +218,22 @@ def run_security_lifecycle(ctx, tmp_path, *, installed=False):
         require_git_repository=True,
         verification_commands=commands,
         verification_timeout_seconds=20,
+        max_iterations=1,
+        max_tool_calls=10,
+        max_wall_clock_ms=60000,
         task_plan_required=False,
         source_request=handoff,
     )
-    run = launch_project(request, store=store, manager=manager)
+    request = prepare_security_project(request, selection, args=args, manager=manager)
+    run = launch_project(request, store=store, manager=manager, args=args)
+    initial = ProjectCheckpoint.model_validate(
+        manager.get_checkpoint(run.task_id, run.checkpoint_id)
+    )
+    baseline = initial.payload["security_repair_baseline"]
+    assert baseline[0]["exit_code"] == 1
+    assert request.security_repair is not None
+    repair_context = request.security_repair.model_dump(mode="json")
+    assert initial.payload["security_repair"] == repair_context
     calls = []
 
     class ScriptedModel:
@@ -251,8 +321,6 @@ def run_security_lifecycle(ctx, tmp_path, *, installed=False):
         record = load_child_worktree_record(ctx.artifactctl, artifact["record_alias"])
         assert record["integration_status"] == "accepted" and record["cleaned_up"]
         assert _git("diff", "--cached", "--name-only", cwd=repo) == "app.py"
-        _git("add", "app.py", cwd=repo)
-        _git("commit", "-qm", "fix: authorize only the admin fixture role", cwd=repo)
         accepted_ref = ctx.artifactctl.alias_resolve(artifact["record_alias"]).ref
         action = ActionResult(command_id="accept", **accepted)
         metadata = {}
@@ -274,11 +342,43 @@ def run_security_lifecycle(ctx, tmp_path, *, installed=False):
         task_manager=manager, autonomy_store=store, turn=turn, verify=verify
     ).run_cycle(run.run_id)
     assert finished.run.status == AutonomyRunStatus.COMPLETED
-    patched = _git("rev-parse", "HEAD", cwd=repo)
-    assert patched != base and _git("status", "--porcelain", cwd=repo) == ""
+    assert _git("rev-parse", "HEAD", cwd=monitored) == base
+    assert not _git("status", "--porcelain", cwd=monitored)
+    declined = _apply_candidate(monitored, repo, base, approved=False)
+    assert not declined["applied"]
+    application = _apply_candidate(monitored, repo, base, approved=True)
+    patched = application["result_revision"]
     rescan = _report(ctx, patched, installed=installed, repaired=True)
-    closure = _h_review_report(_followup(review["review_ref"], rescan), _reviewer(ctx))
+    manager.record_scheduled_outcome(
+        cron_job_id=repair_context["source_job_id"],
+        run={
+            "run_id": "rescan-run",
+            "state": "finished",
+            "attempts": 1,
+            "output": {
+                "security_scan": {
+                    "job_id": repair_context["source_job_id"],
+                    "run_id": "rescan-run",
+                    "status": "completed",
+                    "report_ref": rescan,
+                    "revision": patched,
+                }
+            },
+        },
+    )
+    ctx.task_manager = manager
+    closure = _h_review_report(
+        _followup(
+            review["review_ref"], rescan, source_task_id=selection.source_task_id
+        ),
+        _reviewer(ctx),
+    )
     assert closure["review_status"] == "resolved"
+    linked = manager.get_task(selection.source_task_id).metadata["security_repair"]
+    assert linked["run_id"] == run.run_id
+    assert linked["follow_up_review_ref"] == closure["review_ref"]
+    assert linked["rescan_report_ref"] == rescan
+    assert linked["finding_outcome"] == "resolved"
     trace = structural_tool_payload(
         {
             "structural_only": True,
@@ -290,6 +390,7 @@ def run_security_lifecycle(ctx, tmp_path, *, installed=False):
     assert "remediation_objective" not in json.dumps(trace)
     assert decision["remediation_objective"] not in json.dumps(trace)
     manager.close()
+    cron_repository.close()
     manager = TaskManager.for_lifecycle_db(db_path=task_db)
     store = AutonomyRunStore(root=tmp_path / "autonomy")
     proof = json.loads(Path(finished.run.proof_packet_ref).read_text())
@@ -300,6 +401,8 @@ def run_security_lifecycle(ctx, tmp_path, *, installed=False):
         checkpoint.project_run.objective_ledger_ref
     ]
     assert objective["source_request"] == handoff
+    assert checkpoint.payload["security_repair"] == repair_context
+    assert checkpoint.payload["security_repair_baseline"] == baseline
     accepted_ref = proof["artifact_refs"][0]
     accepted_record = json.loads(ctx.artifactctl.read_bytes(accepted_ref))
     assert accepted_record["integration_status"] == "accepted"
@@ -310,10 +413,8 @@ def run_security_lifecycle(ctx, tmp_path, *, installed=False):
         accepted_record["review_receipt"]["verifier_refs"]
         == accepted_record["validation"]["verifier_refs"]
     )
-    assert (
-        source not in proof["artifact_refs"]
-        and review["review_ref"] not in proof["artifact_refs"]
-    )
+    assert source in repair_context["evidence_refs"]
+    assert review["review_ref"] in repair_context["evidence_refs"]
     ProjectWorker(
         task_manager=manager,
         autonomy_store=store,
@@ -322,6 +423,7 @@ def run_security_lifecycle(ctx, tmp_path, *, installed=False):
     ).run_cycle(run.run_id)
     manager.close()
     assert calls == ["repair", "review"]
+    _git("worktree", "remove", "--force", str(repo), cwd=monitored)
     return {
         "source_report_ref": source,
         "initial_review_ref": review["review_ref"],
@@ -331,6 +433,9 @@ def run_security_lifecycle(ctx, tmp_path, *, installed=False):
         "patched_revision": patched,
         "proof_packet_ref": finished.run.proof_packet_ref,
         "accepted_child_record_ref": accepted_ref,
+        "application": application,
+        "security_repair": repair_context,
+        "security_repair_baseline": baseline,
     }
 
 

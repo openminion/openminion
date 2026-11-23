@@ -18,13 +18,14 @@ from unittest.mock import patch
 import pytest
 
 from openminion.base.redaction import redact_sensitive_text
+from openminion.cli.commands.project_launch import build_project_launch_request
 from openminion.cli.commands.autonomy_project import (
-    build_project_launch_request,
     configured_cron_store,
     launch_project,
     schedule_project_wake,
 )
 from openminion.cli.commands.daemon import daemon_start, daemon_stop
+from openminion.cli.commands.project_security import prepare_security_project
 from openminion.modules.artifact.config import (
     ArtifactCtlConfig,
     BlobStoreConfig,
@@ -46,9 +47,13 @@ from openminion.modules.task.constants import (
     DEFAULT_PROJECT_VERIFICATION_TIMEOUT_SECONDS,
 )
 from openminion.modules.task.project.models import ProjectCheckpoint
+from openminion.modules.task.project.verification import security_repair_file_identity
 from openminion.modules.task.project import project_workspace
 from openminion.modules.tool.diagnostics.events import structural_tool_results
-from openminion.tools.security.review_schemas import SecurityFindingReview
+from openminion.tools.security.review_schemas import (
+    SecurityFindingReview,
+    SecurityRepairSelection,
+)
 from openminion.tools.security.schemas import SecurityAuditReport
 from tests.e2e.cli.focus.harness import FocusProbe, FocusScenario
 from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
@@ -749,8 +754,20 @@ def _repair_usage(events: list[dict], agent_id: str) -> dict:
     }
 
 
-def _repair(probe: FocusProbe, ctl: ArtifactCtl, handoff: str, command: str) -> dict:
+def _repair(
+    probe: FocusProbe,
+    ctl: ArtifactCtl,
+    handoff: str,
+    command: str,
+    *,
+    security_selection: SecurityRepairSelection | None = None,
+) -> dict:
     store, manager = _project_owners(probe)
+    args = Namespace(
+        config=str(probe.config_path),
+        home_root=probe.environment()["OPENMINION_HOME"],
+        data_root=str(probe.data_root),
+    )
     try:
         request = build_project_launch_request(
             goal="Repair the independently accepted authorization finding",
@@ -767,7 +784,12 @@ def _repair(probe: FocusProbe, ctl: ArtifactCtl, handoff: str, command: str) -> 
             config_ref=str(probe.config_path),
             turn_target="focus",
         )
-        run = launch_project(request, store=store, manager=manager)
+        with patch.dict(os.environ, probe.environment()):
+            if security_selection is not None:
+                request = prepare_security_project(
+                    request, security_selection, args=args, manager=manager
+                )
+            run = launch_project(request, store=store, manager=manager, args=args)
         cron_store = configured_cron_store(
             Namespace(
                 config=str(probe.config_path),
@@ -784,6 +806,13 @@ def _repair(probe: FocusProbe, ctl: ArtifactCtl, handoff: str, command: str) -> 
             cron_store.close()
         initial = manager.get_checkpoint(run.task_id, run.checkpoint_id)
         checkpoint = ProjectCheckpoint.model_validate(initial)
+        if security_selection is not None:
+            assert request.security_repair is not None
+            repair_context = request.security_repair.model_dump(mode="json")
+            assert checkpoint.payload["security_repair"] == repair_context
+            baseline = checkpoint.payload["security_repair_baseline"]
+            assert baseline[0]["exit_code"] == 1
+            assert baseline[0]["command"] == shlex.split(command)
         assert (
             checkpoint.payload["repository_lifecycle"][
                 checkpoint.project_run.objective_ledger_ref
@@ -892,6 +921,13 @@ def _repair(probe: FocusProbe, ctl: ArtifactCtl, handoff: str, command: str) -> 
             ]["source_request"]
             == handoff
         )
+        if security_selection is not None:
+            assert saved.payload["security_repair"] == repair_context
+            assert saved.payload["security_repair_baseline"] == baseline
+            assert all(
+                security_repair_file_identity(probe.workdir / path) == digest
+                for path, digest in repair_context["protected_files"].items()
+            )
         accepted = json.loads(ctl.read_bytes(accepted_ref))
         assert accepted == child
         checkpoint_tasks = [
@@ -917,7 +953,7 @@ def _repair(probe: FocusProbe, ctl: ArtifactCtl, handoff: str, command: str) -> 
             marker="outcome: completed-verified",
         )
     return {
-        "launch": "operator-approved existing launch_project + schedule_project_wake APIs",
+        "launch": "explicit operator launch through existing project APIs",
         "run_id": run.run_id,
         "task_id": run.task_id,
         "project_run_id": checkpoint.project_run.project_run_id,
@@ -934,6 +970,11 @@ def _repair(probe: FocusProbe, ctl: ArtifactCtl, handoff: str, command: str) -> 
         "corrected_argument_attempts": corrected,
         "focus_status": status,
         "usage_by_role": usage,
+        **(
+            {"security_repair": repair_context, "security_repair_baseline": baseline}
+            if security_selection is not None
+            else {}
+        ),
     }
 
 

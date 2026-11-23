@@ -300,7 +300,15 @@ def _h_patch(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
         )
 
     workspace_root = _workspace_root_from_context(ctx)
-    command = ["patch", "--batch", "--forward", "--silent", str(resolved)]
+    command = [
+        "patch",
+        "--batch",
+        "--forward",
+        "--silent",
+        "--no-backup-if-mismatch",
+        "--reject-file=-",
+        str(resolved),
+    ]
     completed = subprocess.run(
         [*command, "--dry-run"],
         input=validated.patch,

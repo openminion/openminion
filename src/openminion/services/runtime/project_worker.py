@@ -60,6 +60,11 @@ from openminion.modules.task.project import (
 )
 from openminion.modules.task.project import policy as project_policy
 from openminion.modules.task.project import progress as project_progress
+from openminion.modules.task.project.models import SecurityRepairContext
+from openminion.modules.task.project.verification import (
+    check_security_repair_baseline,
+    check_security_repair_files,
+)
 from openminion.services.runtime.routine_context import ToolRegistryPreTurnContext
 from openminion.tools.github.interfaces import TOOL_GITHUB_FETCH_CHECKS
 
@@ -330,6 +335,18 @@ class ProjectWorker:
             )
             if inactive is not None:
                 return inactive
+            repair = (
+                SecurityRepairContext.model_validate(
+                    checkpoint.payload["security_repair"]
+                )
+                if checkpoint.payload.get("security_repair") is not None
+                else None
+            )
+            if repair is not None:
+                check_security_repair_baseline(checkpoint)
+                check_security_repair_files(
+                    repair, project_workspace(run.workspace_ref)
+                )
             return self._run_claimed_cycle(
                 run=run,
                 checkpoint=checkpoint,
@@ -611,6 +628,26 @@ class ProjectWorker:
             verification=(),
         )
 
+    def _verify_turn(
+        self,
+        checkpoint: ProjectCheckpoint,
+        turn_result: ProjectTurnResult,
+        *,
+        revision_required: bool,
+    ) -> tuple[TestEvidence, ...]:
+        if checkpoint.payload.get("security_repair") is not None:
+            check_security_repair_files(
+                SecurityRepairContext.model_validate(
+                    checkpoint.payload["security_repair"]
+                ),
+                project_workspace(checkpoint.project_run.workspace_ref),
+            )
+        confirmation_pending = (
+            turn_result.condition == AutonomyLoopConditionKind.WAITING
+            and bool(turn_result.pending_confirmation_command_id)
+        )
+        return () if revision_required or confirmation_pending else self._verify()
+
     def _evaluate_cycle(
         self,
         run: AutonomyRun,
@@ -658,12 +695,8 @@ class ProjectWorker:
         )
         self._log_cycle("project.cycle.started", run, project_run, cycle_id=cycle_id)
         turn_result = self._turn(request)
-        confirmation_pending = (
-            turn_result.condition == AutonomyLoopConditionKind.WAITING
-            and bool(turn_result.pending_confirmation_command_id)
-        )
-        verification = (
-            () if revision_required or confirmation_pending else self._verify()
+        verification = self._verify_turn(
+            checkpoint, turn_result, revision_required=revision_required
         )
         closure = evaluate_project_turn_verification(run, turn_result, verification)
         raw_replan_count = checkpoint.payload.get("replan_count", 0)

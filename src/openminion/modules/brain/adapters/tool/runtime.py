@@ -4,7 +4,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterator, Mapping, cast
+from typing import TYPE_CHECKING, Any, Iterator, Mapping
 
 from openminion.base.config import resolve_data_root, resolve_home_root
 from openminion.base.config.env import resolve_environment_config
@@ -39,7 +39,6 @@ from .command_metadata import (
     _extract_runtime_message_ref,
     _first_non_empty,
     _inject_runtime_message_ref,
-    _merge_orchestration_context_metadata,
     _orchestration_metadata_from_command,
     _runtime_permissions_from_command,
     _runtime_workspace_from_command,
@@ -62,13 +61,13 @@ from .policy_context import (
     _agent_id_from_policy,
     _apply_agent_command_policy,
     _apply_reactions_default_policy,
+    _prepare_tool_policy,
     _background_write_authorized,
     _build_policy_adapter,
     _permission_mode_origin,
     _coerce_policy,
     _is_confirm_required_code,
     _policy_context_metadata,
-    _tool_run_policy,
     _resolve_auto_confirm,
     _runtime_background_write_authorization_enabled,
     _runtime_env_from_policy,
@@ -81,7 +80,6 @@ from .results import (
     run_runtime_tool,
     run_tool_spec,
 )
-from .workspace_policy import workspace_context_policy
 
 if TYPE_CHECKING:
     from .execution_context import ToolExecutionContextBuilder
@@ -244,29 +242,6 @@ class ToolAdapter:
             ),
             exposure_service=getattr(self.registry, "exposure_service", None),
         )
-
-    def _project_execution_context(
-        self,
-        policy: Policy,
-        *,
-        session_id: str,
-        orchestration_metadata: dict[str, Any],
-        replay_confirmation_metadata: dict[str, str],
-    ) -> None:
-        policy_raw = getattr(policy, "raw", None)
-        if not isinstance(policy_raw, dict):
-            return
-        policy_raw["agent_id"] = self.agent_id
-        _merge_orchestration_context_metadata(policy_raw, orchestration_metadata)
-        context_metadata = cast(dict[str, Any], policy_raw["context_metadata"])
-        context_metadata.setdefault("agent_id", self.agent_id)
-        self._build_execution_context_builder().project_security_lab(
-            context_metadata, session_id
-        )
-        scan_context = _SECURITY_SCAN_CONTEXT.get()
-        if scan_context is not None:
-            context_metadata["security_scan_context"] = scan_context
-        context_metadata.update(replay_confirmation_metadata)
 
     def close(self) -> None:
         if self.secret_service is not None:
@@ -436,33 +411,33 @@ class ToolAdapter:
             spec = runtime_tool
             runtime_tool = None
         try:
-            policy_for_run = workspace_context_policy(
+            policy_for_run = _prepare_tool_policy(
                 self.policy,
-                args=args,
                 parent=self.workspace_root,
-                requested=requested_workspace,
                 active=_WORKSPACE_OVERRIDE.get(),
                 added_roots=_ADDED_WORKSPACE_ROOTS.get(),
+                task_manager=self.task_manager,
+                agent_id=self.agent_id,
+                builder=self._build_execution_context_builder(),
+                scan_context=_SECURITY_SCAN_CONTEXT.get(),
+                args=args,
+                requested_workspace=requested_workspace,
+                spec=spec,
+                runtime_message_ref=runtime_message_ref,
+                tool_name=tool_name,
+                session_id=session_id,
+                orchestration_metadata=orchestration_metadata,
+                replay_confirmation_metadata=replay_confirmation_metadata,
             )
-        except ValueError as exc:
+        except (ValueError, ToolRuntimeError) as exc:
             return _error_envelope(
                 status=BRAIN_STATE_ERROR,
-                summary="Invalid runtime workspace context",
-                code="INVALID_RUNTIME_CONTEXT",
+                summary="Tool policy blocked execution",
+                code=exc.code
+                if isinstance(exc, ToolRuntimeError)
+                else "INVALID_RUNTIME_CONTEXT",
                 message=str(exc),
             )
-        policy_for_run = _tool_run_policy(
-            policy_for_run,
-            runtime_message_ref=runtime_message_ref,
-            spec=spec if isinstance(spec, ToolSpec) else None,
-            tool_name=tool_name,
-        )
-        self._project_execution_context(
-            policy_for_run,
-            session_id=session_id,
-            orchestration_metadata=orchestration_metadata,
-            replay_confirmation_metadata=replay_confirmation_metadata,
-        )
         if runtime_tool is not None:
             return self._execute_openminion_runtime_tool(
                 tool=runtime_tool,
