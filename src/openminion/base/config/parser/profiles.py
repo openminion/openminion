@@ -74,7 +74,7 @@ def _parse_agent_profiles(value: Any) -> dict[str, AgentProfileConfig]:
         kwargs: dict[str, Any] = dict(
             name=agent_config.get("name", agent_id),
             role=agent_config.get("role", ""),
-            default_channel=agent_config.get("default_channel", ""),
+            default_channel=agent_config.get("default_channel") or "console",
             thinking=agent_config.get("thinking", ""),
             provider=agent_config.get("provider", ""),
             default_act_profile=agent_config.get("default_act_profile", ""),

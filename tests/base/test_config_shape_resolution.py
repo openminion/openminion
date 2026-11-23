@@ -266,3 +266,33 @@ def test_parser_rejects_runtime_providers_dict_with_pointer() -> None:
     message = str(excinfo.value)
     assert "runtime.providers" in message
     assert "config-shape-migration-2026.md" in message
+
+
+def test_agent_profile_defaults_channel_to_console_when_omitted() -> None:
+    assert AgentProfileConfig().default_channel == "console"
+
+    omitted = OpenMinionConfig.from_dict(
+        {"agents": {"openminion": {"provider": "echo"}}}
+    )
+    assert omitted.agents["openminion"].default_channel == "console"
+
+    explicit = OpenMinionConfig.from_dict(
+        {"agents": {"openminion": {"provider": "echo", "default_channel": "cli"}}}
+    )
+    assert explicit.agents["openminion"].default_channel == "cli"
+
+
+def test_programmatic_from_config_runs_turn_without_explicit_default_channel(
+    tmp_path,
+) -> None:
+    from openminion import APIRuntime, Agent
+
+    cfg = OpenMinionConfig.from_dict({"agents": {"openminion": {"provider": "echo"}}})
+    runtime = APIRuntime.from_config(config=cfg, home_root=tmp_path, data_root=tmp_path)
+    try:
+        result = Agent(name="openminion", instructions="hi", runtime=runtime).run(
+            "hello"
+        )
+        assert "hello" in result.text.lower()
+    finally:
+        runtime.close()
