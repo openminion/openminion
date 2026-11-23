@@ -119,3 +119,419 @@ def test_sdk_allowlist_cannot_expand_delegated_scope(requested, expected):
         )
         == expected
     )
+
+
+@pytest.fixture
+def repair_runtime(tmp_path):
+    import subprocess
+    import sys
+
+    from openminion.modules.task import (
+        TaskManager,
+        build_autonomy_run,
+        build_project_run_projection,
+        save_project_run_checkpoint,
+    )
+    from openminion.modules.task.project.checkpoints import (
+        initial_repository_lifecycle_payload,
+    )
+    from openminion.modules.task.project.models import SecurityRepairContext
+    from openminion.modules.task.project.verification import (
+        run_project_verification_commands,
+        security_repair_file_identity,
+    )
+    from tests.artifact.utils import artifact_ctl
+
+    repository = tmp_path / "candidate"
+    repository.mkdir()
+    (repository / "app.py").write_text("VALUE = 0\n")
+    (repository / "verify.py").write_text("from app import VALUE\nassert VALUE == 1\n")
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(["git", "add", "."], cwd=repository, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "seed",
+        ],
+        cwd=repository,
+        check=True,
+    )
+    revision = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=repository, text=True
+    ).strip()
+    manager = TaskManager.for_lifecycle_db(db_path=tmp_path / "tasks.db")
+    run = build_autonomy_run(
+        goal_text="Repair selected finding",
+        goal_id="goal",
+        session_id="parent-session",
+        workspace_ref=f"local:{repository}",
+        max_iterations=2,
+        verification_commands=(f"{sys.executable} -B verify.py",),
+    ).model_copy(update={"task_id": "repair-task"})
+    manager.create_task(
+        session_id=run.session_id,
+        mode_name="project",
+        goal=run.goal_text,
+        agent_id="parent",
+        task_id=run.task_id,
+    )
+    project = build_project_run_projection(
+        run,
+        objective_ledger_ref="objective",
+        evidence_ledger_ref="evidence",
+        resume_packet_ref="resume",
+        operator_decision_log_ref="decisions",
+        capability_plan_ref="capabilities",
+        metrics_summary_ref="metrics",
+    )
+    repair = SecurityRepairContext(
+        source_task_id="scan-task",
+        source_job_id="scan-job",
+        source_run_id="scan-run",
+        report_ref="artifact://report",
+        review_ref="artifact://review",
+        finding_id="finding",
+        source_root=str(tmp_path / "monitored"),
+        base_revision=revision,
+        config_fingerprint="scan-config",
+        repository=str(repository),
+        write_paths=("app.py",),
+        protected_files={
+            "verify.py": security_repair_file_identity(repository / "verify.py")
+        },
+        evidence_refs=(),
+        remediation_objective="VALUE must be 1",
+        verification_criteria=("VALUE == 1",),
+    )
+    baseline = run_project_verification_commands(
+        run.execution_selectors.verification_commands, workspace=repository
+    )
+    payload = initial_repository_lifecycle_payload(
+        run,
+        project,
+        launch_approved=True,
+        verification_commands=run.execution_selectors.verification_commands,
+    )
+    payload.update(
+        security_repair=repair.model_dump(mode="json"),
+        security_repair_baseline=[item.model_dump(mode="json") for item in baseline],
+    )
+    checkpoint = save_project_run_checkpoint(
+        manager, project, checkpoint_id="repair-checkpoint", payload=payload
+    )
+    with artifact_ctl(tmp_path) as artifacts:
+        adapter = ToolAdapter(
+            workspace_root=repository,
+            task_manager=manager,
+            artifactctl=artifacts,
+            agent_id="parent",
+        )
+        yield SimpleNamespace(
+            adapter=adapter,
+            manager=manager,
+            repository=repository,
+            checkpoint=checkpoint,
+            artifacts=artifacts,
+            context=repair,
+        )
+    manager.close()
+
+
+@pytest.mark.parametrize("replay", [False, True])
+@pytest.mark.parametrize(
+    "tool,args",
+    [
+        ("file.write", {"path": "verify.py", "content": "pass\n"}),
+        ("file.write", {"path": "app.py", "content": "VALUE = 1\n"}),
+        (
+            "code.patch",
+            {"path": "app.py", "patch": "@@ -1 +1 @@\n-VALUE = 0\n+VALUE = 1\n"},
+        ),
+        ("code.patch", {"path": "verify.py", "patch": "@@ -1 +1 @@\n-x\n+y\n"}),
+        ("exec.run", {"command": "touch forbidden"}),
+        ("git.commit", {"message": "unapproved"}),
+        (
+            "task.delegate",
+            {"mode": "async", "agent_id": "child", "instruction": "escape"},
+        ),
+        (
+            "task.delegate",
+            {"mode": "sync", "agent_id": "child", "instruction": "escape"},
+        ),
+    ],
+)
+def test_security_repair_dispatch_restricts_bypass_and_replay(
+    repair_runtime, replay, tool, args
+):
+    fixture = repair_runtime
+    original = (fixture.repository / "verify.py").read_bytes()
+    inputs = {"permission_mode": "bypass"}
+    if replay:
+        inputs.update(
+            confirmation_grant_id="approved-call", confirmation_source="policy_replay"
+        )
+    result = fixture.adapter.execute(
+        command={
+            "tool_name": tool,
+            "args": args,
+            "inputs": inputs,
+            "meta": {"orchestration": {"project_task_id": "repair-task"}},
+        },
+        session_id="parent-session",
+        trace_id="repair-turn",
+    )
+    assert result["error"]["code"] == "POLICY_DENIED", result
+    assert (fixture.repository / "verify.py").read_bytes() == original
+    assert not (fixture.repository / "forbidden").exists()
+
+
+def test_security_repair_allowed_tools_are_registered(repair_runtime):
+    from openminion.modules.brain.adapters.tool.policy_context import (
+        _SECURITY_REPAIR_TOOLS,
+    )
+
+    for name in _SECURITY_REPAIR_TOOLS:
+        assert repair_runtime.adapter.registry.get(name).name == name
+
+
+@pytest.mark.parametrize(
+    "tool,args", [("file.read", {"path": "app.py"}), ("git.status", {})]
+)
+def test_security_repair_policy_is_local_to_run_and_preserves_original_denials(
+    repair_runtime,
+    tool,
+    args,
+):
+    fixture = repair_runtime
+    adapter = fixture.adapter
+    original_paths = list(adapter.policy.raw["paths"]["write_allow"])
+    command = {
+        "tool_name": tool,
+        "args": args,
+        "inputs": {"permission_mode": "bypass"},
+        "meta": {"orchestration": {"project_task_id": "repair-task"}},
+    }
+    result = adapter.execute(
+        command=command, session_id="parent-session", trace_id="repair-turn"
+    )
+    assert result["status"] == "success", result
+    assert adapter.policy.raw["paths"]["write_allow"] == original_paths
+    assert "security_repair" not in adapter.policy.raw["context_metadata"]
+    adapter.policy.raw["paths"]["deny"].append(str(fixture.repository / "app.py"))
+    result = adapter.execute(
+        command=command, session_id="parent-session", trace_id="denied-turn"
+    )
+    assert result["error"]["code"] == "POLICY_DENIED"
+
+
+def test_security_repair_child_transport_enforces_canonical_lease(
+    repair_runtime, tmp_path
+):
+    import json
+
+    from openminion.modules.brain.adapters.a2a.runtime import A2actlAdapter
+    from openminion.modules.brain.schemas import BudgetCounters, WorkingState
+    from openminion.modules.brain.tools.executor.dispatch import (
+        _inject_runtime_tool_metadata,
+    )
+    from openminion.modules.tool.runtime.delegation import A2aRuntimeDelegateAdapter
+    from openminion.services.brain.post_execution.context import (
+        _attach_delegation_resume_context,
+    )
+
+    fixture = repair_runtime
+    results = []
+    received_binding = []
+    candidate_record = {}
+
+    class Runtime:
+        def list_registered_agents(self):
+            return ["child", "reviewer"]
+
+        def run_turn(self, *, payload, **_kwargs):
+            workspace = Path(payload["inbound_metadata"]["workspace_root"])
+            child = ToolAdapter(
+                workspace_root=workspace,
+                task_manager=fixture.manager,
+                artifactctl=fixture.artifacts,
+                agent_id=payload["agent_id"],
+            )
+            inline = {}
+            _attach_delegation_resume_context(
+                state_inline=inline, inbound_metadata=payload["inbound_metadata"]
+            )
+            state = WorkingState(
+                session_id=payload["session_id"],
+                agent_id=payload["agent_id"],
+                budgets_remaining=BudgetCounters(
+                    ticks=5, tool_calls=5, a2a_calls=1, tokens=1000, time_ms=10000
+                ),
+            )
+            state.module_state = inline["module_state"]
+            received_binding.append(state.module_state["security_repair_binding"])
+            if payload["agent_id"] == "reviewer":
+                child.policy.raw["paths"]["write_allow"] = []
+                command = {
+                    "tool_name": "file.read",
+                    "args": {"path": "verify.py"},
+                    "inputs": {"permission_mode": "bypass"},
+                }
+                _inject_runtime_tool_metadata(command, state=state, lineage={})
+                read = child.execute(
+                    command=command,
+                    session_id=payload["session_id"],
+                    trace_id="review-read",
+                )
+                assert read["status"] == "success", read
+                command.update(
+                    tool_name="file.write",
+                    args={"path": "app.py", "content": "VALUE = 99\n"},
+                )
+                denied = child.execute(
+                    command=command,
+                    session_id=payload["session_id"],
+                    trace_id="review-write",
+                )
+                assert denied["error"]["code"] == "POLICY_DENIED", denied
+                return {
+                    "body": "review passed",
+                    "metadata": {
+                        "brain_status": "done",
+                        "delegation_result_summary": {
+                            "summary": "review passed",
+                            "status": "complete",
+                            "review": {
+                                "target_digest": candidate_record["target_digest"],
+                                "verifier_refs": candidate_record["validation"][
+                                    "verifier_refs"
+                                ],
+                                "passed": True,
+                                "findings": [],
+                            },
+                        },
+                    },
+                }
+            for tool, args in [
+                ("exec.run", {"command": "touch forbidden"}),
+                (
+                    "task.delegate",
+                    {
+                        "mode": "sync",
+                        "code_bearing": True,
+                        "agent_id": "child",
+                        "instruction": "escape",
+                    },
+                ),
+                ("file.write", {"path": "verify.py", "content": "pass\n"}),
+                ("file.write", {"path": "app.py", "content": "VALUE = 1\n"}),
+                (
+                    "code.patch",
+                    {
+                        "path": "app.py",
+                        "patch": "@@ -1 +1 @@\n-VALUE = 0\n+VALUE = 1\n",
+                    },
+                ),
+                ("file.write", {"path": "app.py", "content": "VALUE = 1\n"}),
+            ]:
+                command = {
+                    "tool_name": tool,
+                    "args": args,
+                    "inputs": {"permission_mode": "bypass"},
+                }
+                _inject_runtime_tool_metadata(command, state=state, lineage={})
+                results.append(
+                    child.execute(
+                        command=command,
+                        session_id=payload["session_id"],
+                        trace_id="child-turn",
+                    )
+                )
+            assert all(
+                item["error"]["code"] == "POLICY_DENIED" for item in results[:3]
+            ), results
+            assert results[3]["status"] == "success", results[3]
+            forged = json.loads(received_binding[0])
+            forged["binding_id"] = "not-the-active-lease"
+            result = child.execute(
+                command={
+                    "tool_name": "file.write",
+                    "args": {"path": "app.py", "content": "VALUE = 2\n"},
+                    "inputs": {"permission_mode": "bypass"},
+                    "meta": {
+                        "orchestration": {"security_repair_binding": json.dumps(forged)}
+                    },
+                },
+                session_id=payload["session_id"],
+                trace_id="forged-turn",
+            )
+            assert result["error"]["code"] == "POLICY_DENIED", result
+            return {"body": "implemented", "metadata": {"brain_status": "done"}}
+
+    a2a = A2actlAdapter(
+        home_root=tmp_path, agent_id="parent", runtime_resolver=lambda: Runtime()
+    )
+    fixture.adapter.a2a_delegate_api = A2aRuntimeDelegateAdapter(
+        a2a_call=a2a.call, parent_agent_id="parent"
+    )
+    fixture.adapter.agent_query = lambda: [
+        {"agent_id": "child"},
+        {"agent_id": "reviewer"},
+    ]
+    try:
+        result = fixture.adapter.execute(
+            command={
+                "tool_name": "task.delegate",
+                "args": {
+                    "mode": "sync",
+                    "code_bearing": True,
+                    "agent_id": "child",
+                    "instruction": "Set VALUE to 1",
+                    "timeout_seconds": 30,
+                },
+                "inputs": {"permission_mode": "bypass"},
+                "meta": {"orchestration": {"project_task_id": "repair-task"}},
+            },
+            session_id="parent-session",
+            trace_id="parent-turn",
+        )
+        assert result["status"] == "success", result
+        assert (fixture.repository / "app.py").read_text() == "VALUE = 0\n"
+        from openminion.modules.brain.execution.worktree_children import (
+            load_child_worktree_record,
+        )
+
+        artifact = result["outputs"]["child_artifact"]
+        candidate_record.update(
+            load_child_worktree_record(fixture.artifacts, artifact["record_alias"])
+        )
+        reviewed = fixture.adapter.execute(
+            command={
+                "tool_name": "task.delegate",
+                "args": {
+                    "mode": "review",
+                    "agent_id": "reviewer",
+                    "instruction": "Review selected repair",
+                    "child_artifact": artifact,
+                    "review_criteria": ["VALUE == 1"],
+                },
+                "inputs": {"permission_mode": "bypass"},
+                "meta": {"orchestration": {"project_task_id": "repair-task"}},
+            },
+            session_id="parent-session",
+            trace_id="review-turn",
+        )
+        assert reviewed["status"] == "success", reviewed
+        assert reviewed["outputs"]["status"] == "passed", reviewed
+        assert received_binding
+        assert (
+            "security_repair_child"
+            not in fixture.manager.get_task("repair-task").metadata
+        )
+    finally:
+        a2a.close()

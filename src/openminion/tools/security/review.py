@@ -1,7 +1,9 @@
 """Publish independent decisions over immutable source-security reports."""
 
 import uuid
-from typing import Any, cast
+from datetime import UTC, datetime
+from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
 
@@ -12,6 +14,9 @@ from openminion.modules.artifact.errors import ArtifactCtlError
 from openminion.modules.artifact.models import ArtifactMeta
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool import RuntimeContext
+from openminion.modules.task import TaskLifecycleRecord, TaskLifecycleState, TaskManager
+from openminion.modules.task.project.models import SecurityRepairContext
+from openminion.modules.task.project.verification import security_repair_file_identity
 
 from .interfaces import TOOL_SECURITY_PUBLISH_REPORT, TOOL_SECURITY_REVIEW_REPORT
 from .schemas import (
@@ -24,7 +29,187 @@ from .review_schemas import (
     SecurityFollowUpReviewArgs,
     SecurityInitialReviewArgs,
     SecurityRemediationFinding,
+    SecurityRepairSelection,
 )
+
+if TYPE_CHECKING:
+    from .schedule import SourceScanAdmission
+
+
+def _repair_schedule(
+    selection: SecurityRepairSelection, manager: TaskManager, env: Any
+) -> tuple["SourceScanAdmission", str, dict[str, Any]]:
+    from .schedule import (
+        SourceScanAdmission,
+        admission_fingerprint,
+        configured_admission,
+    )
+
+    record = manager.get_task(selection.source_task_id)
+    if record is None or not record.cron_job_id:
+        raise ToolRuntimeError(
+            "POLICY_DENIED", "repair requires a scheduled source task"
+        )
+    job = manager.get_scheduled_job(record.cron_job_id)
+    if job is None or job["enabled"] or record.state != TaskLifecycleState.PAUSED:
+        raise ToolRuntimeError("POLICY_DENIED", "source schedule must be paused")
+    configured = configured_admission(agent_id=job["agent_id"], env=env)
+    admitted = SourceScanAdmission.model_validate(job["payload"].get("security_scan"))
+    if (
+        configured != admitted
+        or admitted.checks != ["code"]
+        or admitted.agent_id != record.agent_id
+        or record.metadata.get("security_scan_admission")
+        != admission_fingerprint(admitted)
+        or admitted.expires_at <= datetime.now(UTC)
+    ):
+        raise ToolRuntimeError(
+            "POLICY_DENIED", "source scan admission changed or expired"
+        )
+    if manager.list_scheduled_runs(job_id=job["job_id"], states=["running"], limit=1):
+        raise ToolRuntimeError("POLICY_DENIED", "source scan is still running")
+    state = record.metadata.get("security_scan") or {}
+    attempt = state.get("last_attempt") or {}
+    if (
+        state.get("status") != "completed"
+        or attempt.get("status") != "completed"
+        or not attempt.get("run_id")
+        or attempt.get("run_id") != state.get("completed_run_id")
+        or attempt.get("job_id") != job["job_id"]
+        or attempt.get("report_ref") != state.get("report_ref")
+    ):
+        raise ToolRuntimeError(
+            "POLICY_DENIED", "repair requires the latest complete scan"
+        )
+    return admitted, job["job_id"], attempt
+
+
+def _repair_worktree(
+    root: Path, repository: Path, base: str, paths: tuple[str, ...]
+) -> dict[str, str]:
+    from .plugin import _git_output
+    from .schedule import clean_revision
+
+    if (
+        repository == root
+        or root in repository.parents
+        or clean_revision(repository) != base
+        or _git_output(
+            repository, "rev-parse", "--path-format=absolute", "--git-common-dir"
+        )
+        != _git_output(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    ):
+        raise ToolRuntimeError(
+            "POLICY_DENIED", "repair requires a separate worktree at the reviewed base"
+        )
+    tracked = set(_git_output(repository, "ls-files", "-z").split("\0")) - {""}
+    if len(paths) != len(set(paths)):
+        raise ToolRuntimeError("INVALID_ARGUMENT", "repair write paths must be unique")
+    for name in paths:
+        path = PurePosixPath(name)
+        target = repository / name
+        if (
+            path.is_absolute()
+            or ".." in path.parts
+            or str(path) != name
+            or any(char in name for char in "*?[]\\")
+            or name not in tracked
+            or not target.is_file()
+            or target.resolve() != target
+        ):
+            raise ToolRuntimeError(
+                "POLICY_DENIED", "repair write paths must name exact tracked files"
+            )
+    return {
+        name: security_repair_file_identity(repository / name)
+        for name in sorted(tracked - set(paths))
+    }
+
+
+def validate_security_repair(
+    selection: SecurityRepairSelection,
+    *,
+    manager: TaskManager,
+    ctl: ArtifactCtl,
+    repository: Path,
+    agent_id: str,
+    env: Any,
+) -> SecurityRepairContext:
+    from .schedule import clean_revision, report_dependencies
+
+    if not agent_id:
+        raise ToolRuntimeError(
+            "POLICY_DENIED", "repair requires an operator-selected agent"
+        )
+    admission, job_id, attempt = _repair_schedule(selection, manager, env)
+    content, meta = _read_review_artifact(
+        ctl, selection.review_ref, TOOL_SECURITY_REVIEW_REPORT
+    )
+    review = SecurityFindingReview.model_validate_json(content)
+    report, author = _read_source_report(
+        ctl, review.source_report_ref, review.reviewer_agent_id
+    )
+    root = admission.root.resolve()
+    base = clean_revision(root)
+    if (
+        review.review_kind != "initial"
+        or (
+            review.reviewer_agent_id,
+            review.reviewer_session_id,
+            review.reviewer_trace_id,
+        )
+        != (meta.agent_id, meta.session_id, meta.trace_id)
+        or review.report_author_agent_id != author.agent_id
+        or author.agent_id != admission.agent_id
+        or review.source_report_ref != attempt.get("report_ref")
+        or review.scope != report.scope
+        or review.assessment_id != report.assessment_id
+        or report.scope.target_revision != base
+        or attempt.get("revision") != base
+        or (root / report.scope.target).resolve() != root
+        or report.scope.requested_checks != admission.checks
+    ):
+        raise ToolRuntimeError(
+            "POLICY_DENIED", "review does not match the current scheduled source"
+        )
+    findings = _candidate_findings(report)
+    _exact_review_ids(
+        [item.finding_id for item in review.finding_reviews], set(findings)
+    )
+    accepted = _accepted_brief(findings, review.finding_reviews)
+    finding = next(
+        (item for item in accepted if item.finding_id == selection.finding_id), None
+    )
+    if (
+        finding is None
+        or not finding.locations
+        or not {item.path for item in finding.locations} <= set(selection.write_paths)
+    ):
+        raise ToolRuntimeError(
+            "POLICY_DENIED", "repair scope must cover one accepted finding"
+        )
+    repository = repository.resolve()
+    protected = _repair_worktree(root, repository, base, selection.write_paths)
+    _, refs = report_dependencies(
+        ctl, review.source_report_ref, agent_id=admission.agent_id
+    )
+    return SecurityRepairContext(
+        source_task_id=selection.source_task_id,
+        source_job_id=job_id,
+        source_run_id=attempt["run_id"],
+        report_ref=review.source_report_ref,
+        review_ref=selection.review_ref,
+        finding_id=selection.finding_id,
+        source_root=str(root),
+        base_revision=base,
+        config_fingerprint=admission.config_fingerprint,
+        repository=str(repository),
+        write_paths=selection.write_paths,
+        protected_files=protected,
+        evidence_refs=tuple(dict.fromkeys([selection.review_ref, *refs])),
+        remediation_objective=finding.remediation_objective,
+        verification_criteria=tuple(finding.verification_criteria),
+    )
 
 
 def _read_review_artifact(
@@ -285,6 +470,70 @@ def _redact_review_prose(report: SecurityFindingReview) -> SecurityFindingReview
     return report
 
 
+def _follow_up_source(
+    args: SecurityFollowUpReviewArgs, ctx: RuntimeContext
+) -> TaskLifecycleRecord:
+    record = (
+        ctx.task_manager.get_task(args.source_task_id)
+        if ctx.task_manager is not None
+        else None
+    )
+    if record is None or not record.cron_job_id:
+        raise ToolRuntimeError("POLICY_DENIED", "follow-up source task is unavailable")
+    _validate_follow_up_link(record.metadata, args)
+    return record
+
+
+def _validate_follow_up_link(
+    metadata: dict[str, Any], args: SecurityFollowUpReviewArgs
+) -> None:
+    repair = metadata.get("security_repair") or {}
+    scan = metadata.get("security_scan") or {}
+    attempt = scan.get("last_attempt") or {}
+    if (
+        repair.get("review_ref") != args.prior_review_ref
+        or scan.get("status") != "completed"
+        or attempt.get("status") != "completed"
+        or attempt.get("run_id") != scan.get("completed_run_id")
+        or attempt.get("report_ref") != args.rescan_report_ref
+        or repair.get("finding_id")
+        not in {item.finding_id for item in args.closure_reviews}
+    ):
+        raise ToolRuntimeError(
+            "POLICY_DENIED",
+            "follow-up does not match the source repair and latest rescan",
+        )
+
+
+def _link_follow_up(
+    args: SecurityFollowUpReviewArgs, ctx: RuntimeContext, ref: str
+) -> None:
+    record = _follow_up_source(args, ctx)
+
+    def link(metadata: dict[str, Any]) -> dict[str, Any]:
+        _validate_follow_up_link(metadata, args)
+        repair = metadata["security_repair"]
+        outcome = next(
+            item.outcome
+            for item in args.closure_reviews
+            if item.finding_id == repair["finding_id"]
+        )
+        return {
+            **metadata,
+            "security_repair": {
+                **repair,
+                "follow_up_review_ref": ref,
+                "rescan_report_ref": args.rescan_report_ref,
+                "finding_outcome": outcome,
+            },
+        }
+
+    ctx.task_manager.mutate_task_metadata(task_id=record.task_id, mutate=link)
+    ctx.artifactctl.ref_add(
+        "collection", "security-schedule:" + record.cron_job_id, ref
+    )
+
+
 def publish_security_review(
     args: SecurityInitialReviewArgs | SecurityFollowUpReviewArgs, *, ctx: RuntimeContext
 ) -> dict[str, Any]:
@@ -301,6 +550,8 @@ def publish_security_review(
         raise ToolRuntimeError(
             "INTERNAL_ERROR", "security review requires canonical artifact storage"
         )
+    if isinstance(args, SecurityFollowUpReviewArgs) and args.source_task_id is not None:
+        _follow_up_source(args, ctx)
     try:
         values = (
             _initial_review(args, ctx.artifactctl, ctx.agent_id)
@@ -335,6 +586,8 @@ def publish_security_review(
             "INTERNAL_ERROR",
             "security review publication requires a canonical artifact",
         )
+    if isinstance(args, SecurityFollowUpReviewArgs) and args.source_task_id is not None:
+        _link_follow_up(args, ctx, artifact.canonical_ref)
     return {
         "ok": True,
         "review_id": report.review_id,

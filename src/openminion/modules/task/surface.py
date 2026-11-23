@@ -439,7 +439,8 @@ def _security_scan_payload(
     maximum = admission.get("max_runs")
     admitted = state.get("admitted_runs")
     completed = state.get("completed_run_id")
-    attempt = state.get("last_attempt")
+    attempt = state.get("last_attempt") or {}
+    repair = metadata.get("security_repair")
     current_attempt = (
         isinstance(attempt, Mapping)
         and completed is not None
@@ -472,6 +473,31 @@ def _security_scan_payload(
         "last_admitted_run_id": state.get("last_admitted_run_id"),
         "status": state.get("status"),
         "completed_run_id": completed,
+        "repair_handoff": {
+            "report_ref": attempt.get("report_ref"),
+            "review_tool": "security.review_report",
+        }
+        if current_attempt
+        and attempt.get("status") == "completed"
+        and state.get("status") == "completed"
+        and state.get("candidate_count", 0) > 0
+        else None,
+        "repair_project": {
+            key: repair.get(key)
+            for key in (
+                "run_id",
+                "task_id",
+                "checkpoint_id",
+                "review_ref",
+                "finding_id",
+                "follow_up_review_ref",
+                "rescan_report_ref",
+                "finding_outcome",
+            )
+            if key in repair
+        }
+        if isinstance(repair, Mapping)
+        else None,
         "last_attempt": {
             key: cast(Mapping[str, Any], attempt).get(key)
             for key in (*evidence_keys, "status", "reason_code", "evidence_refs")

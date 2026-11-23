@@ -7,9 +7,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from openminion.modules.storage.runtime.sqlite import resolve_database_path
+from openminion.cli.commands.project_launch import parse_focus_project_launch
 from openminion.cli.commands.autonomy_project import (
     launch_project,
-    parse_focus_project_launch,
     schedule_project_wake,
 )
 from openminion.cli.commands.autonomy import _cancel

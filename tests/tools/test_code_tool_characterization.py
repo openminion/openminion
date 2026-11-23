@@ -105,6 +105,25 @@ def test_patch_applies_single_hunk(tmp_path: Path) -> None:
     assert target.read_text(encoding="utf-8") == "one\nthree\n"
 
 
+def test_patch_offset_hunk_keeps_writes_to_target(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+    target = ctx.workspace / "alpha.py"
+    target.write_text("header\none\ntwo\n", encoding="utf-8")
+    ctx.policy.raw["paths"]["write_allow"] = [str(target)]
+
+    result = _h_patch(
+        {
+            "path": "alpha.py",
+            "patch": "--- alpha.py\n+++ alpha.py\n@@ -1,2 +1,2 @@\n one\n-two\n+three\n",
+        },
+        ctx,
+    )
+
+    assert result["ok"] is True
+    assert target.read_text() == "header\none\nthree\n"
+    assert list(ctx.workspace.iterdir()) == [target]
+
+
 def test_patch_accepts_diff_alias_and_ignores_workspace_hint(tmp_path: Path) -> None:
     ctx = _ctx(tmp_path)
     target = ctx.workspace / "alpha.py"
@@ -159,6 +178,8 @@ def test_patch_rejects_non_applicable_patch(tmp_path: Path) -> None:
 
     assert result["ok"] is False
     assert result["error"]["code"] == "PATCH_FAILED"
+    assert list(ctx.workspace.iterdir()) == [target]
+    assert target.read_text() == "one\ntwo\n"
 
 
 def test_grep_returns_structured_matches(tmp_path: Path) -> None:

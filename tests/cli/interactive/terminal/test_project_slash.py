@@ -135,3 +135,67 @@ def test_project_start_always_requires_one_time_approval(
     assert launch_calls == (["run-1"] if approved else [])
     assert deny_calls == ([] if approved else ["run-1"])
     assert ("project launched" if approved else "project denied") in output.getvalue()
+
+
+def test_project_start_rejects_inputs_changed_during_approval() -> None:
+    output = io.StringIO()
+    request = SimpleNamespace(run=SimpleNamespace(run_id="run-1"), path="app.py")
+    launched = []
+
+    async def approve(*args):
+        request.path = "verify.py"
+        return True
+
+    runtime = SimpleNamespace(
+        prepare_project_command=lambda command: request,
+        project_launch_approval_args=lambda request: {"write_paths": [request.path]},
+        launch_prepared_project=lambda request: launched.append(request),
+    )
+    asyncio.run(
+        run_slash_project(
+            "/project start --goal repair",
+            runtime=runtime,
+            console=Console(file=output, force_terminal=False),
+            approval_callback=approve,
+        )
+    )
+    assert not launched
+    assert "launch inputs changed during approval" in output.getvalue()
+
+
+@pytest.mark.parametrize("selector", ["agent_id", "config_ref"])
+def test_project_start_rejects_selector_change_during_approval(tmp_path, selector):
+    from openminion.cli.commands.project_launch import build_project_launch_request
+    from openminion.cli.interactive.runtime.project import RuntimeProjectMixin
+
+    request = build_project_launch_request(
+        goal="repair",
+        session_id="session",
+        agent_id="repairer",
+        workspace_boundary=tmp_path,
+        repository=tmp_path,
+        require_git_repository=False,
+        config_ref="approved-config",
+    )
+    output = io.StringIO()
+    launched = []
+
+    async def approve(*args):
+        setattr(request.run.execution_selectors, selector, "changed")
+        return True
+
+    runtime = SimpleNamespace(
+        prepare_project_command=lambda command: request,
+        project_launch_approval_args=RuntimeProjectMixin.project_launch_approval_args,
+        launch_prepared_project=lambda request: launched.append(request),
+    )
+    asyncio.run(
+        run_slash_project(
+            "/project start --goal repair",
+            runtime=runtime,
+            console=Console(file=output, force_terminal=False),
+            approval_callback=approve,
+        )
+    )
+    assert not launched
+    assert "launch inputs changed during approval" in output.getvalue()

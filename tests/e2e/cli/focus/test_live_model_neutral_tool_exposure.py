@@ -13,10 +13,8 @@ import uuid
 import pytest
 
 from openminion.api.runtime import APIRuntime
-from openminion.cli.commands.autonomy_project import (
-    build_project_launch_request,
-    launch_project,
-)
+from openminion.cli.commands.project_launch import build_project_launch_request
+from openminion.cli.commands.autonomy_project import launch_project
 from openminion.modules.brain.loop.strategies.coding.contracts import (
     CODING_INITIAL_TOOL_IDS,
     PROJECT_CODING_ALLOWED_TOOLS,

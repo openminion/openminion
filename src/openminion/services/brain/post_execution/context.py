@@ -334,6 +334,12 @@ def _attach_delegation_resume_context(
         ).split(",")
         if item.strip()
     ]
+    if "security_repair_binding" in inbound_metadata:
+        module_state["security_repair_binding"] = inbound_metadata[
+            "security_repair_binding"
+        ]
+    else:
+        module_state.pop("security_repair_binding", None)
     module_state["delegation"] = {
         "enabled": True,
         "parent_context": {

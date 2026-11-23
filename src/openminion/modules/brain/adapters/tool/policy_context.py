@@ -1,7 +1,8 @@
 import copy
+import json
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from openminion.modules.tool import (
     DEFAULT_POLICY,
@@ -17,6 +18,30 @@ from openminion.modules.tool.plugin_api import (
 from openminion.modules.tool.adapters import LocalPolicyAdapter
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_TASK_WATCH,
+    MODEL_GIT_STATUS,
+    MODEL_FILE_LIST_DIR,
+    MODEL_FILE_READ,
+    MODEL_FILE_READ_RANGE,
+    MODEL_FILE_FIND,
+    MODEL_FILE_SEARCH,
+    MODEL_FILE_WRITE,
+    MODEL_FILE_EDIT,
+    MODEL_CODE_PATCH,
+    MODEL_CODE_GREP,
+    MODEL_CODE_REPO_MAP,
+    MODEL_CODE_REPO_INDEX,
+    MODEL_CODE_SYMBOL_FIND,
+    MODEL_AGENT_LIST,
+    MODEL_AGENT_GET,
+    MODEL_PLAN_SET,
+    MODEL_PLAN_ADD,
+    MODEL_PLAN_UPDATE,
+    MODEL_PLAN_COMPLETE,
+    MODEL_PLAN_LIST,
+    MODEL_PLAN_CLEAR,
+    MODEL_TASK_SHOW,
+    MODEL_TASK_LIST,
+    MODEL_TASK_DELEGATE,
 )
 from openminion.modules.tool.contracts.schemas import Scope, TOOL_ERROR_CONFIRM_REQUIRED
 from openminion.modules.policy.models import build_policy_facts
@@ -25,9 +50,191 @@ from openminion.modules.brain.adapters.tool.permission_mode import (
 )
 from openminion.tools.exec.command_parser import is_read_only_exec_command
 from openminion.tools.exec.process import resolve_shell_family
+from openminion.modules.task.project.models import ProjectCheckpoint
+from openminion.modules.task.project.verification import check_security_repair_baseline
+from openminion.modules.task.project.models import SecurityRepairContext
+from openminion.modules.tool.errors import ToolRuntimeError
+
+from .workspace_policy import workspace_context_policy
+from .command_metadata import _merge_orchestration_context_metadata
+
+if TYPE_CHECKING:
+    from .execution_context import ToolExecutionContextBuilder
 
 _REACTIONS_SET_TOOL_NAME = "reactions.set"
 _REACTIONS_DEFAULT_POLICIES = frozenset({"allow", "deny", "confirm"})
+
+_SECURITY_REPAIR_TOOLS = frozenset(
+    {
+        MODEL_FILE_LIST_DIR,
+        MODEL_FILE_READ,
+        MODEL_FILE_READ_RANGE,
+        MODEL_FILE_FIND,
+        MODEL_FILE_SEARCH,
+        MODEL_FILE_WRITE,
+        MODEL_FILE_EDIT,
+        MODEL_CODE_PATCH,
+        MODEL_CODE_GREP,
+        MODEL_CODE_REPO_MAP,
+        MODEL_CODE_REPO_INDEX,
+        MODEL_CODE_SYMBOL_FIND,
+        MODEL_GIT_STATUS,
+        MODEL_AGENT_LIST,
+        MODEL_AGENT_GET,
+        MODEL_PLAN_SET,
+        MODEL_PLAN_ADD,
+        MODEL_PLAN_UPDATE,
+        MODEL_PLAN_COMPLETE,
+        MODEL_PLAN_LIST,
+        MODEL_PLAN_CLEAR,
+        MODEL_TASK_SHOW,
+        MODEL_TASK_LIST,
+        MODEL_TASK_DELEGATE,
+    }
+)
+
+
+def _prepare_tool_policy(
+    policy: Policy,
+    *,
+    parent: Path,
+    active: Path | None,
+    added_roots: tuple[Path, ...],
+    task_manager: Any,
+    agent_id: str,
+    builder: "ToolExecutionContextBuilder",
+    scan_context: str | None,
+    args: dict[str, Any],
+    requested_workspace: str,
+    spec: Any,
+    runtime_message_ref: Mapping[str, Any] | None,
+    tool_name: str,
+    session_id: str,
+    orchestration_metadata: dict[str, Any],
+    replay_confirmation_metadata: dict[str, str],
+) -> Policy:
+    policy = workspace_context_policy(
+        policy,
+        args=args,
+        parent=parent,
+        requested=requested_workspace,
+        active=active,
+        added_roots=added_roots,
+    )
+    policy = _tool_run_policy(
+        policy,
+        runtime_message_ref=runtime_message_ref,
+        spec=spec if isinstance(spec, ToolSpec) else None,
+        tool_name=tool_name,
+    )
+    policy.raw["agent_id"] = agent_id
+    _merge_orchestration_context_metadata(policy.raw, orchestration_metadata)
+    metadata = cast(dict[str, Any], policy.raw["context_metadata"])
+    metadata.setdefault("agent_id", agent_id)
+    builder.project_security_lab(metadata, session_id)
+    if scan_context is not None:
+        metadata["security_scan_context"] = scan_context
+    metadata.update(replay_confirmation_metadata)
+    workspace = Path(policy.raw.get("workspace_root") or parent).expanduser()
+    try:
+        return _apply_security_repair_policy(
+            policy,
+            task_manager=task_manager,
+            agent_id=agent_id,
+            workspace=workspace,
+            orchestration=orchestration_metadata,
+            tool_name=tool_name,
+            args=args,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ToolRuntimeError("POLICY_DENIED", str(exc)) from exc
+
+
+def _apply_security_repair_policy(
+    policy: Policy,
+    *,
+    task_manager: Any,
+    agent_id: str,
+    workspace: Path,
+    orchestration: Mapping[str, Any],
+    tool_name: str,
+    args: Mapping[str, Any],
+) -> Policy:
+    binding_raw = orchestration.get("security_repair_binding")
+    task_id = str(orchestration.get("project_task_id") or "")
+    binding = json.loads(binding_raw) if binding_raw else None
+    if binding is not None:
+        task_id = binding["task_id"]
+    if not task_id or task_manager is None:
+        if binding is not None:
+            raise ValueError("Security repair child has no project owner")
+        return policy
+    latest = task_manager.get_latest_checkpoint(task_id)
+    if latest is None or "security_repair" not in latest[1].get("payload", {}):
+        if binding is not None:
+            raise ValueError("Security repair child has no canonical repair context")
+        return policy
+    checkpoint = ProjectCheckpoint.model_validate(latest[1])
+    context = SecurityRepairContext.model_validate(
+        checkpoint.payload["security_repair"]
+    )
+    task = task_manager.get_task(task_id)
+    if binding is not None:
+        active = task.metadata.get("security_repair_child")
+        if (
+            not isinstance(active, dict)
+            or binding
+            != {
+                "task_id": task_id,
+                "binding_id": active["binding_id"],
+                "parent_agent_id": active["parent_agent_id"],
+                "target_agent_id": active["target_agent_id"],
+            }
+            or active["checkpoint_id"] != checkpoint.checkpoint_id
+            or active["target_agent_id"] != agent_id
+            or Path(active["workspace"]).resolve() != workspace.resolve()
+        ):
+            raise ValueError("Security repair child binding does not match its owner")
+    elif (
+        task.agent_id != agent_id
+        or workspace.resolve() != Path(context.repository).resolve()
+    ):
+        raise ValueError("Security repair project workspace or agent does not match")
+    check_security_repair_baseline(checkpoint)
+    if (binding is None or active["readonly"]) and tool_name in {
+        MODEL_FILE_WRITE,
+        MODEL_FILE_EDIT,
+        MODEL_CODE_PATCH,
+    }:
+        raise ToolRuntimeError(
+            "POLICY_DENIED",
+            "Security repair writes require a scoped implementation child",
+        )
+    if tool_name not in _SECURITY_REPAIR_TOOLS or (
+        tool_name == MODEL_TASK_DELEGATE
+        and (
+            binding is not None
+            or args.get("mode", "sync") not in {"sync", "review", "accept", "reject"}
+            or (
+                args.get("mode", "sync") == "sync"
+                and args.get("code_bearing") is not True
+            )
+        )
+    ):
+        raise ToolRuntimeError(
+            "POLICY_DENIED", "Tool is outside the approved security repair scope"
+        )
+    if binding is None or not active["readonly"]:
+        for path in context.write_paths:
+            policy.ensure_path_allowed(
+                str(Path(context.repository) / path), Path(context.repository), "write"
+            )
+    policy = Policy(raw=copy.deepcopy(policy.raw))
+    policy.raw["paths"]["write_allow"] = [
+        str(workspace / path) for path in context.write_paths
+    ]
+    policy.raw["context_metadata"]["security_repair"] = context.model_dump(mode="json")
+    return policy
 
 
 def _coerce_policy(policy: Any) -> Policy:

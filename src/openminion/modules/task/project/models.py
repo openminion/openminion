@@ -17,6 +17,24 @@ class _StrictProjectModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SecurityRepairContext(_StrictProjectModel):
+    source_task_id: str
+    source_job_id: str
+    source_run_id: str
+    report_ref: str
+    review_ref: str
+    finding_id: str
+    source_root: str
+    base_revision: str
+    config_fingerprint: str
+    repository: str
+    write_paths: tuple[str, ...]
+    protected_files: dict[str, str]
+    evidence_refs: tuple[str, ...]
+    remediation_objective: str
+    verification_criteria: tuple[str, ...]
+
+
 class ProjectVerificationState(StrEnum):
     NOT_STARTED = "not_started"
     IN_PROGRESS = "in_progress"

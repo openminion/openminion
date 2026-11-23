@@ -496,3 +496,48 @@ def test_security_researcher_telemetry_is_structural_even_with_local_content(
     assert "title" not in event.data
     assert "adaptive.finalization_status" not in event.data
     assert "private_body" not in str(event.data)
+
+
+def test_structural_security_usage_retains_counts_without_provider_content():
+    from openminion.modules.telemetry.trace.metadata import structural_tool_payload
+    from openminion.modules.telemetry.usage.coverage import coverage_from_session_events
+
+    payload = structural_tool_payload(
+        {
+            "structural_only": True,
+            "trace_id": "trace",
+            "llm_call_id": "physical-call",
+            "provider": "openai",
+            "model": "fixture-model",
+            "purpose": "review",
+            "usage": {
+                "input_tokens": 12,
+                "output_tokens": 4,
+                "raw_response": "secret-canary",
+                "cached_tokens": "secret-canary",
+            },
+            "response": "secret-canary",
+            "provider_calls_total": 1,
+            "provider_input_tokens": 12,
+            "provider_output_tokens": 4,
+            "provider_attempts": [
+                {
+                    "attempt": 1,
+                    "provider": "openai",
+                    "model": "fixture-model",
+                    "outcome": "ok",
+                    "raw_prompt": "secret-canary",
+                }
+            ],
+        }
+    )
+    assert "secret-canary" not in str(payload)
+    assert payload["usage"] == {"input_tokens": 12, "output_tokens": 4}
+    assert payload["provider_attempts"] == [
+        {"attempt": 1, "provider": "openai", "model": "fixture-model", "outcome": "ok"}
+    ]
+    coverage = coverage_from_session_events(
+        [{"event_type": "llm.call.completed", "payload": payload}]
+    )
+    assert coverage.input_tokens.reported == coverage.output_tokens.reported == 1
+    assert coverage.llm_call_id_present_events == 1

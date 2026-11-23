@@ -10,7 +10,7 @@ from openminion.modules.session.diagnostics.events import emit_session_operation
 from openminion.modules.policy.models import build_policy_facts
 
 if TYPE_CHECKING:
-    from openminion.cli.commands.autonomy_project import ProjectLaunchRequest
+    from openminion.cli.commands.project_launch import ProjectLaunchRequest
 
 ProjectApprovalCallback = Callable[
     [str, dict[str, Any], Any, dict[str, Any] | None], Awaitable[bool]
@@ -290,7 +290,7 @@ class RuntimeProjectMixin:
     def prepare_project_command(self, line: str) -> ProjectLaunchRequest:
         if not self.is_bound:
             raise RuntimeError("No active session for /project.")
-        from openminion.cli.commands.autonomy_project import parse_focus_project_launch
+        from openminion.cli.commands.project_launch import parse_focus_project_launch
 
         return parse_focus_project_launch(
             line,
@@ -298,6 +298,7 @@ class RuntimeProjectMixin:
             agent_id=self.agent_id,
             workspace_boundary=Path(self.working_dir),
             config_ref=str(self._rt.config_path),
+            security_args=_project_control_args(self._rt),
         )
 
     async def approve_project_handoff(
@@ -313,7 +314,7 @@ class RuntimeProjectMixin:
             or approval_callback is None
         ):
             return ""
-        from openminion.cli.commands.autonomy_project import (
+        from openminion.cli.commands.project_launch import (
             build_project_launch_request,
             resolve_project_repository,
         )
@@ -404,7 +405,18 @@ class RuntimeProjectMixin:
     ) -> dict[str, object]:
         run = request.run
         return {
+            **(
+                {
+                    "security_repair": request.security_repair.model_dump(
+                        mode="json", exclude={"protected_files", "evidence_refs"}
+                    )
+                }
+                if request.security_repair is not None
+                else {}
+            ),
             "run_id": run.run_id,
+            "agent_id": run.execution_selectors.agent_id,
+            "config_ref": run.execution_selectors.config_ref,
             "goal": run.goal_text,
             "success_criteria": list(request.success_criteria),
             "workspace_boundary": str(request.workspace_boundary),
@@ -434,11 +446,10 @@ class RuntimeProjectMixin:
 
     def launch_prepared_project(self, request: ProjectLaunchRequest) -> tuple[str, str]:
         from openminion.cli.commands.autonomy_project import (
-            configured_cron_store,
             ensure_project_daemon_ready,
             launch_project,
             persisted_verification_waiver,
-            schedule_project_wake,
+            schedule_unattended_project,
             verifier_preflight_error,
         )
         from openminion.modules.task import AutonomyRunStore, TaskManager
@@ -475,22 +486,26 @@ class RuntimeProjectMixin:
             except (OSError, RuntimeError, ValueError) as exc:
                 return "error", f"Project was not queued: {exc}"
 
-            run = launch_project(request, store=store, manager=manager)
-            cron_store = None
-            try:
-                cron_store = configured_cron_store(
-                    argparse.Namespace(
-                        config=str(self._rt.config_path),
-                        home_root=self._rt.home_root,
-                        data_root=self._rt.data_root,
-                    ),
-                    config_ref=run.execution_selectors.config_ref,
+            run = launch_project(
+                request,
+                store=store,
+                manager=manager,
+                args=_project_control_args(self._rt),
+            )
+            if run.status == AutonomyRunStatus.BLOCKED:
+                self._record_project_launch(
+                    request,
+                    event_type="project.launch_blocked",
+                    status="blocked",
+                    reason_code="security_baseline_invalid",
                 )
-                run = schedule_project_wake(
-                    cron_store=cron_store,
-                    store=store,
-                    manager=manager,
-                    run=run,
+                return (
+                    "error",
+                    f"Project blocked: {run.operator_summary}\nRun: {run.run_id}",
+                )
+            try:
+                run = schedule_unattended_project(
+                    _project_control_args(self._rt), store, manager, run
                 )
             except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
                 if run.task_id:
@@ -515,9 +530,6 @@ class RuntimeProjectMixin:
                     reason_code="wake_schedule_failed",
                 )
                 return ("error", f"Project blocked: {exc}\n{blocked.next_action_hint}")
-            finally:
-                if cron_store is not None:
-                    cron_store.close()
             self._record_project_launch(
                 request, event_type="project.launched", status="ok"
             )
@@ -581,6 +593,23 @@ class RuntimeProjectMixin:
     ) -> None:
         run = request.run
         payload = {
+            **(
+                {
+                    "security_repair": request.security_repair.model_dump(
+                        include={
+                            "source_task_id",
+                            "source_job_id",
+                            "source_run_id",
+                            "report_ref",
+                            "review_ref",
+                            "finding_id",
+                        },
+                        mode="json",
+                    )
+                }
+                if request.security_repair is not None
+                else {}
+            ),
             "autonomy_run_id": run.run_id,
             "project_run_id": f"prun_{run.run_id}",
             "goal_id": run.goal_id,
