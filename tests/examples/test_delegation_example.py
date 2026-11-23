@@ -342,4 +342,5 @@ def test_runtime_allow_once_runs_target_exactly_once(tmp_path, monkeypatch) -> N
     assert provider.handed_off is True
     assert asked == [HANDOFF_TOOL]
     assert target_runs == ["Research this launch plan."]
+    assert result.text == REPLY
     assert result.metadata["reply_sender"] == AGENT_ID

@@ -875,9 +875,12 @@ class RuntimeMessageMixin:
 
     def _message_text(self, message: Message) -> str:
         body = str(getattr(message, "body", "") or "")
+        metadata = getattr(message, "metadata", None)
+        if body and isinstance(metadata, dict):
+            if metadata.get(REPLY_BODY_FORM_KEY) == REPLY_BODY_FORM_CANONICAL:
+                return body
         if body:
             return self._strip_sender_prefix(body)
-        metadata = getattr(message, "metadata", None)
         if isinstance(metadata, dict):
             text = str(metadata.get("text") or "").strip()
             if text:

@@ -273,16 +273,12 @@ def _agent_response_from_postprocess(
     response_text: str,
     is_pae_idle_tick_noop: bool,
 ) -> AgentResponse:
-    if is_pae_idle_tick_noop:
-        response_text = ""
-    else:
-        default_agent_id = resolve_default_agent_id(self._config)
+    if not is_pae_idle_tick_noop:
+        agent_id = resolve_default_agent_id(self._config)
         metadata[REPLY_BODY_FORM_KEY] = REPLY_BODY_FORM_CANONICAL
-        metadata[REPLY_SENDER_KEY] = (
-            self._config.agents[default_agent_id].name or default_agent_id
-        )
+        metadata[REPLY_SENDER_KEY] = self._config.agents[agent_id].name or agent_id
     return AgentResponse(
-        text=response_text,
+        text="" if is_pae_idle_tick_noop else response_text,
         channel=message.channel,
         target=message.target,
         metadata=metadata,

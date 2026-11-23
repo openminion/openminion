@@ -24,11 +24,7 @@ class ConsoleChannel(Channel):
 
     def send(self, message: Message) -> None:
         timestamp = _chat_timestamp(message.timestamp)
-        if message.metadata.get(REPLY_BODY_FORM_KEY) == REPLY_BODY_FORM_CANONICAL:
-            sender = str(message.metadata.get(REPLY_SENDER_KEY) or "assistant")
-            content = message.body.strip()
-        else:
-            sender, content = _split_sender_and_content(message.body)
+        sender, content = _split_sender_and_content(message)
         plain_prefix = f"{timestamp} {sender}:"
         wrapped_lines = _wrap_content(content, prefix_width=len(plain_prefix) + 1) or [
             ""
@@ -49,8 +45,10 @@ class ConsoleChannel(Channel):
             print(f"{continuation_indent}{line}")
 
 
-def _split_sender_and_content(raw_body: str) -> tuple[str, str]:
-    body = raw_body.strip()
+def _split_sender_and_content(message: Message) -> tuple[str, str]:
+    body = message.body.strip()
+    if message.metadata.get(REPLY_BODY_FORM_KEY) == REPLY_BODY_FORM_CANONICAL:
+        return str(message.metadata.get(REPLY_SENDER_KEY) or "assistant"), body
     if ":" not in body:
         return "assistant", body
 

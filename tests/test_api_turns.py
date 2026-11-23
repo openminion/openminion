@@ -33,6 +33,7 @@ class APITurnsTests(unittest.TestCase):
             turn = payload["turn"]
             self.assertEqual(turn["channel"], "console")
             self.assertEqual(turn["target"], "api-user")
+            self.assertEqual(turn["body"], "hello from api")
             self.assertEqual(turn["metadata"]["reply_sender"], "openminion")
             self.assertTrue(turn["session_id"])
 

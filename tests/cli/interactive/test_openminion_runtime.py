@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import io
 import itertools
 import json
@@ -12,6 +13,12 @@ from types import SimpleNamespace
 import pytest
 from rich.console import Console
 
+from openminion.base.constants import (
+    REPLY_BODY_FORM_CANONICAL,
+    REPLY_BODY_FORM_KEY,
+    REPLY_SENDER_KEY,
+)
+from openminion.base.channel.console import ConsoleChannel
 from openminion.base.types import Message
 from openminion.cli.parser.contracts import ensure_cli_component_compatibility
 from openminion.cli.interactive.project_context import ProjectContextInfo
@@ -570,6 +577,75 @@ async def test_openminion_runtime_room_turn_uses_canonical_off_loop_payload() ->
     assert payload["inbound_metadata"]["participant_id"] == "owner-local"
     assert payload["inbound_metadata"]["caller_handles_delivery"] == "true"
     assert "conversation_id" not in payload["inbound_metadata"]
+
+
+_MARKED = {REPLY_BODY_FORM_KEY: REPLY_BODY_FORM_CANONICAL, REPLY_SENDER_KEY: "alpha"}
+_LITERAL_REPLIES = [
+    (_MARKED, "Note: keep this literal", "Note: keep this literal"),
+    ({}, "alpha: keep this literal", "keep this literal"),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True], ids=["final", "stream"])
+@pytest.mark.parametrize(
+    ("metadata", "reply", "shown"), _LITERAL_REPLIES, ids=["marked", "legacy"]
+)
+async def test_send_message_keeps_marked_body_and_strips_unmarked_label(
+    stream: bool, metadata: dict[str, str], reply: str, shown: str
+) -> None:
+    rt = _FakeRuntime()
+    gateway = rt.resolve_gateway("alpha")
+
+    async def _handle_message(*, channel: str, target: str, body: str, **_kw):
+        gateway.calls.append({"body": body})
+        return Message(channel=channel, target=target, body=reply, metadata=metadata)
+
+    async def _handle_message_streaming(**kwargs):
+        response = await _handle_message(**kwargs)
+        final = {"body": response.body, "metadata": dict(response.metadata)}
+        yield SimpleNamespace(kind="final_message", final_message=final)
+
+    if stream:
+        gateway.handle_message_streaming = _handle_message_streaming
+    else:
+        gateway.handle_message = _handle_message
+    tui_rt = OpenMinionRuntime(rt)
+
+    chunks = [chunk async for chunk in tui_rt.send_message("ping")]
+
+    assert chunks == [shown]
+    assert gateway.calls == [{"body": "ping"}]
+
+
+def test_history_console_and_mixed_room_children_keep_intended_bodies() -> None:
+    rt = _FakeRuntime()
+    session = rt.sessions.resolve_session(agent_id="alpha", channel="cli", target="tui")
+    for metadata, reply, _shown in _LITERAL_REPLIES:
+        rt.sessions.add_message(
+            session.id, role="assistant", body=reply, metadata=metadata
+        )
+    history = OpenMinionRuntime(rt).get_current_history()
+    assert [item.body for item in history] == [shown for *_, shown in _LITERAL_REPLIES]
+
+    children = [
+        {"agent_id": "alpha", "body": "Note: keep this literal", **_MARKED},
+        {"agent_id": "beta", "body": "beta: keep this literal"},
+    ]
+    room = room_result_chat_messages({"metadata": {"room_responses": children}})
+    assert [(item.sender, item.body) for item in room] == [
+        ("alpha", "Note: keep this literal"),
+        ("beta", "keep this literal"),
+    ]
+
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        for metadata, reply, _shown in _LITERAL_REPLIES:
+            ConsoleChannel().send(
+                Message(channel="console", target="u", body=reply, metadata=metadata)
+            )
+    lines = [line.split("] ", 1)[1] for line in output.getvalue().splitlines()]
+    assert lines == ["alpha: Note: keep this literal", "alpha: keep this literal"]
 
 
 def test_room_result_uses_top_level_addressed_agent_and_persisted_id() -> None:

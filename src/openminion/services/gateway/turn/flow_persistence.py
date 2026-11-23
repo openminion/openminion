@@ -188,11 +188,8 @@ class GatewayTurnPersistenceDeliveryMixin:
                 event_type=SESSION_EVENT_POLICY_CONFIRMATION_PROMPT,
                 payload={
                     "body": outbound.body,
-                    **{
-                        key: outbound.metadata[key]
-                        for key in (REPLY_BODY_FORM_KEY, REPLY_SENDER_KEY)
-                        if key in outbound.metadata
-                    },
+                    REPLY_BODY_FORM_KEY: outbound.metadata.get(REPLY_BODY_FORM_KEY, ""),
+                    REPLY_SENDER_KEY: outbound.metadata.get(REPLY_SENDER_KEY, ""),
                     "conversation_id": conversation_id or "",
                     "thread_id": thread_id or "",
                     "attach_id": attach_id or "",

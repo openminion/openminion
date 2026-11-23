@@ -47,9 +47,7 @@ STATE_KEY_WORKING = "working_state"
 STATE_KEY_ACTIVE = "active_state"
 STATE_KEY_SOURCE_OUTCOME = "source_outcome_status"
 
-# Reply-body contract (#567): a reply the response owner writes carries body_form=canonical
-# and its speaker in reply_sender, and its body is exactly the reply text. Unmarked bodies
-# keep their legacy handling indefinitely; nothing classifies a body by its text.
+# #567: body_form=canonical marks an exact reply body; unmarked bodies stay legacy.
 REPLY_BODY_FORM_KEY = "body_form"
 REPLY_BODY_FORM_CANONICAL = "canonical"
 REPLY_SENDER_KEY = "reply_sender"
