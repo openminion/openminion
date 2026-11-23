@@ -269,9 +269,7 @@ def _model_dump_accepts_input_keys(
     return True
 
 
-def _nested_models_accept_input_keys(
-    value: Any, dumped: Any, seen: set[int]
-) -> bool:
+def _nested_models_accept_input_keys(value: Any, dumped: Any, seen: set[int]) -> bool:
     if isinstance(value, BaseModel):
         return _model_dump_accepts_input_keys(value, dumped, seen)
     if isinstance(value, Mapping):
