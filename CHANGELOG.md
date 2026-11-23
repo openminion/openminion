@@ -7,6 +7,18 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `import_omx` and `export_omx` now confine table payload paths inside `omx_dir`
+  (normalizing Windows separators while rejecting `..` escapes, absolute paths, and
+  external symlinks), prepare quoted table/column SQL identifiers (`_quote_ident`),
+  JSON object rows, verified `row_count` parity, and homogeneous row column sets in a
+  single pre-write pass before destructive `DELETE`/insert work, refuse caller-owned
+  active `target_record_store` transactions before writes while wrapping owned
+  `target_record_store` imports in `record_store.transaction()`, refuse foreign-owned
+  SQLite `application_id` targets for both owned and `module_application_id=0` bundles
+  before writes while preserving `application_id` and `user_version` pragmas on fresh
+  targets, and mark `RehydrateReport(success=False, error=...)` when post-import SQLite
+  `run_verification` reports fatal findings (Refs #827).
+
 - The ordinary brain tool caller now awaits an async `@tool` handler: `run_tool_spec`
   runs a returned coroutine through the existing `run_async_compat` bridge instead of
   shaping it as data, so the body executes once, the synchronous path and argument order
