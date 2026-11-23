@@ -608,6 +608,7 @@ def test_run_adaptive_tool_loop_preserves_failure_and_snapshot_on_recovery_error
 class _BridgeHarness(BrainBridgeTurnMixin):
     def __init__(self, runner: Any) -> None:
         self._runner = runner
+        self._runtime_handle = None
         self._telemetryctl = object()
         self._identity_agent_id = "agent.bridge"
         self._logger = logging.getLogger("openminion.test.bridge")

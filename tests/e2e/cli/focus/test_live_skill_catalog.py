@@ -92,7 +92,14 @@ _OUTPUTS = {
     "no-match": (),
     "complex-resource": ("inventory.json", "inventory.md"),
 }
-_LOCAL_TOOLS = {"skill.get", "host.metrics", "file.write", "respond", "clarify"}
+_LOCAL_TOOLS = {
+    "skill.get",
+    "skill.list",
+    "host.metrics",
+    "file.write",
+    "respond",
+    "clarify",
+}
 _DISCOVERY_TOOLS = {"tool.request", "tool.search", "tool.list"}
 
 
@@ -284,6 +291,13 @@ def _assert_case(case: str, evidence: dict, workspace: Path) -> None:
     for ref in refs:
         assert ref["version"] == manifest[ref["id"]]["version_hash"]
     tools = _completed_tools(events)
+    admitted = {(row["skill_id"], row["version_hash"]) for row in manifest.values()}
+    for name, _, output in tools:
+        if name == "skill.list":
+            assert output["ok"] is True
+            assert {
+                (row["skill_id"], row["version_hash"]) for row in output["skills"]
+            } <= admitted, "skill.list returned a pair outside the admitted manifest"
     requested = [e["payload"] for e in events if e["type"] == "tool.call.requested"]
     for request in requested:
         name = request["canonical_name"]
@@ -316,7 +330,7 @@ def _assert_case(case: str, evidence: dict, workspace: Path) -> None:
             r
             for r in requested
             if r["canonical_name"]
-            not in {"skill.get", "respond", "clarify"} | _DISCOVERY_TOOLS
+            not in {"skill.get", "skill.list", "respond", "clarify"} | _DISCOVERY_TOOLS
         ]
     else:
         fixture = (
@@ -394,15 +408,7 @@ def test_live_skill_catalog(focus_probe, scenario, tmp_path, monkeypatch):
             "allow_read_only_without_prompt": False,
             "rules": [
                 {"match": {"tool_name": name}, "mode": "auto"}
-                for name in (
-                    "skill.get",
-                    "host.metrics",
-                    "respond",
-                    "clarify",
-                    "tool.request",
-                    "tool.search",
-                    "tool.list",
-                )
+                for name in sorted((_LOCAL_TOOLS - {"file.write"}) | _DISCOVERY_TOOLS)
             ],
         }
         probe.config_path.write_text(json.dumps(config))

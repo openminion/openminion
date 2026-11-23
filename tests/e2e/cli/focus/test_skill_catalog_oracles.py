@@ -22,7 +22,7 @@ from openminion.modules.brain.bootstrap.skill.selection import (
 )
 from tests.e2e.cli.focus.harness import FocusProbe
 from tests.e2e.cli.focus import test_live_skill_catalog as catalog
-from openminion.tools.skill.plugin import _h_skill_get
+from openminion.tools.skill.plugin import _h_skill_get, _h_skill_list
 
 pytestmark = pytest.mark.e2e
 
@@ -155,7 +155,7 @@ def test_implicit_oracle_rejects_actual_fast_path(
             catalog._assert_case("implicit", evidence, tmp_path)
 
 
-@pytest.mark.parametrize("requested_name", ["skill.get", "exec.run"])
+@pytest.mark.parametrize("requested_name", ["skill.get", "skill.list", "exec.run"])
 def test_ambiguous_case_allows_only_frozen_tool_activation(tmp_path, requested_name):
     evidence = {
         "manifest": [],
@@ -175,7 +175,7 @@ def test_ambiguous_case_allows_only_frozen_tool_activation(tmp_path, requested_n
             },
         ],
     }
-    if requested_name == "skill.get":
+    if requested_name in {"skill.get", "skill.list"}:
         catalog._assert_case("ambiguous", evidence, tmp_path)
     else:
         with pytest.raises(AssertionError):
@@ -219,6 +219,22 @@ def test_no_match_accepts_empty_diagnostic_not_selector_failure(tmp_path, failur
             catalog._assert_case("no-match", evidence, tmp_path)
     else:
         catalog._assert_case("no-match", evidence, tmp_path)
+        for name in ("skill.list", "tool.request"):
+            changed = deepcopy(evidence)
+            changed["brain_events"].append(
+                {
+                    "type": "tool.call.requested",
+                    "payload": {
+                        "call_id": "list",
+                        "canonical_name": name,
+                        "sanitized_normalized_arguments": {"name": "skill.list"}
+                        if name == "tool.request"
+                        else {},
+                    },
+                }
+            )
+            with pytest.raises(AssertionError):
+                catalog._assert_case("no-match", changed, tmp_path)
 
 
 @pytest.mark.parametrize(
@@ -368,16 +384,18 @@ def test_public_admission_preserves_full_agent_catalog(tmp_path, case, fixture):
         shortlisted_ids=[row["skill_id"]],
     )
     tools = []
-    if case != "ambiguous":
-        args = {
-            "skill_id": row["skill_id"],
-            "version_hash": row["version_hash"],
-            "resource_path": row["resources"][0]["path"],
-        }
-        with closing(catalog.Skill(catalog._skill_config(probe))) as skill:
-            output = _h_skill_get(
-                args, SimpleNamespace(skill_api=skill, agent_id=probe.agent_id)
-            )
+    with closing(catalog.Skill(catalog._skill_config(probe))) as skill:
+        ctx = SimpleNamespace(skill_api=skill, agent_id=probe.agent_id)
+        listing = _h_skill_list({"limit": 50}, ctx)
+        assert len(listing["skills"]) == len(manifest)
+        tools.append(("skill.list", {"limit": 50}, listing))
+        if case != "ambiguous":
+            args = {
+                "skill_id": row["skill_id"],
+                "version_hash": row["version_hash"],
+                "resource_path": row["resources"][0]["path"],
+            }
+            output = _h_skill_get(args, ctx)
             tools.append(("skill.get", args, output))
     if case == "complex-resource":
         facts = {
@@ -413,6 +431,16 @@ def test_public_admission_preserves_full_agent_catalog(tmp_path, case, fixture):
         )
     evidence = {"brain_events": events, "manifest": manifest, "approvals": []}
     catalog._assert_case(case, evidence, tmp_path)
+    for field in ("skill_id", "version_hash"):
+        changed = deepcopy(evidence)
+        listed = next(
+            e["payload"]["output"]["outputs"]
+            for e in changed["brain_events"]
+            if e["type"] == "tool.call.completed" and e["payload"]["call_id"] == "0"
+        )
+        listed["skills"][0][field] = "not-in-admitted-manifest"
+        with pytest.raises(AssertionError, match="outside the admitted manifest"):
+            catalog._assert_case(case, changed, tmp_path)
     if row["skill_id"] != fixture:
         selected = next(e["payload"] for e in events if e["type"] == "skill.selected")
         selected["skill_ref"]["id"] = fixture
