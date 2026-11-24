@@ -327,6 +327,8 @@ def resolve_provider_config(
     if provider_cfg is None:
         return {}
     data = provider_cfg.model_dump(exclude_none=True)
+    extra = provider_cfg.model_extra or {}
+    data.update({key: None for key, value in extra.items() if value is None})
     provider_identity = data.get("provider_identity")
     if not isinstance(provider_identity, dict) or not provider_identity:
         translated = resolve_provider_identity_translation(
