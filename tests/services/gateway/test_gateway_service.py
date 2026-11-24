@@ -14,21 +14,30 @@ from openminion.modules.telemetry.trace.phase_timing import (
 from openminion.services.context.session import SessionContextService
 
 from tests.services.gateway._gateway_service_support import (
+    AgentService,
+    ChannelRegistry,
+    GatewayService,
     GatewayServiceTestCase,
     IdempotencyStore,
     Message,
+    OpenMinionConfig,
+    PluginRegistry,
     RUN_STATE_RUNNING,
     SessionStore,
     _CaptureProvider,
     _FlakyProvider,
     _QuotaThenRecoverMemoryAdapter,
     _SequenceTextProvider,
+    _SinkChannel,
     _SlowCaptureProvider,
     _WriteFailOnceMemoryAdapter,
     append_run_state_event,
     asyncio,
     connect_database,
+    logging,
+    sha256,
 )
+from tests._csc_fixtures import _csc_install_default_agent
 
 
 class _LongArtifactProvider(LLMProvider):
@@ -1032,6 +1041,552 @@ class GatewayServiceCoreTests(GatewayServiceTestCase):
             _request_hash(agent_id="agent-a", **request),
             _request_hash(agent_id="agent-b", **request),
         )
+
+    @staticmethod
+    def _pre_848_request_hash(
+        *,
+        channel: str,
+        target: str,
+        body: str,
+        session_id: str | None = None,
+        inbound_metadata: dict[str, str] | None = None,
+        typed_turn_intent: object | None = None,
+        image_refs: tuple[str, ...] = (),
+    ) -> str:
+        import json
+
+        normalized_meta = {
+            k.strip(): v.strip()
+            for k, v in (inbound_metadata or {}).items()
+            if k.strip()
+        }
+        payload = {
+            "channel": channel,
+            "target": target,
+            "body": body,
+            "session_id": session_id or "",
+            "inbound_metadata": dict(sorted(normalized_meta.items())),
+            "typed_turn_intent": typed_turn_intent,
+            **({"image_refs": image_refs} if image_refs else {}),
+        }
+        return sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+    def _reopen_gateway_from_sqlite(
+        self, *, agent_id: str = "main"
+    ) -> tuple[
+        object, GatewayService, _CaptureProvider, _SinkChannel, IdempotencyStore
+    ]:
+        reopened_conn = connect_database(self.database_path)
+        reopened_sessions = SessionStore(reopened_conn)
+        reopened_idem = IdempotencyStore(reopened_conn)
+        config = OpenMinionConfig()
+        _csc_install_default_agent(config, name=agent_id)
+        reopened_provider = _CaptureProvider()
+        reopened_agent = AgentService(
+            config=config,
+            plugins=PluginRegistry([]),
+            provider=reopened_provider,
+            logger=logging.getLogger(f"openminion.tests.gateway.reopened.{agent_id}"),
+        )
+        reopened_sink = _SinkChannel(name="console")
+        reopened_gateway = GatewayService(
+            agent=reopened_agent,
+            channels=ChannelRegistry([reopened_sink]),
+            logger=logging.getLogger(
+                f"openminion.tests.gateway.reopened.gw.{agent_id}"
+            ),
+            sessions=reopened_sessions,
+            idempotency=reopened_idem,
+            agent_id=agent_id,
+        )
+        return (
+            reopened_conn,
+            reopened_gateway,
+            reopened_provider,
+            reopened_sink,
+            reopened_idem,
+        )
+
+    def _downgrade_receipt_to_pre_848_hash(
+        self, *, idempotency_key: str, legacy_hash: str
+    ) -> None:
+        self.connection.execute(
+            "UPDATE idempotency_keys SET request_hash = ? "
+            "WHERE method = ? AND idempotency_key = ?",
+            (legacy_hash, GatewayService._METHOD_HANDLE_MESSAGE, idempotency_key),
+        )
+        self.connection.commit()
+
+    def test_gateway_replays_persisted_legacy_receipt_after_reopen(self) -> None:
+        cases = [
+            (
+                "default-delivered",
+                {
+                    "channel": "console",
+                    "target": "local-user",
+                    "body": "legacy upgrade request",
+                    "session_id": "legacy-s-default",
+                    "idempotency_key": "legacy-k-default",
+                },
+            ),
+            (
+                "omitted-session-id",
+                {
+                    "channel": "console",
+                    "target": "auto-session-user",
+                    "body": "legacy auto-session request",
+                    "idempotency_key": "legacy-k-autosession",
+                },
+            ),
+            (
+                "deliver-false",
+                {
+                    "channel": "console",
+                    "target": "local-user",
+                    "body": "legacy no-deliver request",
+                    "session_id": "legacy-s-nodeliver",
+                    "idempotency_key": "legacy-k-nodeliver",
+                    "deliver": False,
+                },
+            ),
+            (
+                "deliver-false-caller-handled",
+                {
+                    "channel": "console",
+                    "target": "local-user",
+                    "body": "legacy caller-delivery request",
+                    "session_id": "legacy-s-caller",
+                    "idempotency_key": "legacy-k-caller",
+                    "deliver": False,
+                    "inbound_metadata": {"caller_handles_delivery": "true"},
+                },
+            ),
+            (
+                "explicit-request-id",
+                {
+                    "channel": "console",
+                    "target": "local-user",
+                    "body": "legacy explicit-request-id",
+                    "session_id": "legacy-s-reqid",
+                    "idempotency_key": "legacy-k-reqid",
+                    "request_id": "client-req-858",
+                },
+            ),
+        ]
+
+        originals: dict[str, tuple[Message, str]] = {}
+        for _name, kwargs in cases:
+            first = asyncio.run(self.gateway.handle_message(**kwargs))
+            legacy_hash = self._pre_848_request_hash(
+                channel=str(kwargs["channel"]),
+                target=str(kwargs["target"]),
+                body=str(kwargs["body"]),
+                session_id=kwargs.get("session_id"),  # type: ignore[arg-type]
+                inbound_metadata=kwargs.get("inbound_metadata"),  # type: ignore[arg-type]
+            )
+            self._downgrade_receipt_to_pre_848_hash(
+                idempotency_key=str(kwargs["idempotency_key"]),
+                legacy_hash=legacy_hash,
+            )
+            originals[str(kwargs["idempotency_key"])] = (first, legacy_hash)
+
+        self.connection.close()
+        reopened_conn, reopened_gw, reopened_provider, reopened_sink, reopened_idem = (
+            self._reopen_gateway_from_sqlite(agent_id="main")
+        )
+        self.connection = reopened_conn
+        self.sessions = SessionStore(reopened_conn)
+        self.idempotency = reopened_idem
+        for name, kwargs in cases:
+            key = str(kwargs["idempotency_key"])
+            first, legacy_hash = originals[key]
+            with self.subTest(case=name):
+                replayed = asyncio.run(reopened_gw.handle_message(**kwargs))
+                self.assertEqual(replayed.id, first.id)
+                self.assertEqual(replayed.body, first.body)
+                self.assertEqual(replayed.metadata["run_id"], first.metadata["run_id"])
+                stored = reopened_idem.get(
+                    method=GatewayService._METHOD_HANDLE_MESSAGE,
+                    idempotency_key=key,
+                )
+                self.assertIsNotNone(stored)
+                self.assertEqual(stored.request_hash, legacy_hash)
+                self.assertEqual(stored.status, "completed")
+        self.assertEqual(len(reopened_provider.requests), 0)
+        self.assertEqual(len(reopened_sink.sent), 0)
+
+    def test_gateway_rejects_legacy_receipt_on_changed_identity_or_controls(
+        self,
+    ) -> None:
+        base_kwargs: dict[str, object] = {
+            "channel": "console",
+            "target": "local-user",
+            "body": "legacy base body",
+            "session_id": "legacy-conflict-s1",
+            "idempotency_key": "legacy-conflict-default",
+        }
+        asyncio.run(self.gateway.handle_message(**base_kwargs))  # type: ignore[arg-type]
+        base_legacy_hash = self._pre_848_request_hash(
+            channel="console",
+            target="local-user",
+            body="legacy base body",
+            session_id="legacy-conflict-s1",
+        )
+        self._downgrade_receipt_to_pre_848_hash(
+            idempotency_key="legacy-conflict-default",
+            legacy_hash=base_legacy_hash,
+        )
+
+        asyncio.run(
+            self.gateway.handle_message(
+                channel="console",
+                target="local-user",
+                body="legacy explicit req",
+                session_id="legacy-conflict-s2",
+                idempotency_key="legacy-conflict-reqid",
+                request_id="client-req-1",
+            )
+        )
+        self._downgrade_receipt_to_pre_848_hash(
+            idempotency_key="legacy-conflict-reqid",
+            legacy_hash=self._pre_848_request_hash(
+                channel="console",
+                target="local-user",
+                body="legacy explicit req",
+                session_id="legacy-conflict-s2",
+            ),
+        )
+
+        # Undelivered turn followed by a later pending-replay delivery must
+        # still prove the original turn ran with deliver=False.
+        asyncio.run(
+            self.gateway.handle_message(
+                channel="console",
+                target="local-user",
+                body="legacy undelivered",
+                session_id="legacy-conflict-s3",
+                idempotency_key="legacy-conflict-nodeliver",
+                deliver=False,
+            )
+        )
+        self._downgrade_receipt_to_pre_848_hash(
+            idempotency_key="legacy-conflict-nodeliver",
+            legacy_hash=self._pre_848_request_hash(
+                channel="console",
+                target="local-user",
+                body="legacy undelivered",
+                session_id="legacy-conflict-s3",
+            ),
+        )
+        asyncio.run(
+            self.gateway.handle_message(
+                channel="console",
+                target="local-user",
+                body="trigger pending replay",
+                session_id="legacy-conflict-s3",
+                deliver=True,
+            )
+        )
+
+        # Legacy receipts originally created with non-default controls cannot
+        # be proven verbatim from retained facts and must fail closed.
+        asyncio.run(
+            self.gateway.handle_message(
+                channel="console",
+                target="local-user",
+                body="legacy forced tool",
+                session_id="legacy-conflict-s4",
+                idempotency_key="legacy-conflict-forced",
+                forced_tools=["time.current"],
+            )
+        )
+        self._downgrade_receipt_to_pre_848_hash(
+            idempotency_key="legacy-conflict-forced",
+            legacy_hash=self._pre_848_request_hash(
+                channel="console",
+                target="local-user",
+                body="legacy forced tool",
+                session_id="legacy-conflict-s4",
+            ),
+        )
+        asyncio.run(
+            self.gateway.handle_message(
+                channel="console",
+                target="local-user",
+                body="legacy custom category",
+                session_id="legacy-conflict-s5",
+                idempotency_key="legacy-conflict-cat",
+                capability_category="custom_cat",
+            )
+        )
+        self._downgrade_receipt_to_pre_848_hash(
+            idempotency_key="legacy-conflict-cat",
+            legacy_hash=self._pre_848_request_hash(
+                channel="console",
+                target="local-user",
+                body="legacy custom category",
+                session_id="legacy-conflict-s5",
+            ),
+        )
+
+        # Uncorroborated legacy receipt with no backing session events.
+        self.idempotency.complete(
+            method=GatewayService._METHOD_HANDLE_MESSAGE,
+            idempotency_key="legacy-orphan",
+            request_hash=self._pre_848_request_hash(
+                channel="console",
+                target="local-user",
+                body="orphan body",
+                session_id="missing-session",
+            ),
+            response={
+                "id": "msg-orphan",
+                "channel": "console",
+                "target": "local-user",
+                "body": "orphan reply",
+                "metadata": '{"session_id":"missing-session","run_id":"missing-run","request_id":"a1b2c3d4e5f64789a0b1c2d3e4f56789","persisted_outbound_message_id":"out-1"}',
+            },
+            status="completed",
+        )
+        self.idempotency.complete(
+            method=GatewayService._METHOD_HANDLE_MESSAGE,
+            idempotency_key="legacy-failed",
+            request_hash=self._pre_848_request_hash(
+                channel="console",
+                target="local-user",
+                body="failed body",
+                session_id="legacy-conflict-s1",
+            ),
+            response={"error": "earlier failure"},
+            status="failed",
+        )
+
+        self.connection.close()
+        reopened_conn, same_agent_gw, same_provider, _sink, reopened_idem = (
+            self._reopen_gateway_from_sqlite(agent_id="main")
+        )
+        self.connection = reopened_conn
+        self.sessions = SessionStore(reopened_conn)
+        self.idempotency = reopened_idem
+        other_conn, other_agent_gw, other_provider, _other_sink, _other_idem = (
+            self._reopen_gateway_from_sqlite(agent_id="agent-other")
+        )
+        try:
+            conflict_cases: list[tuple[str, GatewayService, dict[str, object]]] = [
+                ("changed-body", same_agent_gw, {**base_kwargs, "body": "different"}),
+                ("changed-agent", other_agent_gw, dict(base_kwargs)),
+                (
+                    "added-request-id",
+                    same_agent_gw,
+                    {**base_kwargs, "request_id": "client-req-new"},
+                ),
+                (
+                    "changed-delivery-to-false",
+                    same_agent_gw,
+                    {**base_kwargs, "deliver": False},
+                ),
+                (
+                    "added-history-exclusion",
+                    same_agent_gw,
+                    {**base_kwargs, "exclude_history_message_ids": ("msg-1",)},
+                ),
+                (
+                    "added-forced-tools",
+                    same_agent_gw,
+                    {**base_kwargs, "forced_tools": ["time.current"]},
+                ),
+                (
+                    "added-capability",
+                    same_agent_gw,
+                    {**base_kwargs, "capability_category": "coding"},
+                ),
+                (
+                    "changed-explicit-request-id",
+                    same_agent_gw,
+                    {
+                        "channel": "console",
+                        "target": "local-user",
+                        "body": "legacy explicit req",
+                        "session_id": "legacy-conflict-s2",
+                        "idempotency_key": "legacy-conflict-reqid",
+                        "request_id": "client-req-2",
+                    },
+                ),
+                (
+                    "omitted-explicit-request-id",
+                    same_agent_gw,
+                    {
+                        "channel": "console",
+                        "target": "local-user",
+                        "body": "legacy explicit req",
+                        "session_id": "legacy-conflict-s2",
+                        "idempotency_key": "legacy-conflict-reqid",
+                    },
+                ),
+                (
+                    "changed-delivery-after-pending-replay",
+                    same_agent_gw,
+                    {
+                        "channel": "console",
+                        "target": "local-user",
+                        "body": "legacy undelivered",
+                        "session_id": "legacy-conflict-s3",
+                        "idempotency_key": "legacy-conflict-nodeliver",
+                        "deliver": True,
+                    },
+                ),
+                (
+                    "legacy-forced-tools-replayed-default",
+                    same_agent_gw,
+                    {
+                        "channel": "console",
+                        "target": "local-user",
+                        "body": "legacy forced tool",
+                        "session_id": "legacy-conflict-s4",
+                        "idempotency_key": "legacy-conflict-forced",
+                    },
+                ),
+                (
+                    "legacy-forced-tools-replayed-same",
+                    same_agent_gw,
+                    {
+                        "channel": "console",
+                        "target": "local-user",
+                        "body": "legacy forced tool",
+                        "session_id": "legacy-conflict-s4",
+                        "idempotency_key": "legacy-conflict-forced",
+                        "forced_tools": ["time.current"],
+                    },
+                ),
+                (
+                    "legacy-custom-category-replayed-default",
+                    same_agent_gw,
+                    {
+                        "channel": "console",
+                        "target": "local-user",
+                        "body": "legacy custom category",
+                        "session_id": "legacy-conflict-s5",
+                        "idempotency_key": "legacy-conflict-cat",
+                    },
+                ),
+                (
+                    "uncorroborated-legacy-receipt",
+                    same_agent_gw,
+                    {
+                        "channel": "console",
+                        "target": "local-user",
+                        "body": "orphan body",
+                        "session_id": "missing-session",
+                        "idempotency_key": "legacy-orphan",
+                    },
+                ),
+                (
+                    "failed-legacy-receipt",
+                    same_agent_gw,
+                    {
+                        "channel": "console",
+                        "target": "local-user",
+                        "body": "failed body",
+                        "session_id": "legacy-conflict-s1",
+                        "idempotency_key": "legacy-failed",
+                    },
+                ),
+            ]
+            for name, gw, call_kwargs in conflict_cases:
+                with self.subTest(case=name):
+                    with self.assertRaisesRegex(
+                        ValueError, "idempotency key conflicts"
+                    ):
+                        asyncio.run(gw.handle_message(**call_kwargs))  # type: ignore[arg-type]
+
+            # Original deliver=False receipt still replays when matched faithfully.
+            replayed_nodeliver = asyncio.run(
+                same_agent_gw.handle_message(
+                    channel="console",
+                    target="local-user",
+                    body="legacy undelivered",
+                    session_id="legacy-conflict-s3",
+                    idempotency_key="legacy-conflict-nodeliver",
+                    deliver=False,
+                )
+            )
+            self.assertIn("legacy undelivered", replayed_nodeliver.body)
+            self.assertEqual(len(same_provider.requests), 0)
+            self.assertEqual(len(other_provider.requests), 0)
+            stored = reopened_idem.get(
+                method=GatewayService._METHOD_HANDLE_MESSAGE,
+                idempotency_key="legacy-conflict-default",
+            )
+            self.assertIsNotNone(stored)
+            self.assertEqual(stored.request_hash, base_legacy_hash)
+        finally:
+            other_conn.close()
+
+    def test_gateway_new_format_receipt_replay_and_conflicts_after_reopen(
+        self,
+    ) -> None:
+        base_kwargs: dict[str, object] = {
+            "channel": "console",
+            "target": "local-user",
+            "body": "current format body",
+            "session_id": "current-s1",
+            "idempotency_key": "current-k1",
+            "request_id": "current-req-1",
+        }
+        first = asyncio.run(self.gateway.handle_message(**base_kwargs))  # type: ignore[arg-type]
+
+        self.connection.close()
+        reopened_conn, same_agent_gw, same_provider, same_sink, reopened_idem = (
+            self._reopen_gateway_from_sqlite(agent_id="main")
+        )
+        self.connection = reopened_conn
+        self.sessions = SessionStore(reopened_conn)
+        self.idempotency = reopened_idem
+        other_conn, other_agent_gw, other_provider, _other_sink, _other_idem = (
+            self._reopen_gateway_from_sqlite(agent_id="agent-other")
+        )
+        try:
+            replayed = asyncio.run(same_agent_gw.handle_message(**base_kwargs))  # type: ignore[arg-type]
+            self.assertEqual(replayed.id, first.id)
+            self.assertEqual(replayed.body, first.body)
+
+            neighbors: list[tuple[str, GatewayService, dict[str, object]]] = [
+                ("changed-body", same_agent_gw, {**base_kwargs, "body": "changed"}),
+                ("changed-agent", other_agent_gw, dict(base_kwargs)),
+                (
+                    "changed-request-id",
+                    same_agent_gw,
+                    {**base_kwargs, "request_id": "current-req-2"},
+                ),
+                ("changed-deliver", same_agent_gw, {**base_kwargs, "deliver": False}),
+                (
+                    "changed-history",
+                    same_agent_gw,
+                    {**base_kwargs, "exclude_history_message_ids": ("msg-1",)},
+                ),
+                (
+                    "changed-forced-tools",
+                    same_agent_gw,
+                    {**base_kwargs, "forced_tools": ["time.current"]},
+                ),
+                (
+                    "changed-capability",
+                    same_agent_gw,
+                    {**base_kwargs, "capability_category": "coding"},
+                ),
+            ]
+            for name, gw, call_kwargs in neighbors:
+                with self.subTest(case=name):
+                    with self.assertRaisesRegex(
+                        ValueError, "idempotency key conflicts"
+                    ):
+                        asyncio.run(gw.handle_message(**call_kwargs))  # type: ignore[arg-type]
+
+            self.assertEqual(len(same_provider.requests), 0)
+            self.assertEqual(len(other_provider.requests), 0)
+            self.assertEqual(len(same_sink.sent), 0)
+        finally:
+            other_conn.close()
 
     def test_gateway_rejects_distinct_concurrent_explicit_session_turns(self) -> None:
         class _BlockingProvider(LLMProvider):

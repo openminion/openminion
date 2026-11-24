@@ -137,9 +137,15 @@ request_id | session_id | trace_id | result_id | status
 
 The application owns `request_id` and all customer/project IDs. OpenMinion owns
 the remaining runtime IDs. An idempotency key deduplicates an exact request in
-the runtime store. Reusing it with different message, session, target, input
-metadata, typed intent, or images is rejected. It does not replace an
-application uniqueness constraint or an integration-specific effect key.
+the runtime store. Reusing it with a different agent, message, session, target,
+request ID, delivery mode, history exclusions, forced tools, capability
+category, input metadata, typed intent, or images is rejected. Completed
+pre-agent-field legacy receipts replay across upgrades only when retained
+session/run facts corroborate agent identity, request ID, delivery mode, and
+default controls; uncorroborated or non-default legacy receipts fail closed as
+conflicts rather than re-executing or discarding the receipt. It does not
+replace an application uniqueness constraint or an integration-specific effect
+key.
 
 If a process stops, query persisted session/task records through their public
 surfaces and start a later turn when appropriate. Active turn handles, queued

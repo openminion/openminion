@@ -121,6 +121,18 @@ external-effect guarantee. Active handles and stream reattachment remain
 process-local. Persisted session/task records support later lookup and later
 turns, not resurrection of an uncertain side effect.
 
+Unreleased: completed gateway receipts persisted under the pre-agent-field
+request hash (`0.1.24`) remain replayable across upgrades without schema
+changes only when the legacy hash matches and retained response metadata plus
+persisted session run events corroborate `agent_id`, `request_id`, channel
+delivery mode, and default control inputs (`exclude_history_message_ids`,
+`forced_tools`, `capability_category`). Legacy receipts whose controls were
+non-default, whose backing session/run events are absent, or whose status is
+not `completed` fail closed as conflicts; legacy turns that supplied a literal
+32-character lowercase UUIDv4 hex string as `request_id` cannot be
+distinguished from omitted `request_id` (which generated `uuid4().hex`), and
+prior `exclude_history_message_ids` cannot be proven from pre-upgrade rows.
+
 ```python
 from openminion import ProviderError
 
