@@ -289,6 +289,11 @@ This file tracks package-facing release notes for `openminion`.
   agents with `model_dump(mode="json")` so delegated structured results serialize cleanly
   in `ToolExecutionBatch.to_metadata_payload()` while leaving non-model outputs and run
   metadata unchanged.
+- The Ollama adapter now sends a configured context window: `providers.ollama.num_ctx`
+  or a model connection's `provider_config_overrides.num_ctx` becomes `options.num_ctx`,
+  `0` (the default) keeps the server default, and an invalid value fails before the
+  request is sent. Previously the provider parser dropped the field and a connection
+  override was rejected as unsupported (Refs #725).
 
 - `daemon start` now creates the `state/` and `logs/` parents under the storage
   private-directory contract instead of the process umask: the startup owner made them
