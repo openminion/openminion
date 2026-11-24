@@ -176,6 +176,38 @@ def _append_knowledge_graph_context(
     return history
 
 
+def _serialize_typed_turn_intent(typed_turn_intent: object | None) -> object | None:
+    if typed_turn_intent is None or not hasattr(typed_turn_intent, "model_dump"):
+        return typed_turn_intent
+    try:
+        serialized: object = typed_turn_intent.model_dump(mode="json")
+    except TypeError:
+        serialized = typed_turn_intent.model_dump()
+    return serialized
+
+
+def _legacy_request_hash(
+    *,
+    channel: str,
+    target: str,
+    body: str,
+    session_id: str | None,
+    inbound_metadata: dict[str, str] | None,
+    typed_turn_intent: object | None = None,
+    image_refs: tuple[str, ...] = (),
+) -> str:
+    payload = {
+        "channel": channel,
+        "target": target,
+        "body": body,
+        "session_id": session_id or "",
+        "inbound_metadata": _normalize_metadata(inbound_metadata),
+        "typed_turn_intent": _serialize_typed_turn_intent(typed_turn_intent),
+        **({"image_refs": image_refs} if image_refs else {}),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
 def _request_hash(
     *,
     agent_id: str,
@@ -192,11 +224,6 @@ def _request_hash(
     typed_turn_intent: object | None = None,
     image_refs: tuple[str, ...] = (),
 ) -> str:
-    serialized_typed_turn_intent = (
-        typed_turn_intent.model_dump(mode="json")
-        if hasattr(typed_turn_intent, "model_dump")
-        else typed_turn_intent
-    )
     payload = {
         "agent_id": agent_id,
         "channel": channel,
@@ -209,7 +236,7 @@ def _request_hash(
         "exclude_history_message_ids": exclude_history_message_ids,
         "forced_tools": forced_tools or [],
         "capability_category": capability_category or "",
-        "typed_turn_intent": serialized_typed_turn_intent,
+        "typed_turn_intent": _serialize_typed_turn_intent(typed_turn_intent),
         **({"image_refs": image_refs} if image_refs else {}),
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()

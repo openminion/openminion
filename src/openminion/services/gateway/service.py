@@ -5,8 +5,8 @@ import inspect
 import logging
 import threading
 from collections.abc import AsyncIterator
-from typing import Any, Callable, Dict, Optional, Tuple, cast
-from uuid import uuid4
+from typing import Any, Callable, Dict, Optional, Tuple, TypedDict, cast
+from uuid import UUID, uuid4
 
 from openminion.base.channel import ChannelRegistry
 from openminion.base.types import Message
@@ -24,6 +24,8 @@ from openminion.services.gateway.config import (
     resolve_memory_capsule_strategy,
     resolve_memory_dynamic_retrieval_enabled,
 )
+from openminion.services.gateway.constants import CALLER_HANDLES_DELIVERY_METADATA_KEY
+from openminion.services.gateway.routing import parse_metadata_bool
 from openminion.services.gateway.security import GatewaySecurity
 from openminion.services.gateway.streaming import (
     GatewayStreamEvent,
@@ -32,15 +34,23 @@ from openminion.services.gateway.streaming import (
 )
 from openminion.services.gateway.turn_intent import TypedTurnIntent
 from openminion.services.gateway.turn import GatewayTurnRunner
+from openminion.services.gateway.turn.route_classification import (
+    classify_setup_cost_route,
+)
 from openminion.services.gateway.turn.runtime import (
     _await_with_progress_indicator,
     _interactive_user_prompt,
+    _legacy_request_hash,
     _message_from_cache,
     _message_to_cache,
+    _normalize_metadata,
     _request_hash,
 )
 from openminion.modules.policy import SecurityPolicyEngine
-from openminion.modules.storage.runtime.idempotency_store import IdempotencyStore
+from openminion.modules.storage.runtime.idempotency_store import (
+    IdempotencyRecord,
+    IdempotencyStore,
+)
 from openminion.modules.storage.runtime.retrieval_service import RetrievalService
 from openminion.modules.storage.runtime.session_store import (
     EventRecord,
@@ -51,7 +61,32 @@ from openminion.modules.telemetry.invocation_repair import InvocationLifecycleRe
 
 _BRAIN_INTEGRATION_MODE_AUTHORITATIVE = "contextctl_authoritative"
 _BRAIN_INTEGRATION_MODE_LEGACY_ALIAS = "ctxctl_authoritative"
+_TERMINAL_RUN_EVENT_TYPES = frozenset({"run.completed", "run.failed", "run.cancelled"})
 _USER_IO = UserIO()
+
+
+class _IdempotencyRequestInputs(TypedDict):
+    channel: str
+    target: str
+    body: str
+    session_id: Optional[str]
+    inbound_metadata: Optional[dict[str, str]]
+    request_id: Optional[str]
+    deliver: bool
+    exclude_history_message_ids: tuple[str, ...]
+    forced_tools: Optional[list[str]]
+    capability_category: Optional[str]
+    typed_turn_intent: TypedTurnIntent | None
+    image_refs: tuple[str, ...]
+
+
+def _is_generated_uuid4_hex(value: str) -> bool:
+    if len(value) != 32 or value != value.lower():
+        return False
+    try:
+        return UUID(hex=value).version == 4
+    except ValueError:
+        return False
 
 
 def _run_gateway_stream_worker(
@@ -425,24 +460,25 @@ class GatewayService:
         progress_callback: Callable[[object], None] | None = None,
         approval_callback: Callable[..., Any] | None = None,
     ) -> Message:
-        request_hash = _request_hash(
-            agent_id=self._agent_id,
-            channel=channel,
-            target=target,
-            body=body,
-            session_id=session_id,
-            inbound_metadata=inbound_metadata,
-            request_id=request_id,
-            deliver=deliver,
-            exclude_history_message_ids=exclude_history_message_ids,
-            forced_tools=forced_tools,
-            capability_category=capability_category,
-            typed_turn_intent=typed_turn_intent,
-            image_refs=image_refs,
-        )
+        request_inputs: _IdempotencyRequestInputs = {
+            "channel": channel,
+            "target": target,
+            "body": body,
+            "session_id": session_id,
+            "inbound_metadata": inbound_metadata,
+            "request_id": request_id,
+            "deliver": deliver,
+            "exclude_history_message_ids": exclude_history_message_ids,
+            "forced_tools": forced_tools,
+            "capability_category": capability_category,
+            "typed_turn_intent": typed_turn_intent,
+            "image_refs": image_refs,
+        }
+        request_hash = _request_hash(agent_id=self._agent_id, **request_inputs)
         cached = self._completed_idempotent_message(
             idempotency_key=idempotency_key,
             request_hash=request_hash,
+            request_inputs=request_inputs,
         )
         if cached is not None:
             return cached
@@ -459,6 +495,7 @@ class GatewayService:
             cached = self._completed_idempotent_message(
                 idempotency_key=idempotency_key,
                 request_hash=request_hash,
+                request_inputs=request_inputs,
             )
             if cached is not None:
                 return cached
@@ -468,18 +505,7 @@ class GatewayService:
 
         task = asyncio.create_task(
             self._handle_message_once(
-                channel=channel,
-                target=target,
-                body=body,
-                session_id=session_id,
-                request_id=request_id,
-                inbound_metadata=inbound_metadata,
-                deliver=deliver,
-                exclude_history_message_ids=exclude_history_message_ids,
-                forced_tools=forced_tools,
-                capability_category=capability_category,
-                typed_turn_intent=typed_turn_intent,
-                image_refs=image_refs,
+                **request_inputs,
                 progress_callback=progress_callback,
                 approval_callback=approval_callback,
             )
@@ -512,16 +538,194 @@ class GatewayService:
         *,
         idempotency_key: str,
         request_hash: str,
+        request_inputs: _IdempotencyRequestInputs,
     ) -> Message | None:
         existing = self._idempotency.get(
             method=self._METHOD_HANDLE_MESSAGE,
             idempotency_key=idempotency_key,
         )
-        if existing is not None and existing.request_hash != request_hash:
-            raise ValueError("idempotency key conflicts with an earlier request")
-        if existing is not None and existing.status == "completed":
-            return _message_from_cache(existing.response)
-        return None
+        if existing is None:
+            return None
+        if existing.request_hash == request_hash:
+            return (
+                _message_from_cache(existing.response)
+                if existing.status == "completed"
+                else None
+            )
+        legacy_message = self._recover_legacy_completed_message(
+            existing=existing,
+            request_inputs=request_inputs,
+        )
+        if legacy_message is not None:
+            return legacy_message
+        raise ValueError("idempotency key conflicts with an earlier request")
+
+    def _recover_legacy_completed_message(
+        self,
+        *,
+        existing: IdempotencyRecord,
+        request_inputs: _IdempotencyRequestInputs,
+    ) -> Message | None:
+        if (
+            existing.status != "completed"
+            or request_inputs["exclude_history_message_ids"]
+            or request_inputs["forced_tools"]
+            or request_inputs["capability_category"]
+        ):
+            return None
+        legacy_hash = _legacy_request_hash(
+            channel=request_inputs["channel"],
+            target=request_inputs["target"],
+            body=request_inputs["body"],
+            session_id=request_inputs["session_id"],
+            inbound_metadata=request_inputs["inbound_metadata"],
+            typed_turn_intent=request_inputs["typed_turn_intent"],
+            image_refs=request_inputs["image_refs"],
+        )
+        if existing.request_hash != legacy_hash:
+            return None
+        cached = _message_from_cache(existing.response)
+        meta = cached.metadata
+        if (
+            meta.get("replayed_response", "").strip().lower() == "true"
+            or meta.get("suppressed", "").strip()
+        ):
+            return None
+        cached_session_id = meta.get("session_id", "").strip()
+        cached_run_id = meta.get("run_id", "").strip()
+        cached_request_id = meta.get("request_id", "").strip()
+        cached_persisted_id = meta.get("persisted_outbound_message_id", "").strip()
+        if not (
+            cached_session_id
+            and cached_run_id
+            and cached_request_id
+            and cached_persisted_id
+        ):
+            return None
+        requested_session_id = (request_inputs["session_id"] or "").strip()
+        if requested_session_id and cached_session_id != requested_session_id:
+            return None
+        supplied_request_id = request_inputs["request_id"] or ""
+        if supplied_request_id:
+            if cached_request_id != supplied_request_id:
+                return None
+        elif not _is_generated_uuid4_hex(cached_request_id):
+            return None
+        recorded_category = (
+            meta.get("capability_category") or meta.get("intent_category") or ""
+        )
+        if recorded_category and recorded_category != "none":
+            return None
+        if not request_inputs["body"].strip().lower().startswith("tool ") and (
+            meta.get("tool_loop_termination_reason") == "forced_tool_unavailable"
+            or (
+                "capability_attempted_tools" in meta
+                and meta["capability_attempted_tools"] != "[]"
+            )
+        ):
+            return None
+        return (
+            cached
+            if self._legacy_turn_events_match(
+                session_id=cached_session_id,
+                run_id=cached_run_id,
+                request_id=cached_request_id,
+                persisted_outbound_id=cached_persisted_id,
+                request_inputs=request_inputs,
+            )
+            else None
+        )
+
+    def _legacy_turn_events_match(
+        self,
+        *,
+        session_id: str,
+        run_id: str,
+        request_id: str,
+        persisted_outbound_id: str,
+        request_inputs: _IdempotencyRequestInputs,
+    ) -> bool:
+        queued_event: EventRecord | None = None
+        running_event: EventRecord | None = None
+        terminal_event: EventRecord | None = None
+        for event in reversed(
+            self._sessions.list_run_events(
+                session_id=session_id, run_id=run_id, limit=100
+            )
+        ):
+            if event.event_type == "run.queued" and queued_event is None:
+                queued_event = event
+            elif event.event_type == "run.running" and running_event is None:
+                running_event = event
+            elif event.event_type in _TERMINAL_RUN_EVENT_TYPES:
+                terminal_event = event
+        if (
+            queued_event is None
+            or running_event is None
+            or terminal_event is None
+            or terminal_event.id <= queued_event.id
+            or str(queued_event.payload.get("agent_id", "")).strip() != self._agent_id
+            or str(queued_event.payload.get("request_id", "")).strip() != request_id
+            or str(queued_event.payload.get("channel", "")) != request_inputs["channel"]
+            or str(queued_event.payload.get("target", "")) != request_inputs["target"]
+        ):
+            return False
+        expected_route = classify_setup_cost_route(
+            message=request_inputs["body"],
+            forced_tools=None,
+            capability_category=None,
+            inbound_metadata=request_inputs["inbound_metadata"],
+        )
+        if (
+            str(running_event.payload.get("setup_cost_route", "")).strip()
+            != expected_route.label
+            or str(running_event.payload.get("setup_cost_route_reason", "")).strip()
+            != expected_route.reason
+        ):
+            return False
+        persisted_matched = False
+        delivery_modes: set[str] = set()
+        cursor, end_id = queued_event.id, terminal_event.id - 1
+        while cursor < end_id:
+            batch = self._sessions.list_events_after_id(
+                session_id=session_id, after_id=cursor, high_water_id=end_id
+            )
+            if not batch:
+                break
+            for event in batch:
+                payload = event.payload
+                if (
+                    str(payload.get("run_id", "")).strip() != run_id
+                    or str(payload.get("response_id", "")).strip()
+                    != persisted_outbound_id
+                ):
+                    continue
+                if event.event_type == "response.persisted":
+                    persisted_matched = True
+                elif (
+                    event.event_type == "response.delivered"
+                    and str(payload.get("thread_decision_action", "")).strip()
+                    != "replay"
+                ):
+                    mode = str(payload.get("delivery_mode", "")).strip()
+                    if mode:
+                        delivery_modes.add(mode)
+            cursor = batch[-1].id
+        if not persisted_matched:
+            return False
+        if request_inputs["deliver"]:
+            return "channel" in delivery_modes
+        if "channel" in delivery_modes:
+            return False
+        caller_handles_delivery = parse_metadata_bool(
+            _normalize_metadata(request_inputs["inbound_metadata"]),
+            CALLER_HANDLES_DELIVERY_METADATA_KEY,
+        )
+        return (
+            "return" in delivery_modes
+            if caller_handles_delivery
+            else not delivery_modes
+        )
 
     async def _handle_message_once(
         self,

@@ -7,6 +7,17 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `GatewayService._completed_idempotent_message` now recovers completed
+  pre-`#848` (pre-agent-field) gateway idempotency receipts across upgrades
+  without schema changes by verifying the legacy request hash together with
+  retained cached-response metadata and persisted session run/delivery events
+  (`agent_id`, `request_id`, channel/return delivery mode, and default
+  `exclude_history_message_ids` / `forced_tools` / `capability_category`
+  posture), while keeping stored receipts unchanged and failing closed on
+  cross-agent reuse, changed identity/delivery/controls, non-default legacy
+  controls, uncorroborated legacy rows, and all current-format conflicts
+  (Refs #858).
+
 - The ordinary brain tool caller now awaits an async `@tool` handler: `run_tool_spec`
   runs a returned coroutine through the existing `run_async_compat` bridge instead of
   shaping it as data, so the body executes once, the synchronous path and argument order

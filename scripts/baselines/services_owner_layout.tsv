@@ -97,7 +97,12 @@ scope	max_python_files	max_loc
 # pre/post-turn boundaries, child binding propagation and canonical candidate count.
 # Independently reviewed +42 feature LOC consumes 2 existing headroom; 209 files
 # remain unchanged. Measured on aa7d5b6b6: 42572 (+40 over prior cap).
-services	209	42572
+# Issue 858 (2026-11-24) recovers completed pre-#848 gateway idempotency
+# receipts in the existing gateway and request-hash owners using retained metadata
+# and session run/delivery events without schema changes or a second store
+# (+231 LOC across services/gateway/service.py and services/gateway/turn/runtime.py;
+# 209 files unchanged; measured on dev 1d842a4: 42803).
+services	209	42803
 services/security	6	187
 services/stats	1	25
 services/tool	3	50

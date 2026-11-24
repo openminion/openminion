@@ -137,3 +137,76 @@ def test_submitted_turn_idempotency_replays_exact_request(echo_runtime):
     ).result(timeout_s=30)
     assert [error.code for error in conflict.errors] == ["turn_failed"]
     assert "idempotency key conflicts" in conflict.errors[0].message
+
+
+def test_runtime_replays_persisted_legacy_receipt_after_reopen(tmp_path):
+    from hashlib import sha256
+    import json
+
+    from openminion.modules.storage.runtime.sqlite import connect_database
+    from openminion.services.gateway.service import GatewayService
+
+    db_path = tmp_path / "state.db"
+    config = OpenMinionConfig()
+    _csc_install_default_agent(config, provider="echo")
+    config.runtime.log_level = "ERROR"
+    config.storage.path = str(db_path)
+    config_path = tmp_path / "agents.json"
+    save_config(config, str(config_path))
+
+    payload = {
+        "message": "legacy sdk request",
+        "session_id": "sdk-legacy-idempotency",
+        "idempotency_key": "sdk-legacy-key-1",
+        "deliver": False,
+    }
+    first_runtime = APIRuntime.from_config_path(
+        str(config_path), home_root=tmp_path, data_root=tmp_path / "data"
+    )
+    try:
+        first = first_runtime.run_turn(payload=payload)
+    finally:
+        first_runtime.close()
+
+    legacy_hash = sha256(
+        json.dumps(
+            {
+                "channel": "console",
+                "target": "api-user",
+                "body": "legacy sdk request",
+                "session_id": "sdk-legacy-idempotency",
+                "inbound_metadata": {},
+                "typed_turn_intent": None,
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    conn = connect_database(db_path)
+    try:
+        conn.execute(
+            "UPDATE idempotency_keys SET request_hash = ? "
+            "WHERE method = ? AND idempotency_key = ?",
+            (legacy_hash, GatewayService._METHOD_HANDLE_MESSAGE, "sdk-legacy-key-1"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    reopened = APIRuntime.from_config_path(
+        str(config_path), home_root=tmp_path, data_root=tmp_path / "data"
+    )
+    try:
+        replayed = reopened.run_turn(payload=payload)
+        assert replayed["id"] == first["id"]
+        assert replayed["body"] == first["body"]
+        assert _session_run_ids(reopened, "sdk-legacy-idempotency") == {first["run_id"]}
+        for changed in (
+            {"message": "changed sdk request"},
+            {"deliver": True},
+            {"forced_tools": ["time.current"]},
+        ):
+            with pytest.raises(ValueError, match="idempotency key conflicts"):
+                reopened.run_turn(payload={**payload, **changed})
+        assert _session_run_ids(reopened, "sdk-legacy-idempotency") == {first["run_id"]}
+    finally:
+        reopened.close()
