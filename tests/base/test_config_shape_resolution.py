@@ -282,6 +282,18 @@ def test_agent_profile_defaults_channel_to_console_when_omitted() -> None:
     assert explicit.agents["openminion"].default_channel == "cli"
 
 
+@pytest.mark.parametrize("raw_value", ["", None, False, 0, [], {}])
+def test_agent_profile_preserves_explicit_empty_or_invalid_default_channel(
+    raw_value,
+) -> None:
+    cfg = OpenMinionConfig.from_dict(
+        {"agents": {"openminion": {"provider": "echo", "default_channel": raw_value}}}
+    )
+    actual = cfg.agents["openminion"].default_channel
+    assert type(actual) is type(raw_value)
+    assert actual == raw_value
+
+
 def test_programmatic_from_config_runs_turn_without_explicit_default_channel(
     tmp_path,
 ) -> None:

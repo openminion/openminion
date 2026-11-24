@@ -29,6 +29,11 @@ This file tracks package-facing release notes for `openminion`.
   unsupported delegation modes before requesting approval. Generic delegation and
   execution-time permission checks remain unchanged. Denied calls retain their
   acknowledgement message without becoming pending approvals or replay commands.
+- `AgentProfileConfig.default_channel` and `_parse_agent_profiles` now default to
+  `"console"` when the `default_channel` key is omitted (matching `openminion config init`
+  so programmatic `APIRuntime.from_config(...)` turns succeed without specifying
+  `default_channel`), while preserving explicitly supplied values (including empty or
+  non-string inputs) unchanged (Refs #864).
 
 - `import_omx` and `export_omx` now confine table payload paths inside `omx_dir`
   (normalizing Windows separators while rejecting `..` escapes, absolute paths, and
