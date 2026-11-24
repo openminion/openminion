@@ -169,7 +169,7 @@ def _coerce_value(raw_value: Any, kind: str, default: Any) -> Any:
     if kind == _KIND_INT_LIST:
         return _as_int_list(raw_value)
     if kind == _KIND_RAW:
-        return default if raw_value is None else raw_value
+        return raw_value
     raise ValueError(f"unknown provider field kind: {kind}")
 
 
@@ -190,7 +190,7 @@ def _build_providers_config(
     for name, (provider_cls, field_specs) in _PROVIDER_SPECS.items():
         payload = provider_payloads.get(name, {})
         kwargs = {
-            field_name: _coerce_value(payload.get(field_name), kind, default)
+            field_name: _coerce_value(payload.get(field_name, default), kind, default)
             for field_name, (kind, default) in field_specs.items()
         }
         configs[name] = provider_cls(**kwargs)
