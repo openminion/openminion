@@ -4,7 +4,6 @@ import json
 import logging
 import sys
 import time
-
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
@@ -16,7 +15,6 @@ from openminion.modules.tool.diagnostics.events import (
     emit_tool_execution_event,
     mcp_audit_fields,
 )
-from openminion.modules.tool.registry.catalog import ToolSpec
 from openminion.modules.tool.runtime.blast_radius import (
     TOOL_RESULT_BLAST_RADIUS_KEY,
     classify_tool_blast_radius,
@@ -38,6 +36,12 @@ from openminion.tools.config import resolve_tool_env
 
 if TYPE_CHECKING:
     from openminion.modules.tool.registry import ToolRegistry
+
+
+def _is_tool_spec(tool: Any) -> bool:
+    from openminion.modules.tool.registry.catalog import ToolSpec
+
+    return isinstance(tool, ToolSpec)
 
 
 @dataclass
@@ -191,13 +195,11 @@ def _runtime_resolution_data(
 
 
 def _tool_contract_metadata(tool: Any) -> dict[str, Any]:
-    if not isinstance(tool, ToolSpec):
+    if not _is_tool_spec(tool):
         return {}
-    metadata: dict[str, Any] = {
-        TOOL_RESULT_BLAST_RADIUS_KEY: classify_tool_blast_radius(tool).blast_radius,
-    }
-    min_scope = str(getattr(tool, "min_scope", "") or "").strip().upper()
-    if min_scope:
+    radius = classify_tool_blast_radius(tool).blast_radius
+    metadata: dict[str, Any] = {TOOL_RESULT_BLAST_RADIUS_KEY: radius}
+    if min_scope := str(getattr(tool, "min_scope", "") or "").strip().upper():
         metadata["tool_min_scope"] = min_scope
     return metadata
 
@@ -460,9 +462,7 @@ def _runtime_direct_allowed(
         return True
     tools = available_tools if available_tools is not None else registry._tools
     tool = tools.get(raw_tool_name)
-    if isinstance(tool, ToolSpec) and bool(
-        getattr(tool, "prompt_visible_runtime_name", False)
-    ):
+    if _is_tool_spec(tool) and getattr(tool, "prompt_visible_runtime_name", False):
         return True
     override = str(metadata.get("allow_runtime_direct", "") or "").strip().lower()
     return override in {"1", "true", "yes", "on"}
@@ -618,7 +618,7 @@ def execute_single_call(
             continue
 
         effective_runtime_binding_id = resolution.runtime_binding_id
-        if not effective_runtime_binding_id and isinstance(tool, ToolSpec):
+        if not effective_runtime_binding_id and _is_tool_spec(tool):
             effective_runtime_binding_id = str(
                 getattr(tool, "runtime_binding_id", "") or ""
             ).strip()
@@ -641,11 +641,11 @@ def execute_single_call(
             break
 
         boundary_adapter = getattr(context, "blast_radius_adapter", None)
-        if boundary_adapter is not None and isinstance(tool, ToolSpec):
+        if boundary_adapter is not None and _is_tool_spec(tool):
             boundary_adapter.step(tool)
 
         raise_if_cancelled()
-        if isinstance(tool, ToolSpec):
+        if _is_tool_spec(tool):
             executed = execute_tool_spec_call_registry_toolspec_runtime(
                 tool=tool,
                 arguments=arguments,
