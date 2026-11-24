@@ -108,7 +108,8 @@ def test_first_input_requests_compact_model_task_without_truncation(
     )
     assert "task_update" not in request.tools[0].input_schema["required"]
     if oversized and not include_patch:
-        assert decision.reason_code == "invalid_task_context_update"
+        assert decision.reason_code == "task_context_capacity_exceeded"
+        assert f"it has {len(user_input):,} characters" in decision.question
         assert state.resolved_task_context is None and state.task_context_needs_update
         return
     assert decision.route == "act"

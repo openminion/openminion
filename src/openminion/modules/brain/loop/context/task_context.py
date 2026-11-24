@@ -5,6 +5,8 @@ from hashlib import sha256
 from uuid import uuid4
 from typing import Any
 
+from pydantic import ValidationError
+
 from .task_schema import merge_task_definitions
 from .task_delta import apply_condition_delta
 from openminion.modules.brain.schemas.task_context import (
@@ -185,13 +187,19 @@ def resolve_entry_task_update(
                 "Missing task_update for a clarification or active request"
             )
         digest = input_digest(str(user_input))
-        return ResolvedTaskContext(
-            revision=1,
-            objective=str(user_input),
-            objective_kind="verbatim",
-            sources={"$objective": digest},
-            consumed_input=digest,
-        )
+        try:
+            return ResolvedTaskContext(
+                revision=1,
+                objective=str(user_input),
+                objective_kind="verbatim",
+                sources={"$objective": digest},
+                consumed_input=digest,
+            )
+        except ValidationError as error:
+            # The objective is the seed's only variable field, so only its bound can fail.
+            raise TaskContextCapacityError(
+                "New request exceeds the verbatim task-context capacity"
+            ) from error
     if len(patches) != 1:
         raise ValueError("Exactly one task_update is allowed per entry response")
     raw_patch = patches[0]
@@ -233,6 +241,10 @@ def resolve_entry_task_update(
 
 class TaskContextBudgetError(ValueError):
     """Required user task state cannot fit without losing active conditions."""
+
+
+class TaskContextCapacityError(ValueError):
+    """A new request is too long to seed verbatim as the task objective."""
 
 
 def message_token_estimate(

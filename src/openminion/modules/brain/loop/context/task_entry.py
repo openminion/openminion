@@ -7,6 +7,7 @@ from openminion.modules.brain.schemas import RespondDecision
 from openminion.modules.llm.schemas import Message
 from .task_context import (
     TASK_UPDATE_INSTRUCTIONS,
+    TaskContextCapacityError,
     message_token_estimate,
     task_context_message,
     resolve_entry_task_update,
@@ -138,6 +139,24 @@ def apply_entry_task_context(
             user_input=user_input,
             clarify=clarify,
             recovery_only=recovery_only,
+        )
+    except TaskContextCapacityError:
+        state.task_context_needs_update = True
+        logger.emit(
+            "brain.task_context.rejected",
+            {"reason": "task_context_capacity_exceeded"},
+            trace_id=state.trace_id,
+            status="warning",
+        )
+        return RespondDecision(
+            confidence=1.0,
+            reason_code="task_context_capacity_exceeded",
+            respond_kind="clarify",
+            question=(
+                f"This request is too long to start as a task: it has {len(user_input or ''):,} "
+                f"characters, and the task context holds a new request word for word only up to "
+                f"{TASK_CONTEXT_MAX_CHARS:,}. Please shorten it or split it into smaller requests."
+            ),
         )
     except ValueError:
         state.task_context_needs_update = True
