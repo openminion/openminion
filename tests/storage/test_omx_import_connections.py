@@ -103,7 +103,7 @@ def test_import_omx_rolls_back_and_closes_when_a_table_fails(
 
     def failing_replace(**kwargs):
         replace_rows(**kwargs)
-        if kwargs["table_name"] == "secrets":
+        if kwargs["quoted_table"] == '"secrets"':
             raise RuntimeError("forced table import failure")
         return 0
 

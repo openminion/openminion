@@ -519,6 +519,7 @@ def accept_child_worktree_artifact(
     repo_root: str | Path,
     record: dict[str, Any],
     artifactctl: Any,
+    allowed_paths: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Apply a stored child bundle to the parent checkout after safety checks."""
     repo = Path(repo_root).expanduser().resolve(strict=True)
@@ -579,6 +580,21 @@ def accept_child_worktree_artifact(
         if _sha256_text(diff.stdout) != target_digest:
             _git(repo, "update-ref", "-d", temp_ref)
             return {"ok": False, "status": "target_digest_mismatch"}
+        if allowed_paths is not None:
+            changed = _git(
+                repo,
+                "diff",
+                "--name-only",
+                "--no-renames",
+                "-z",
+                base_revision,
+                temp_ref,
+            )
+            if changed.returncode != 0 or not set(
+                changed.stdout.rstrip("\0").split("\0")
+            ).issubset(allowed_paths):
+                _git(repo, "update-ref", "-d", temp_ref)
+                return {"ok": False, "status": "write_scope_mismatch"}
         apply = _git_input(
             repo, "apply", "--index", "--binary", "-", input_text=diff.stdout
         )

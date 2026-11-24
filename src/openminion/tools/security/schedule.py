@@ -188,6 +188,7 @@ def report_dependencies(
         scan = SecurityScanResult.model_validate_json(content)
         if (
             scan_meta.session_id != meta.session_id
+            or scan_meta.agent_id != meta.agent_id
             or scan.target_revision != report.scope.target_revision
         ):
             raise ToolRuntimeError(

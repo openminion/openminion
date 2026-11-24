@@ -116,6 +116,11 @@ class SecurityFollowUpReviewArgs(BaseModel):
     review_kind: Literal["follow_up"]
     prior_review_ref: str = Field(pattern=_CANONICAL_REF_PATTERN)
     rescan_report_ref: str = Field(pattern=_CANONICAL_REF_PATTERN)
+    source_task_id: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Optional scheduled source task whose approved repair and latest rescan this follow-up links. Omit for independent report review.",
+    )
     closure_reviews: list[SecurityClosureDecision] = Field(
         min_length=1,
         max_length=200,
@@ -155,6 +160,15 @@ class SecurityRemediationFinding(BaseModel):
     evidence_summary: str
     remediation_objective: str
     verification_criteria: list[str]
+
+
+class SecurityRepairSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source_task_id: str = Field(min_length=1)
+    review_ref: str = Field(pattern=_CANONICAL_REF_PATTERN)
+    finding_id: str = Field(pattern=_FINDING_ID_PATTERN)
+    write_paths: tuple[str, ...] = Field(min_length=1)
 
 
 class SecurityFindingReview(BaseModel):

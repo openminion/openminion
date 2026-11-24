@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import argparse
-import shlex
 import sqlite3
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from openminion.cli.commands.project_security import (
+    revalidate_security_project,
+    record_security_project_baseline,
+)
+from openminion.cli.commands.project_launch import ProjectLaunchRequest
 from openminion.api.turns import run_turn
 from openminion.api.turns import TurnRequestError, TurnTimeoutError
 from openminion.base.errors import ErrorInfo
@@ -31,16 +34,12 @@ from openminion.modules.task.autonomy import (
     TestEvidence,
     VerificationWaiver,
     autonomy_permission_metadata,
-    build_autonomy_run,
     build_local_workspace_ref,
     build_terminal_proof_packet,
     now_ms,
 )
-from openminion.modules.task.autonomy import VerificationDomain
 from openminion.modules.task.constants import (
     DEFAULT_INTEGRATED_SQLITE_SUBPATH,
-    DEFAULT_PROJECT_TURN_TIMEOUT_SECONDS,
-    DEFAULT_PROJECT_VERIFICATION_TIMEOUT_SECONDS,
 )
 from openminion.modules.task.project import (
     AutonomyLoopConditionKind,
@@ -50,6 +49,7 @@ from openminion.modules.task.project import (
 )
 from openminion.modules.task.project import checkpoints as project_checkpoints
 from openminion.modules.task.project.turn import project_turn_result_from_response
+from openminion.modules.task.project.models import SecurityRepairContext
 from openminion.services.runtime.project_worker import (
     ProjectTurnRequest,
     ProjectTurnResult,
@@ -88,217 +88,27 @@ def validate_project_cycle_interval(args: argparse.Namespace) -> None:
         raise ValueError("--cycle-interval-seconds must be in 1..3600")
 
 
-@dataclass(frozen=True)
-class ProjectLaunchRequest:
-    run: AutonomyRun
-    workspace_boundary: Path
-    repository: Path
-    task_plan_required: bool
-    expected_checks: tuple[str, ...]
-    release_tools: bool
-    success_criteria: tuple[str, ...] = ()
-    source_request: str = ""
-
-
-def focus_project_help() -> str:
-    return "\n".join(
-        (
-            "usage: /project start --goal TEXT [--repository PATH] --verify-command COMMAND",
-            "       [--verification-domain coding|research] [--max-iterations N]",
-            "       [--max-wall-clock-ms N] [--max-tool-calls N]",
-            "       [--expected-check NAME] [--success-criterion TEXT] [--release-tools]",
-            "Repository is optional for non-Git work. Verification is required.",
-            "usage: /project status [RUN_ID] | show/report RUN_ID",
-            "       /project pause RUN_ID",
-            "       /project redirect RUN_ID --direction TEXT",
-            "       /project resume RUN_ID",
-            "       /project cancel RUN_ID",
-            "       /project answer RUN_ID --input-request-id ID --answer TEXT",
-            "       /project reprioritize RUN_ID --priority TEXT",
-            "       /project extend-budget RUN_ID [--extra-iterations N]",
-            "Pause takes effect at the checkpoint boundary; it does not roll back work.",
-            "Redirect updates the next cycle and requires the project to be paused.",
-        )
-    )
-
-
-def resolve_project_repository(workspace_boundary: Path, value: str) -> Path:
-    if not value:
-        return workspace_boundary
-    repository = Path(value).expanduser()
-    if not repository.is_absolute():
-        repository = workspace_boundary / repository
-    return repository.resolve(strict=False)
-
-
-def build_project_launch_request(
-    *,
-    goal: str,
-    session_id: str,
-    agent_id: str,
-    workspace_boundary: Path,
-    repository: Path,
-    require_git_repository: bool,
-    max_iterations: int = 1,
-    max_wall_clock_ms: int | None = None,
-    max_tool_calls: int | None = None,
-    permission_profile_id: str = "local-safe",
-    config_ref: str | None = None,
-    verification_domain: VerificationDomain = "coding",
-    turn_target: str = "autonomy",
-    verification_commands: tuple[str, ...] = (),
-    turn_timeout_seconds: int = DEFAULT_PROJECT_TURN_TIMEOUT_SECONDS,
-    verification_timeout_seconds: int = DEFAULT_PROJECT_VERIFICATION_TIMEOUT_SECONDS,
-    verification_waiver_reason: str | None = None,
-    goal_id: str | None = None,
-    task_plan_required: bool = True,
-    expected_checks: tuple[str, ...] = (),
-    release_tools: bool = False,
-    success_criteria: tuple[str, ...] = (),
-    source_request: str = "",
-) -> ProjectLaunchRequest:
-    boundary = workspace_boundary.expanduser().resolve(strict=False)
-    repo = repository.expanduser().resolve(strict=False)
-    if repo != boundary and boundary not in repo.parents:
-        raise ValueError("execution repository must be inside the workspace boundary")
-    check_names = tuple(name.strip() for name in expected_checks)
-    if any(not name for name in check_names) or len(set(check_names)) != len(
-        check_names
-    ):
-        raise ValueError("expected check names must be non-empty and unique")
-    if require_git_repository:
-        _validate_project_repository(boundary=boundary, repository=repo)
-    required_evidence_kinds: tuple[str, ...] = (
-        ("waiver",) if verification_waiver_reason else ("verification",)
-    )
-    if verification_domain == "coding" and require_git_repository:
-        required_evidence_kinds = (*required_evidence_kinds, "repository_status")
-    run = build_autonomy_run(
-        goal_text=goal,
-        goal_id=goal_id,
-        session_id=session_id,
-        workspace_ref=build_local_workspace_ref(repo),
-        max_iterations=max_iterations,
-        max_wall_clock_ms=max_wall_clock_ms,
-        max_tool_calls=max_tool_calls,
-        permission_profile_id=permission_profile_id,
-        agent_id=agent_id,
-        config_ref=config_ref,
-        verification_domain=verification_domain,
-        turn_target=turn_target,
-        verification_commands=verification_commands,
-        turn_timeout_seconds=turn_timeout_seconds,
-        verification_timeout_seconds=verification_timeout_seconds,
-        verification_waiver_reason=verification_waiver_reason,
-        required_evidence_kinds=required_evidence_kinds,
-    )
-    run = run.model_copy(
-        update={
-            "goal_id": run.goal_id or f"goal_{run.run_id}",
-            "task_id": f"task_{run.run_id}",
-        }
-    )
-    return ProjectLaunchRequest(
-        run=run,
-        workspace_boundary=boundary,
-        repository=repo,
-        task_plan_required=task_plan_required,
-        expected_checks=check_names,
-        release_tools=release_tools,
-        success_criteria=success_criteria,
-        source_request=source_request,
-    )
-
-
-def parse_focus_project_launch(
-    line: str,
-    *,
-    session_id: str,
-    agent_id: str,
-    workspace_boundary: Path,
-    config_ref: str | None,
-) -> ProjectLaunchRequest:
-    parser = argparse.ArgumentParser(
-        prog="/project", add_help=False, exit_on_error=False
-    )
-    parser.add_argument("--repository", default="")
-    parser.add_argument("--goal", default="")
-    parser.add_argument("--max-iterations", type=int, default=1)
-    parser.add_argument("--max-wall-clock-ms", type=int, default=None)
-    parser.add_argument("--max-tool-calls", type=int, default=None)
-    parser.add_argument("--verify-command", action="append", default=[])
-    parser.add_argument("--expected-check", action="append", default=[])
-    parser.add_argument("--success-criterion", action="append", default=[])
-    parser.add_argument("--release-tools", action="store_true")
-    parser.add_argument(
-        "--verification-domain",
-        choices=("coding", "research"),
-        default="coding",
-    )
-    try:
-        tokens = shlex.split(line)
-        if tokens and tokens[0] == "/project":
-            tokens = tokens[1:]
-        command = tokens.pop(0) if tokens else ""
-        parsed, unknown = parser.parse_known_args(tokens)
-    except (argparse.ArgumentError, ValueError) as exc:
-        raise ValueError(str(exc)) from exc
-    if command != "start" or unknown:
-        raise ValueError("usage: /project start --goal TEXT [--repository PATH]")
-    repository = str(parsed.repository or "").strip()
-    goal = str(parsed.goal or "").strip()
-    if not goal:
-        raise ValueError("usage: /project start --goal TEXT [--repository PATH]")
-    if parsed.max_iterations < 1:
-        raise ValueError("--max-iterations must be at least 1")
-    repository_path = Path(repository) if repository else workspace_boundary
-    resolved_repository = (
-        repository_path
-        if repository_path.is_absolute()
-        else workspace_boundary / repository_path
-    )
-    return build_project_launch_request(
-        goal=goal,
-        session_id=session_id,
-        agent_id=agent_id,
-        workspace_boundary=workspace_boundary,
-        repository=resolved_repository,
-        require_git_repository=(
-            bool(repository) or (resolved_repository / ".git").exists()
-        ),
-        max_iterations=parsed.max_iterations,
-        max_wall_clock_ms=parsed.max_wall_clock_ms,
-        max_tool_calls=parsed.max_tool_calls,
-        config_ref=config_ref,
-        verification_domain=parsed.verification_domain,
-        turn_target="focus",
-        verification_commands=tuple(parsed.verify_command),
-        task_plan_required=True,
-        expected_checks=tuple(parsed.expected_check),
-        release_tools=bool(parsed.release_tools),
-        success_criteria=tuple(parsed.success_criterion),
-        source_request=goal,
-    )
-
-
-def _validate_project_repository(*, boundary: Path, repository: Path) -> None:
-    if not boundary.is_dir():
-        raise ValueError(f"workspace boundary is unavailable: {boundary}")
-    if not repository.is_dir():
-        raise ValueError(f"execution repository is unavailable: {repository}")
-    if repository != boundary and boundary not in repository.parents:
-        raise ValueError("execution repository must be inside the workspace boundary")
-    if not (repository / ".git").exists():
-        raise ValueError(f"execution repository does not contain .git: {repository}")
-
-
 def launch_project(
     request: ProjectLaunchRequest,
     *,
     store: AutonomyRunStore,
     manager: TaskManager,
+    args: argparse.Namespace | None = None,
 ) -> AutonomyRun:
+    repair = request.security_repair
+    revalidate_security_project(request, args=args, manager=manager)
     store.create(request.run)
+    baseline: tuple[TestEvidence, ...] = ()
+    if repair is not None:
+        from openminion.modules.task.project.verification import (
+            run_security_repair_baseline,
+        )
+
+        baseline = run_security_repair_baseline(
+            repair,
+            request.run.execution_selectors.verification_commands,
+            timeout_seconds=request.run.execution_selectors.verification_timeout_seconds,
+        )
     running = store.transition(
         request.run.run_id,
         status=AutonomyRunStatus.RUNNING,
@@ -316,8 +126,16 @@ def launch_project(
         release_tools_approved=request.release_tools,
         success_criteria=request.success_criteria,
         source_request=request.source_request,
+        security_repair=repair,
+        security_repair_baseline=baseline,
     )
-    return store.require(running.run_id)
+    running = store.require(running.run_id)
+    if repair is not None:
+        assert args is not None
+        return record_security_project_baseline(
+            repair, running, baseline, manager=manager, store=store, args=args
+        )
+    return running
 
 
 def workspace_path_from_ref(workspace_ref: str | None) -> Path | None:
@@ -463,6 +281,8 @@ def initialize_project(
     release_tools_approved: bool = False,
     success_criteria: tuple[str, ...] = (),
     source_request: str = "",
+    security_repair: SecurityRepairContext | None = None,
+    security_repair_baseline: tuple[TestEvidence, ...] = (),
 ) -> None:
     assert run.task_id is not None
     manager.create_task(
@@ -490,6 +310,17 @@ def initialize_project(
         payload={
             "decision": ProjectCycleDecision.CONTINUE.value,
             "replan_count": 0,
+            **(
+                {
+                    "security_repair": security_repair.model_dump(mode="json"),
+                    "security_repair_baseline": [
+                        item.model_dump(mode="json")
+                        for item in security_repair_baseline
+                    ],
+                }
+                if security_repair is not None
+                else {}
+            ),
             **project_checkpoints.initial_repository_lifecycle_payload(
                 run,
                 project_run,
@@ -554,8 +385,24 @@ def resume_project_run(
     checkpoint = project_checkpoints.load_latest_project_checkpoint(
         manager, task_id=run.task_id or ""
     )
+    if checkpoint is None:
+        return store.transition(
+            run.run_id,
+            status=AutonomyRunStatus.BLOCKED,
+            phase=AutonomyRunPhase.CLOSED,
+            operator_summary="Autonomy run blocked because its durable checkpoint is unavailable.",
+            next_action_hint="Restore the original task database and resume this run.",
+            error=AutonomyRunError(
+                code=(
+                    "PROJECT_CHECKPOINT_MISSING"
+                    if manager.get_task(run.task_id or "") is not None
+                    else "PROJECT_TASK_MISSING"
+                ),
+                message="Durable project state is missing from the configured task store.",
+            ),
+        )
     resumed_checkpoint = None
-    if checkpoint is not None and checkpoint.payload.get("proof_recovery_failed"):
+    if checkpoint.payload.get("proof_recovery_failed"):
         payload = dict(checkpoint.payload)
         payload.pop("proof_recovery_failed", None)
         payload.pop("error", None)
@@ -878,11 +725,9 @@ __all__ = [
     "apply_resume_overrides",
     "cancel_project_task_wake",
     "configured_cron_store",
-    "focus_project_help",
     "initialize_project",
     "persisted_verification_waiver",
     "project_task_manager",
-    "resolve_project_repository",
     "run_project_turn",
     "resume_project_task",
     "schedule_unattended_project",

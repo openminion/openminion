@@ -1632,6 +1632,21 @@ def test_child_worktree_artifact_accept_applies_complete_change_set_after_restar
         ] == ["correction_required", "passed"]
 
     with artifact_ctl(artifact_root) as ctl:
+        denied = accept_child_worktree_artifact(
+            repo_root=repo,
+            record={
+                **load_child_worktree_record(ctl, corrected_alias),
+                "touched_paths": ["seed.py"],
+            },
+            artifactctl=ctl,
+            allowed_paths=("seed.py",),
+        )
+        assert denied == {"ok": False, "status": "write_scope_mismatch"}
+        assert (repo / "seed.py").read_text() == "VALUE = 0\n"
+        assert not (repo / "new.txt").exists()
+        assert not subprocess.check_output(
+            ["git", "for-each-ref", "refs/openminion/child/"], cwd=repo, text=True
+        ).strip()
         telemetry.events.clear()
         accepted = _h_task_delegate(
             {

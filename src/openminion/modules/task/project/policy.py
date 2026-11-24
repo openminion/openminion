@@ -1,7 +1,15 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from pathlib import Path
+from uuid import uuid4
 from typing import cast
+
+from pydantic import ValidationError
+from openminion.modules.tool.errors import ToolRuntimeError
+from .checkpoints import load_latest_project_checkpoint
+from .turn import project_workspace
 
 from openminion.modules.task.autonomy import now_ms
 from openminion.modules.task.runtime.lifecycle import TaskManager
@@ -18,6 +26,99 @@ from .models import (
 
 
 _PROJECT_POLICY_METADATA_KEY = "project_policy"
+
+
+def code_bearing_project_inputs(
+    task_manager: TaskManager | None,
+    project_task_id: str,
+) -> tuple[Path, tuple[str, ...], int]:
+    if task_manager is None or not project_task_id:
+        raise ToolRuntimeError(
+            "DEPENDENCY_MISSING",
+            "Code-bearing delegation requires an approved project.",
+            {"reason_code": "project_context_unavailable"},
+        )
+    try:
+        checkpoint = load_latest_project_checkpoint(
+            task_manager,
+            task_id=project_task_id,
+        )
+    except ValidationError:
+        raise
+    except ValueError as exc:
+        raise ToolRuntimeError(
+            "DEPENDENCY_MISSING",
+            "Code-bearing delegation requires an approved project checkpoint.",
+            {"reason_code": "project_checkpoint_unavailable"},
+        ) from exc
+    if checkpoint is None:
+        raise ToolRuntimeError(
+            "DEPENDENCY_MISSING",
+            "Code-bearing delegation requires an approved project checkpoint.",
+            {"reason_code": "project_checkpoint_unavailable"},
+        )
+    if not repository_project_launch_approved(checkpoint):
+        raise ToolRuntimeError(
+            "POLICY_DENIED",
+            "Code-bearing delegation requires an approved project.",
+            {"reason_code": "project_launch_unapproved"},
+        )
+    repository = project_workspace(checkpoint.project_run.workspace_ref)
+    if not (repository / ".git").exists():
+        raise ToolRuntimeError(
+            "POLICY_DENIED",
+            "Code-bearing delegation requires an approved Git project.",
+            {"reason_code": "project_repository_unavailable"},
+        )
+    verification_commands = (
+        checkpoint.project_run.execution_selectors.verification_commands
+    )
+    if not verification_commands:
+        raise ToolRuntimeError(
+            "POLICY_DENIED",
+            "Code-bearing delegation requires approved project verification.",
+            {"reason_code": "project_verifier_unavailable"},
+        )
+    return (
+        repository,
+        verification_commands,
+        checkpoint.project_run.execution_selectors.verification_timeout_seconds,
+    )
+
+
+@contextmanager
+def security_repair_child_scope(
+    manager: TaskManager,
+    task_id: str,
+    parent_agent_id: str,
+    target_agent_id: str,
+    workspace: Path,
+    *,
+    readonly: bool = False,
+) -> Iterator[dict[str, str]]:
+    task = manager.get_task(task_id)
+    latest = manager.get_latest_checkpoint(task_id)
+    checkpoint = ProjectCheckpoint.model_validate(latest[1])
+    binding_id = uuid4().hex
+    active = {
+        "binding_id": binding_id,
+        "checkpoint_id": checkpoint.checkpoint_id,
+        "parent_agent_id": parent_agent_id,
+        "target_agent_id": target_agent_id,
+        "workspace": str(workspace.resolve()),
+        "readonly": readonly,
+    }
+    manager.update_task_metadata(
+        task_id=task_id, metadata={**task.metadata, "security_repair_child": active}
+    )
+    try:
+        yield {"task_id": task_id, "binding_id": binding_id}
+    finally:
+        task = manager.get_task(task_id)
+        metadata = dict(task.metadata)
+        if metadata.get("security_repair_child") == active:
+            metadata.pop("security_repair_child")
+            manager.update_task_metadata(task_id=task_id, metadata=metadata)
 
 
 def _repository_decision_approved(

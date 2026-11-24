@@ -96,17 +96,11 @@ def _inject_gateway_system_context(
 def _history_has_memory_context(*, history: list[Message]) -> bool:
     for item in history:
         metadata = getattr(item, "metadata", {}) or {}
-        if str(metadata.get("memory_scope", "") or "").strip():
+        if _metadata_text(metadata, "memory_scope"):
             return True
-        if (
-            str(metadata.get("context_memory_merged", "") or "").strip().lower()
-            == "true"
-        ):
+        if _metadata_bool(metadata, "context_memory_merged"):
             return True
-        if (
-            str(metadata.get("context_memory_dynamic", "") or "").strip().lower()
-            == "true"
-        ):
+        if _metadata_bool(metadata, "context_memory_dynamic"):
             return True
     return False
 
@@ -174,11 +168,9 @@ def _inject_resume_task_hints(
     session_id: str,
     inbound_metadata: dict[str, str],
 ) -> None:
-    task_id = str(inbound_metadata.get("linked_task_id", "") or "").strip()
-    project_act_profile = str(
-        inbound_metadata.get("project_act_profile", "") or ""
-    ).strip()
-    cron_job_id = str(inbound_metadata.get("cron_job_id", "") or "").strip()
+    task_id = _metadata_text(inbound_metadata, "linked_task_id")
+    project_act_profile = _metadata_text(inbound_metadata, "project_act_profile")
+    cron_job_id = _metadata_text(inbound_metadata, "cron_job_id")
     has_watch_context = _metadata_bool(inbound_metadata, "watch_job")
     has_consolidation_context = _metadata_bool(
         inbound_metadata, "memory_consolidation_job"
@@ -242,6 +234,10 @@ def _metadata_bool(metadata: dict[str, str], key: str) -> bool:
     return str(metadata.get(key, "") or "").strip().lower() == "true"
 
 
+def _metadata_text(metadata: dict[str, str], key: str) -> str:
+    return str(metadata.get(key, "") or "").strip()
+
+
 def _module_state(state_inline: dict[str, Any]) -> dict[str, Any]:
     module_state = state_inline.get(STATE_KEY_MODULE_STATE)
     return module_state if isinstance(module_state, dict) else {}
@@ -254,32 +250,34 @@ def _attach_watch_resume_context(
     cron_job_id: str,
 ) -> None:
     module_state = _module_state(state_inline)
-    raw_tools = str(inbound_metadata.get("watch_allowed_tools", "") or "").strip()
-    watch_turn_kind = (
-        str(inbound_metadata.get("watch_turn_kind", "") or "").strip()
-        or WATCH_TURN_KIND_CHECK
-    )
-    module_state["watch_subscription"] = {
+    raw_tools = _metadata_text(inbound_metadata, "watch_allowed_tools")
+    watch_turn_kind = _metadata_text(inbound_metadata, "watch_turn_kind")
+    write_scope = _metadata_text(inbound_metadata, "watch_write_authorization_scope")
+    subscription = {
         "enabled": True,
-        "turn_kind": watch_turn_kind,
-        "description": str(inbound_metadata.get("watch_description", "") or "").strip(),
-        "alert_condition": str(
-            inbound_metadata.get("watch_alert_condition", "") or ""
-        ).strip(),
-        "profile_id": str(inbound_metadata.get("watch_profile_id", "") or "").strip(),
-        "target_id": str(inbound_metadata.get("watch_target_id", "") or "").strip(),
+        "turn_kind": watch_turn_kind or WATCH_TURN_KIND_CHECK,
+        "description": _metadata_text(inbound_metadata, "watch_description"),
+        "alert_condition": _metadata_text(inbound_metadata, "watch_alert_condition"),
+        "profile_id": _metadata_text(inbound_metadata, "watch_profile_id"),
+        "target_id": _metadata_text(inbound_metadata, "watch_target_id"),
         "allowed_tools": [
             item.strip() for item in raw_tools.split(",") if item.strip()
         ],
         "max_iterations": int(inbound_metadata.get("watch_max_iterations", 3) or 3),
         "timeout_seconds": int(inbound_metadata.get("watch_timeout_seconds", 60) or 60),
         "write_authorized": _metadata_bool(inbound_metadata, "watch_write_authorized"),
-        "write_authorization_scope": str(
-            inbound_metadata.get("watch_write_authorization_scope", "") or ""
-        ).strip(),
+        "write_authorization_scope": write_scope,
         "cron_job_id": cron_job_id,
-        "cron_run_id": str(inbound_metadata.get("cron_run_id", "") or "").strip(),
+        "cron_run_id": _metadata_text(inbound_metadata, "cron_run_id"),
     }
+    if "watch_previous_condition_met" in inbound_metadata:
+        subscription["previous_observation"] = {
+            "summary": _metadata_text(inbound_metadata, "watch_previous_summary"),
+            "condition_met": _metadata_bool(
+                inbound_metadata, "watch_previous_condition_met"
+            ),
+        }
+    module_state["watch_subscription"] = subscription
     state_inline[STATE_KEY_MODULE_STATE] = module_state
 
 
@@ -336,6 +334,12 @@ def _attach_delegation_resume_context(
         ).split(",")
         if item.strip()
     ]
+    if "security_repair_binding" in inbound_metadata:
+        module_state["security_repair_binding"] = inbound_metadata[
+            "security_repair_binding"
+        ]
+    else:
+        module_state.pop("security_repair_binding", None)
     module_state["delegation"] = {
         "enabled": True,
         "parent_context": {

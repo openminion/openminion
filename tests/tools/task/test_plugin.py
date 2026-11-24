@@ -514,11 +514,14 @@ def test_schedule_rejects_invalid_relative_one_time(
 
 
 def test_schedule_schema_describes_relative_one_time() -> None:
-    description = TaskScheduleArgs.model_json_schema()["properties"]["schedule"][
-        "description"
-    ]
+    schedule_schema = TaskScheduleArgs.model_json_schema()["properties"]["schedule"]
+    description = schedule_schema["description"]
 
     assert "after_seconds" in description
+    assert schedule_schema["properties"]["after_seconds"] == {
+        "minimum": 1,
+        "type": "integer",
+    }
 
 
 def test_schedule_every_aliases_interval_unit_and_every(

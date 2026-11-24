@@ -19,6 +19,7 @@ from openminion.modules.paths import (
 
 
 TASK_CONTEXT_MAX_CHARS = 12_000
+WATCH_OUTCOME_SUMMARY_MAX_CHARS = 1_000
 
 
 class BrainState(StrEnum):

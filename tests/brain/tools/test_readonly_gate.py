@@ -687,3 +687,41 @@ def test_subagent_stop_lifecycle_event_fires_for_unavailable_a2a() -> None:
     assert events[0].subagent_id == "reviewer"
     assert events[0].tool_ok is False
     reset_default_lifecycle_registry()
+
+
+@pytest.mark.parametrize("child", [False, True])
+def test_security_repair_blocks_direct_agent_commands_before_cached_replay(child):
+    state = _make_state(permission_mode="bypass")
+    state.resume_task_id_hint = "repair-task"
+    if child:
+        state.module_state["security_repair_binding"] = "runtime-child-binding"
+    runner = _make_runner()
+    runner.options.idempotency_enabled = True
+    runner.task_manager = SimpleNamespace(
+        get_latest_checkpoint=lambda _task_id: (
+            ("checkpoint", {"payload": {"security_repair": {}}}) if not child else None
+        )
+    )
+    command = AgentCommand(
+        kind="agent",
+        command_id="escape",
+        idempotency_key="cached-agent-call",
+        title="unscoped delegation",
+        target_agent_id="other",
+        method="delegate",
+        params={"instruction": "write outside scope"},
+    )
+    state.idempotency_cache[command.idempotency_key] = ActionResult(
+        command_id=command.command_id, status="success", summary="previous call"
+    )
+    result, job = execute_action_dispatch(
+        runner,
+        state=state,
+        command=command,
+        logger=SimpleNamespace(emit=lambda *_a, **_k: None),
+        sanitize_tool_command_args=None,
+        execute_action_fn=None,
+    )
+    assert job is None
+    assert result.status == "blocked"
+    assert result.error.code == "POLICY_DENIED"

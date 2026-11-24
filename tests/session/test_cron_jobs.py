@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -142,7 +142,10 @@ def test_one_shot_delete_after_run_and_disable_modes(
     assert disabled_job["next_due_at"] is None
 
 
-def test_misfire_skip_skips_stale_occurrence(store: SQLiteSessionStore) -> None:
+def test_misfire_skip_enqueues_only_latest_recent_occurrence(
+    store: SQLiteSessionStore,
+) -> None:
+    now = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc)
     job_id = store.add_cron_job(
         name="skip-misfire",
         schedule={"kind": "every", "every_ms": 15_000},
@@ -151,19 +154,77 @@ def test_misfire_skip_skips_stale_occurrence(store: SQLiteSessionStore) -> None:
         misfire_policy="skip",
         max_lateness_s=1,
     )
-    stale_due = to_iso_utc(utc_now() - timedelta(minutes=3))
+    stale_due = to_iso_utc(now - timedelta(minutes=3))
     store._conn.execute(
         "UPDATE cron_jobs SET next_due_at = ? WHERE job_id = ?",
         (stale_due, job_id),
     )
     store._conn.commit()
 
-    queued = store.enqueue_due_cron_runs("daemon-d", lease_ttl_s=30, max_jobs=10)
-    assert len(queued) <= 1
+    queued = store.enqueue_due_cron_runs(
+        "daemon-d", lease_ttl_s=30, max_jobs=10, now_iso=to_iso_utc(now)
+    )
+    assert len(queued) == 1
+    assert queued[0]["job_id"] == job_id
     refreshed = store.get_cron_job(job_id)
     assert refreshed is not None
     assert refreshed["next_due_at"] is not None
-    assert refreshed["next_due_at"] != stale_due
+    assert refreshed["next_due_at"] > queued[0]["due_at"]
+
+
+def test_misfire_skip_enqueues_exactly_latest_recent_occurrence(
+    store: SQLiteSessionStore,
+) -> None:
+    job_id = store.add_cron_job(
+        name="recent-misfire",
+        schedule={"kind": "every", "every_ms": 10_000},
+        payload={"kind": "agentTurn", "message": "noop"},
+        session_target="isolated",
+        misfire_policy="skip",
+        max_lateness_s=10,
+    )
+    recent_due = to_iso_utc(utc_now() - timedelta(seconds=3))
+    store._conn.execute(
+        "UPDATE cron_jobs SET next_due_at = ? WHERE job_id = ?",
+        (recent_due, job_id),
+    )
+    store._conn.commit()
+
+    queued = store.enqueue_due_cron_runs("daemon-recent", lease_ttl_s=30, max_jobs=10)
+
+    assert len(queued) == 1
+    assert queued[0]["job_id"] == job_id
+    refreshed = store.get_cron_job(job_id)
+    assert refreshed is not None
+    assert refreshed["next_due_at"] > queued[0]["due_at"]
+
+
+def test_misfire_skip_queues_nothing_when_all_bounded_candidates_are_stale(
+    store: SQLiteSessionStore,
+) -> None:
+    job_id = store.add_cron_job(
+        name="fully-stale-misfire",
+        schedule={"kind": "every", "every_ms": 10_000},
+        payload={"kind": "agentTurn", "message": "noop"},
+        session_target="isolated",
+        misfire_policy="skip",
+        max_lateness_s=1,
+    )
+    stale_due = to_iso_utc(utc_now() - timedelta(hours=2))
+    store._conn.execute(
+        "UPDATE cron_jobs SET next_due_at = ? WHERE job_id = ?",
+        (stale_due, job_id),
+    )
+    store._conn.commit()
+
+    queued = store.enqueue_due_cron_runs(
+        "daemon-fully-stale", lease_ttl_s=30, max_jobs=10
+    )
+
+    assert queued == []
+    refreshed = store.get_cron_job(job_id)
+    assert refreshed is not None
+    assert refreshed["next_due_at"] > stale_due
 
 
 def test_raw_one_time_misfire_keeps_existing_cron_behavior(

@@ -778,7 +778,7 @@ def test_sdk_tool_nested_serialize_alias_input_preserves_transform(sdk_tools):
 
 def test_sdk_tool_nested_excluded_defaulted_alias_preserves_transform(sdk_tools):
     class _Query(BaseModel):
-        model_config = ConfigDict(serialize_by_alias=True, extra="forbid")
+        model_config = ConfigDict(extra="forbid")
 
         value: int
         hidden: int = Field(default=0, alias="external_hidden", exclude=True)

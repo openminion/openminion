@@ -6,6 +6,11 @@ from collections.abc import Mapping, Sequence
 
 import yaml
 
+from openminion.modules.skill.runtime.bundle_metadata import (
+    companion_metadata_unavailable_warning,
+    invocation_policy_warnings,
+    load_companion_metadata,
+)
 from openminion.modules.skill.runtime.parser import (
     build_recipe,
     front_matter_unknown_key_warnings,
@@ -148,6 +153,11 @@ def validate_skill(skill_root: Path) -> SkillHarnessResult:
     if not content.strip():
         errors.append("SKILL.md is empty")
     front_matter, sections, _summary, parser_warnings = parse_markdown(content)
+    companion = load_companion_metadata(skill_root, warnings=warnings)
+    companion_warning = companion_metadata_unavailable_warning(companion)
+    if companion_warning is not None:
+        warnings.append(companion_warning)
+    warnings.extend(invocation_policy_warnings(front_matter, companion))
     portable_errors = _portable_conformance_errors(content, front_matter)
     unknown_warnings = front_matter_unknown_key_warnings(front_matter)
     recipe, recipe_warnings = build_recipe(

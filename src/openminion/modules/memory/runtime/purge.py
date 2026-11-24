@@ -1,3 +1,4 @@
+import datetime
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -6,7 +7,12 @@ from openminion.base.time import utc_now
 from openminion.modules.artifact.refs import remove_reference_edges
 from openminion.modules.memory.storage.audit import AuditedMemoryStore
 from openminion.modules.memory.storage.base import MemoryStore
+from openminion.modules.memory.storage.postgres.queries import EXPIRY_CLAUSE
 from openminion.modules.memory.storage.postgres.store import PostgresMemoryStore
+from openminion.modules.memory.storage.sqlite.queries import (
+    expiry_bind_params,
+    expiry_clause,
+)
 
 
 @dataclass
@@ -77,10 +83,10 @@ def _postgres_purgeable_rows(
         conn.execute(
             text(
                 "SELECT id, evidence_json FROM memory_records "
-                "WHERE expires_at IS NOT NULL AND expires_at < :now "
-                f"AND is_deleted = FALSE {protected} LIMIT :batch_size"
+                f"WHERE is_deleted = FALSE AND NOT {EXPIRY_CLAUSE} "
+                f"{protected} LIMIT :batch_size"
             ),
-            {"now": now, "batch_size": int(batch_size)},
+            {"query_now": now, "batch_size": int(batch_size)},
         )
         .mappings()
         .all()
@@ -187,7 +193,9 @@ def _purge_postgres_soft_deleted(
         )
 
 
-def _sqlite_purgeable_ids(conn: Any, *, now: str, batch_size: int) -> list[str]:
+def _sqlite_purgeable_ids(
+    conn: Any, *, moment: datetime.datetime, batch_size: int
+) -> list[str]:
     protected = """
       AND id NOT IN (
           SELECT supersedes_id FROM memory_records
@@ -209,9 +217,9 @@ def _sqlite_purgeable_ids(conn: Any, *, now: str, batch_size: int) -> list[str]:
         row["id"]
         for row in conn.execute(
             "SELECT id FROM memory_records "
-            "WHERE expires_at IS NOT NULL AND expires_at < ? AND is_deleted=0 "
+            f"WHERE is_deleted=0 AND NOT {expiry_clause(prefix='')} "
             f"{protected} LIMIT ?",
-            (now, batch_size),
+            (*expiry_bind_params(moment), batch_size),
         ).fetchall()
     ]
     return list(dict.fromkeys(dead_ids + expired_ids))
@@ -271,7 +279,7 @@ def _delete_sqlite_records(
 def _purge_sqlite_soft_deleted(
     store: MemoryStore,
     *,
-    now: str,
+    moment: datetime.datetime,
     batch_size: int,
     result: GCResult,
 ) -> None:
@@ -284,7 +292,7 @@ def _purge_sqlite_soft_deleted(
                 conn,
                 record_ids=_sqlite_purgeable_ids(
                     conn,
-                    now=now,
+                    moment=moment,
                     batch_size=batch_size,
                 ),
                 result=result,
@@ -332,19 +340,19 @@ def purge_soft_deleted(
     batch_size: int = 500,
 ) -> GCResult:
     store = backing_store(store)
-    now = utc_now().isoformat()
+    moment = utc_now()
     result = GCResult()
     if isinstance(store, PostgresMemoryStore):
         _purge_postgres_soft_deleted(
             store,
-            now=now,
+            now=moment.isoformat(),
             batch_size=batch_size,
             result=result,
         )
     else:
         _purge_sqlite_soft_deleted(
             store,
-            now=now,
+            moment=moment,
             batch_size=batch_size,
             result=result,
         )

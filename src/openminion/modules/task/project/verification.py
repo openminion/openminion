@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import shlex
+import hashlib
 import shutil
 import subprocess
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -22,7 +23,7 @@ from openminion.modules.task.autonomy import (
     now_ms,
 )
 
-from .models import ProjectRun
+from .models import ProjectCheckpoint, ProjectRun, SecurityRepairContext
 
 if TYPE_CHECKING:
     from .turn import ProjectTurnResult
@@ -84,6 +85,85 @@ class ProjectVerificationClosure(BaseModel):
     reason: str
     evidence_refs: tuple[str, ...] = ()
     missing_evidence_kinds: tuple[str, ...] = ()
+
+
+def security_repair_file_identity(path: Path) -> str:
+    if path.is_symlink():
+        content = b"link:" + str(path.readlink()).encode()
+    else:
+        content = str(path.stat().st_mode & 0o111).encode() + b":" + path.read_bytes()
+    return hashlib.sha256(content).hexdigest()
+
+
+def check_security_repair_files(
+    context: SecurityRepairContext, workspace: Path
+) -> None:
+    for name, identity in context.protected_files.items():
+        path = workspace / name
+        if (
+            not path.exists() and not path.is_symlink()
+        ) or security_repair_file_identity(path) != identity:
+            raise ValueError(f"security repair changed protected input: {name}")
+    for arguments in (
+        ("diff", "--name-only", "--no-renames", "-z", context.base_revision),
+        ("ls-files", "--others", "--exclude-standard", "-z"),
+    ):
+        result = subprocess.run(
+            ("git", "-C", str(workspace), *arguments),
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        changed = set(result.stdout.split("\0")) - {""}
+        if changed - set(context.write_paths):
+            raise ValueError("security repair changed paths outside approved scope")
+
+
+def run_security_repair_baseline(
+    context: SecurityRepairContext,
+    commands: tuple[str, ...],
+    *,
+    timeout_seconds: int,
+) -> tuple[TestEvidence, ...]:
+    if not commands:
+        raise ValueError("security repair requires a reproducing verifier")
+    workspace = Path(context.repository)
+    check_security_repair_files(context, workspace)
+    evidence = run_project_verification_commands(
+        commands,
+        workspace=workspace,
+        timeout_seconds=timeout_seconds,
+    )
+    check_security_repair_files(context, workspace)
+    return evidence
+
+
+def check_security_repair_baseline(checkpoint: ProjectCheckpoint) -> None:
+    evidence = tuple(
+        TestEvidence.model_validate(item)
+        for item in cast(
+            list[object], checkpoint.payload.get("security_repair_baseline", ())
+        )
+    )
+    commands = checkpoint.project_run.execution_selectors.verification_commands
+    if (
+        not evidence
+        or tuple(
+            tuple(shlex.split(item.command))
+            if isinstance(item.command, str)
+            else item.command
+            for item in evidence
+        )
+        != tuple(tuple(shlex.split(command)) for command in commands)
+        or any(item.exit_code is None or item.exit_code < 0 for item in evidence)
+        or not any(
+            item.exit_code is not None and item.exit_code > 0 for item in evidence
+        )
+    ):
+        raise ValueError(
+            "security repair requires retained failing-before verification"
+        )
 
 
 def evaluate_project_verification_closure(

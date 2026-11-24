@@ -21,7 +21,10 @@ from openminion.modules.task.project.checkpoints import project_cycle_summaries
 from openminion.modules.task.project.capabilities import ProjectCapabilityMatrix
 from openminion.modules.task.project.budget import evaluate_continuation_budget
 from openminion.modules.task.project.constants import REPOSITORY_LIFECYCLE_PAYLOAD_KEY
-from openminion.modules.task.project.models import ProjectBudgetCheckResult
+from openminion.modules.task.project.models import (
+    ProjectBudgetCheckResult,
+    SecurityRepairContext,
+)
 from openminion.modules.task.runtime.lifecycle import (
     ProjectCycleClaim,
     TaskManager,
@@ -86,6 +89,8 @@ class ProjectReport(_StrictReportModel):
     goal: str | None = None
     task_plan: TaskPlan | None = None
     verification: tuple[TestEvidence, ...] = ()
+    security_repair: SecurityRepairContext | None = None
+    security_repair_baseline: tuple[TestEvidence, ...] = ()
     budget: ProjectBudgetCheckResult | None = None
     next_action: str | None = None
     pending_confirmation_command_id: str | None = None
@@ -208,6 +213,15 @@ def build_project_report_from_task(
                 )
             ),
             "budget": budget,
+            "security_repair": SecurityRepairContext.model_validate(
+                checkpoint.payload["security_repair"]
+            )
+            if checkpoint.payload.get("security_repair") is not None
+            else None,
+            "security_repair_baseline": tuple(
+                TestEvidence.model_validate(item)
+                for item in checkpoint.payload.get("security_repair_baseline", ())
+            ),
             "next_action": resume.get("next_action"),
             "pending_confirmation_command_id": checkpoint.payload.get(
                 "pending_confirmation_command_id"
@@ -287,6 +301,22 @@ def render_project_report(report: ProjectReport) -> str:
         lines.append("verification:")
         lines.extend(
             f"  {item.status.value}: {item.summary}" for item in report.verification
+        )
+    if report.security_repair is not None:
+        repair = report.security_repair
+        lines.extend(
+            (
+                f"security_source_task: {repair.source_task_id}",
+                f"security_finding: {repair.finding_id}",
+                f"security_review: {repair.review_ref}",
+                f"candidate_workspace: {repair.repository}",
+                "Candidate verification does not resolve the monitored finding; inspect the source task's follow-up review.",
+                "baseline_verification:",
+                *(
+                    f"  {item.status.value}: exit={item.exit_code}"
+                    for item in report.security_repair_baseline
+                ),
+            )
         )
     if report.budget is not None:
         lines.append("budget:")

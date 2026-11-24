@@ -8,8 +8,14 @@ import sys
 from contextlib import nullcontext, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
+from types import SimpleNamespace
 
 import pytest
+
+from tests.tools.security.test_audit_report import audit_context as audit_context
+from tests.tools.security.test_repair_preflight import (
+    repair_admission as repair_admission,
+)
 
 from openminion.cli.main import main
 from openminion.cli.commands.autonomy_project import (
@@ -1828,3 +1834,262 @@ def test_autonomy_start_requires_goal(tmp_path: Path) -> None:
         main([*_root_args(tmp_path), "autonomy", "start"])
 
     assert exc_info.value.code == 2
+
+
+def test_security_project_arguments_are_explicit_and_complete(tmp_path):
+    from openminion.cli.commands.project_security import security_project_selection
+    from openminion.cli.commands.project_launch import parse_focus_project_launch
+
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "autonomy",
+            "start",
+            "--goal",
+            "repair",
+            "--security-source-task-id",
+            "scan-task",
+            "--security-review-ref",
+            "artifact://sha256/" + "a" * 64,
+            "--security-finding-id",
+            "F-1",
+            "--security-write-path",
+            "app.py",
+        ]
+    )
+    selected = security_project_selection(args)
+    assert selected.source_task_id == "scan-task"
+    assert selected.write_paths == ("app.py",)
+    args.security_finding_id = ""
+    with pytest.raises(ValueError, match="all four"):
+        security_project_selection(args)
+    with pytest.raises(ValueError, match="all four"):
+        parse_focus_project_launch(
+            "/project start --goal repair --security-source-task-id scan-task",
+            session_id="session",
+            agent_id="agent",
+            workspace_boundary=tmp_path,
+            config_ref=None,
+        )
+
+
+def test_autonomy_resume_keeps_missing_checkpoint_blocked(tmp_path):
+    from openminion.cli.commands.autonomy_project import resume_project_run
+
+    manager = TaskManager.for_lifecycle_db(db_path=tmp_path / "tasks.sqlite")
+    store = AutonomyRunStore(root=tmp_path / "runs")
+    run = build_autonomy_run(
+        goal_text="repair",
+        goal_id=None,
+        max_iterations=2,
+        session_id="session",
+        workspace_ref=f"local:{tmp_path}",
+        verification_commands=(f"{shlex.quote(sys.executable)} -c 'pass'",),
+    ).model_copy(update={"task_id": "task-1", "checkpoint_id": "lost-checkpoint"})
+    store.create(run)
+    manager.create_task(
+        session_id="session",
+        agent_id="default",
+        mode_name="project",
+        goal="repair",
+        task_id="task-1",
+    )
+    try:
+        resumed = resume_project_run(
+            manager, store, run, workspace=tmp_path, waiver=None
+        )
+        assert resumed.status == AutonomyRunStatus.BLOCKED
+        assert resumed.run_id == run.run_id
+        assert resumed.checkpoint_id == "lost-checkpoint"
+        assert resumed.last_error.code == "PROJECT_CHECKPOINT_MISSING"
+        assert manager.get_task("task-1") is not None
+        assert load_latest_project_checkpoint(manager, task_id="task-1") is None
+    finally:
+        manager.close()
+
+
+@pytest.fixture
+def security_launch(repair_admission, tmp_path, monkeypatch):
+    from openminion.cli.commands.project_security import prepare_security_project
+    from openminion.cli.commands.project_launch import build_project_launch_request
+
+    ctx, manager, candidate, selection, env = repair_admission
+    config = SimpleNamespace(
+        base_config=None, home_root=tmp_path, data_root=tmp_path, env=env
+    )
+    monkeypatch.setattr(
+        "openminion.cli.config.load_cli_manager_from_args", lambda args: config
+    )
+    monkeypatch.setattr(
+        "openminion.modules.artifact.config.from_base_config",
+        lambda **kwargs: ctx.artifactctl.config,
+    )
+    from openminion.modules.session.storage.repository import (
+        create_sqlite_cron_repository,
+    )
+
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy_project.configured_cron_store",
+        lambda *args, **kwargs: create_sqlite_cron_repository(
+            db_path=manager.lifecycle_repository.db_path
+        ),
+    )
+    project_manager = TaskManager.for_lifecycle_db(
+        db_path=manager.lifecycle_repository.db_path
+    )
+    args = argparse.Namespace(config=None, home_root=tmp_path, data_root=tmp_path)
+    request = build_project_launch_request(
+        goal="Repair selected finding",
+        session_id="operator-session",
+        agent_id="repairer",
+        workspace_boundary=tmp_path,
+        repository=candidate,
+        require_git_repository=True,
+        verification_commands=(
+            f"{shlex.quote(sys.executable)} -c 'raise SystemExit(1)'",
+        ),
+        max_iterations=2,
+        max_tool_calls=10,
+        max_wall_clock_ms=60000,
+    )
+    request = prepare_security_project(
+        request, selection, args=args, manager=project_manager
+    )
+    try:
+        yield (
+            request,
+            args,
+            project_manager,
+            AutonomyRunStore(root=tmp_path / "security-runs"),
+            ctx,
+            env,
+        )
+    finally:
+        project_manager.close()
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("max_iterations", 0),
+        ("max_tool_calls", None),
+        ("max_tool_calls", 0),
+        ("max_wall_clock_ms", None),
+        ("max_wall_clock_ms", 0),
+    ],
+)
+def test_security_launch_requires_finite_positive_budgets(
+    security_launch, field, value
+):
+    from openminion.cli.commands.autonomy_project import launch_project
+
+    request, args, manager, store, _, _ = security_launch
+    setattr(request.run.continuation_policy, field, value)
+    with pytest.raises(
+        ValueError, match="positive iteration, tool-call and wall-clock budgets"
+    ):
+        launch_project(request, store=store, manager=manager, args=args)
+    assert store.list_runs() == []
+
+
+def test_security_launch_persists_baseline_backlink_and_rejects_replay(security_launch):
+    from openminion.cli.commands.autonomy_project import launch_project
+
+    request, args, manager, store, ctx, _ = security_launch
+    running = launch_project(request, store=store, manager=manager, args=args)
+    checkpoint = load_latest_project_checkpoint(manager, task_id=running.task_id)
+    assert checkpoint.payload["security_repair"] == request.security_repair.model_dump(
+        mode="json"
+    )
+    assert checkpoint.payload["security_repair_baseline"][0]["exit_code"] == 1
+    backlink = manager.get_task(request.security_repair.source_task_id).metadata[
+        "security_repair"
+    ]
+    assert backlink["task_id"] == running.task_id
+    assert backlink["checkpoint_id"] == checkpoint.checkpoint_id
+    assert (ctx.workspace / "app.py").read_text() == "print('hello')\n"
+    with pytest.raises(ValueError, match="exists"):
+        launch_project(request, store=store, manager=manager, args=args)
+    assert len(store.list_runs()) == 1
+    refs = request.security_repair.evidence_refs
+    ctl = ctx.artifactctl
+    assert {ref.rsplit("/", 1)[1] for ref in refs} <= ctl.index.active_reference_shas()
+    ctl.gc(keep_days=0, delete_unreferenced_after_days=0)
+    assert all(ctl.get(ref).deleted_at is None for ref in refs)
+    ctl.ref_add("collection", "source-schedule", request.security_repair.report_ref)
+    ctl.ref_remove_owner("collection", "security-project:" + running.run_id)
+    assert (
+        request.security_repair.report_ref.rsplit("/", 1)[1]
+        in ctl.index.active_reference_shas()
+    )
+    assert (
+        request.security_repair.review_ref.rsplit("/", 1)[1]
+        not in ctl.index.active_reference_shas()
+    )
+
+
+def test_security_launch_rechecks_scope_after_preparation(security_launch):
+    from openminion.cli.commands.autonomy_project import launch_project
+    from openminion.modules.session.storage.repository import (
+        create_sqlite_cron_repository,
+    )
+    from contextlib import closing
+
+    request, args, manager, store, _, _ = security_launch
+    with closing(
+        create_sqlite_cron_repository(db_path=manager.lifecycle_repository.db_path)
+    ) as cron:
+        cron.set_cron_job_enabled(request.security_repair.source_job_id, True)
+    with pytest.raises(ValueError, match="paused"):
+        launch_project(request, store=store, manager=manager, args=args)
+    assert store.list_runs() == []
+    assert manager.get_task(request.run.task_id) is None
+
+
+def test_security_launch_retains_invalid_baseline_without_starting_worker(
+    security_launch,
+):
+    from dataclasses import replace
+    from openminion.cli.commands.autonomy_project import launch_project
+
+    request, args, manager, store, _, _ = security_launch
+    selectors = request.run.execution_selectors.model_copy(
+        update={
+            "verification_commands": (f"{shlex.quote(sys.executable)} -c 'pass'",),
+        }
+    )
+    request = replace(
+        request, run=request.run.model_copy(update={"execution_selectors": selectors})
+    )
+    blocked = launch_project(request, store=store, manager=manager, args=args)
+    assert blocked.status == AutonomyRunStatus.BLOCKED
+    assert blocked.last_error.code == "SECURITY_BASELINE_INVALID"
+    checkpoint = load_latest_project_checkpoint(manager, task_id=blocked.task_id)
+    assert checkpoint.payload["security_repair_baseline"][0]["exit_code"] == 0
+    assert manager.get_task(blocked.task_id).state == TaskLifecycleState.PAUSED
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        ("--agent", "other"),
+        ("--verify-command", "python -c pass"),
+        ("--verification-waiver", "skip"),
+    ],
+)
+def test_security_resume_cannot_replace_approved_inputs(
+    security_launch, monkeypatch, override
+):
+    from openminion.cli.commands import autonomy
+    from openminion.cli.commands.autonomy_project import launch_project
+
+    request, args, manager, store, _, _ = security_launch
+    run = launch_project(request, store=store, manager=manager, args=args)
+    before = store.require(run.run_id).model_dump()
+    monkeypatch.setattr(autonomy, "project_task_manager", lambda args: manager)
+    resume_args = build_parser().parse_args(
+        ["autonomy", "resume", run.run_id, *override]
+    )
+    with pytest.raises(ValueError, match="immutable"):
+        autonomy._resume(resume_args, store)
+    assert store.require(run.run_id).model_dump() == before

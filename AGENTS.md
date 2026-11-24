@@ -11,6 +11,8 @@ branches, duplication and redundant comments or docstrings. Preserve real
 trust-boundary, permission, compatibility, persistence, replay and cleanup
 contracts.
 
+Complete the [required pre-submission self-review](CODE_QUALITY.md#required-self-review-before-submission)
+and include its concrete evidence in the PR template.
 Record the reviewed revision, evidence and outstanding findings. For merged
 code and broad cleanup, follow the current-source and per-file ledger rules in
 CODE_QUALITY.md; do not claim package-wide coverage from a sampled review.

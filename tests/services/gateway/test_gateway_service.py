@@ -965,6 +965,74 @@ class GatewayServiceCoreTests(GatewayServiceTestCase):
         self.assertEqual(len(provider.requests), 1)
         self.assertEqual(len(sink.sent), 1)
 
+    def test_gateway_rejects_idempotency_key_reuse_for_another_request(self) -> None:
+        asyncio.run(
+            self.gateway.run_once(
+                channel="console",
+                target="local-user",
+                message="first",
+                idempotency_key="idem-conflict",
+            )
+        )
+
+        with self.assertRaisesRegex(ValueError, "idempotency key conflicts"):
+            asyncio.run(
+                self.gateway.run_once(
+                    channel="console",
+                    target="local-user",
+                    message="second",
+                    idempotency_key="idem-conflict",
+                )
+            )
+
+        self.assertEqual(len(self.provider.requests), 1)
+
+    def test_gateway_idempotency_covers_behavior_inputs(self) -> None:
+        changed_inputs = {
+            "request-id": {"request_id": "another-request"},
+            "delivery": {"deliver": False},
+            "history": {"exclude_history_message_ids": ("message-1",)},
+            "tools": {"forced_tools": ["time.current"]},
+            "capability": {"capability_category": "coding"},
+        }
+        for name, changed in changed_inputs.items():
+            key = f"idem-{name}"
+            asyncio.run(
+                self.gateway.handle_message(
+                    channel="console",
+                    target="local-user",
+                    body="same request body",
+                    idempotency_key=key,
+                )
+            )
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(ValueError, "idempotency key conflicts"):
+                    asyncio.run(
+                        self.gateway.handle_message(
+                            channel="console",
+                            target="local-user",
+                            body="same request body",
+                            idempotency_key=key,
+                            **changed,
+                        )
+                    )
+
+    def test_gateway_idempotency_hash_covers_agent_identity(self) -> None:
+        from openminion.services.gateway.turn.runtime import _request_hash
+
+        request = {
+            "channel": "console",
+            "target": "local-user",
+            "body": "same request body",
+            "session_id": "same-session",
+            "inbound_metadata": None,
+        }
+
+        self.assertNotEqual(
+            _request_hash(agent_id="agent-a", **request),
+            _request_hash(agent_id="agent-b", **request),
+        )
+
     def test_gateway_rejects_distinct_concurrent_explicit_session_turns(self) -> None:
         class _BlockingProvider(LLMProvider):
             name = "blocking-session-turn"

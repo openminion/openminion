@@ -107,6 +107,9 @@ def test_freshness_routing_keeps_its_caller_owned_contract():
     assert payload["messages"][1:] == context["messages"]
     assert "internal freshness-routing classifier" in str(payload["messages"])
     assert "Classify freshness sensitivity semantically" in str(payload["messages"])
+    assert "scheduling tasks and relative delays are local_only" in str(
+        payload["messages"]
+    )
 
 
 def test_post_action_judge_keeps_its_caller_owned_contract():

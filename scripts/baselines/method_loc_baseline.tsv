@@ -47,7 +47,7 @@ src/openminion/modules/brain/runner/tick/input_processing.py	process_user_input	
 src/openminion/modules/brain/runner/tick/mission_routing.py	handle	234	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/runner/tick/orchestrator.py	run_step	118	Reviewed selected-image propagation, scoped admission or profile configuration in existing owner; no forwarding extraction
 src/openminion/modules/brain/runtime/context.py	build_context	142	Reviewed selected-image propagation, scoped admission or profile configuration in existing owner; no forwarding extraction
-src/openminion/modules/brain/tools/action_dispatch.py	execute_action_dispatch	419	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/modules/brain/tools/action_dispatch.py	execute_action_dispatch	393	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/tools/parser/base.py	normalize_command_payload	139	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/context/compress/compaction.py	CompactionService.maybe_checkpoint	159	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/context/pack/finalize.py	finalize_context_pack	124	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
@@ -79,7 +79,7 @@ src/openminion/modules/retrieve/runtime/ingestion.py	ingest_source	117	current o
 src/openminion/modules/session/cli.py	_add_session_cli_subcommands	264	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/session/cli.py	_handle_session_store_command	280	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/session/storage/cron_store.py	CronStore.enqueue_due_cron_runs	110	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/skill/cli.py	_add_skill_cli_subcommands	203	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/modules/skill/cli.py	_add_skill_cli_subcommands	202	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/skill/cli.py	_dispatch_skill_command	237	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/skill/config.py	load_config	138	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/skill/runtime/skill/ingest.py	SkillIngestMixin._build_package	146	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes

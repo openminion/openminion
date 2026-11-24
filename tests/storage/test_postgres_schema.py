@@ -6,6 +6,8 @@ against a real PostgreSQL server in ``tests/integration/test_postgres_module_sch
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 
 from openminion.modules.storage.migrations import postgres_schema as ps
@@ -597,3 +599,412 @@ def test_module_url_appends_the_schema_and_keeps_every_other_option(
 
     with pytest.raises(SchemaOwnershipError, match="repeats the options"):
         ps.module_url(url + "&options=-c%20x%3D1", "public__a2a")
+
+
+@pytest.mark.parametrize(
+    "table",
+    ["core_events", "core_sidecar_rows", "sidecar_ingest_log"],
+)
+def test_runtime_and_in_place_owners_check_base_engine_tables(table: str) -> None:
+    foreign_only = _layout(tables={table: FOREIGN_CORE_EVENTS})
+    message = ps.runtime_refusal(foreign_only)
+    assert message is not None
+    assert "no runtime storage ledger is recorded there" in message
+    assert (
+        f"{table} has other columns than this code's storage engine creates" in message
+    )
+    assert "Nothing was written" in message
+    assert _outcome("memory", foreign_only) == "public__memory"
+    assert _outcome("registry", foreign_only) == "public__registry"
+
+    exact_without_runtime = _layout(tables={table: _engine()[table]})
+    unowned_msg = ps.runtime_refusal(exact_without_runtime)
+    assert unowned_msg is not None
+    assert "no runtime storage ledger is recorded there" in unowned_msg
+    assert f"{table} matches no recorded runtime storage ledger" in unowned_msg
+    assert "Nothing was written" in unowned_msg
+
+    artifact = _history("artifact", "alembic 0001_baseline")
+    dedicated_store = _layout(
+        tables={**artifact.tables, **_engine()},
+        alembic=("0001_baseline",),
+        om_meta={"module_id": "artifact", "schema_head": "0001_baseline"},
+    )
+    assert _outcome("artifact", dedicated_store) == "in place"
+    assert ps.runtime_refusal(dedicated_store) is not None
+
+    proven_runtime_exact = _layout(
+        tables={**_runtime(16), **_engine()},
+        migrations=_runtime_rows(16),
+    )
+    assert ps.runtime_refusal(proven_runtime_exact) is None
+
+    proven_runtime_bad = _layout(
+        tables={**_runtime(16), **_engine(**{table: FOREIGN_CORE_EVENTS})},
+        migrations=_runtime_rows(16),
+    )
+    bad_msg = ps.runtime_refusal(proven_runtime_bad)
+    assert bad_msg is not None
+    assert (
+        f"{table} with other columns than this code's storage engine creates" in bad_msg
+    )
+    assert "Nothing was written" in bad_msg
+
+    registry = _history("registry", "store 0001_baseline")
+    in_place_bad = _layout(
+        tables={**registry.tables, **_engine(**{table: FOREIGN_CORE_EVENTS})},
+        om_meta={"module_id": "registry", "schema_head": "0001_baseline"},
+    )
+    assert (
+        f"{table} with other columns than this code's storage engine creates"
+        in _refusal("registry", in_place_bad)
+    )
+
+
+@pytest.mark.parametrize(
+    ("sqlstate", "constraint_name"),
+    [
+        ("23505", "pg_namespace_nspname_index"),
+        ("42P06", None),
+    ],
+)
+def test_competing_schema_creation_maps_to_actionable_refusal(
+    sqlstate: str,
+    constraint_name: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    from types import SimpleNamespace
+    from sqlalchemy.exc import IntegrityError, ProgrammingError
+
+    from openminion.modules.storage.migrations import runner as runner_mod
+    from openminion.modules.storage.migrations.module_ids import (
+        get_module_application_id,
+    )
+    from openminion.modules.storage.migrations.runner import MigrationRunner
+
+    class _Orig(Exception):
+        def __init__(self, code: str, constraint: str | None) -> None:
+            super().__init__(code)
+            self.sqlstate = code
+            self.pgcode = code
+            self.diag = SimpleNamespace(constraint_name=constraint)
+
+    exc_cls = IntegrityError if sqlstate == "23505" else ProgrammingError
+    db_err = exc_cls(
+        'CREATE SCHEMA "public__memory"',
+        {},
+        _Orig(sqlstate, constraint_name),
+    )
+
+    class _Tx:
+        def __init__(self) -> None:
+            self.is_active = True
+            self.rolled_back = False
+
+        def rollback(self) -> None:
+            self.rolled_back = True
+            self.is_active = False
+
+        def commit(self) -> None:
+            self.is_active = False
+
+    state = {"create_attempted": False}
+
+    class _Conn:
+        def __init__(self) -> None:
+            self.tx = _Tx()
+            self.began = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def begin(self) -> _Tx:
+            self.began = True
+            return self.tx
+
+        def execute(self, statement, params=None):
+            sql = str(statement)
+            if "CREATE SCHEMA" in sql:
+                state["create_attempted"] = True
+                raise db_err
+            if "SELECT to_regclass(:n)" in sql:
+                present = "1" if state["create_attempted"] else None
+                return SimpleNamespace(scalar=lambda: present)
+            if "FROM " in sql and ".alembic_version" in sql:
+                return SimpleNamespace(fetchone=lambda: ("0004_namespace",))
+            if "FROM " in sql and ".om_meta" in sql:
+                return iter(
+                    [("module_id", "memory"), ("schema_head", "0004_namespace")]
+                )
+            del params
+            return SimpleNamespace(
+                scalar=lambda: 1 if "SELECT 1" in sql else None,
+                scalar_one=lambda: "public__memory",
+                fetchone=lambda: None,
+            )
+
+    conn = _Conn()
+    selection = ps.ModuleSchema("memory", "public", "public__memory", create=True)
+    with pytest.raises(SchemaOwnershipError) as refused:
+        ps.enter_module_schema(cast(Any, conn), selection)
+    assert "Module 'memory': PostgreSQL schema \"public__memory\"" in str(refused.value)
+    assert "Nothing was written" in str(refused.value)
+
+    state["create_attempted"] = False
+    conns: list[_Conn] = []
+
+    class _Engine:
+        def connect(self) -> _Conn:
+            created = _Conn()
+            conns.append(created)
+            return created
+
+        def dispose(self) -> None:
+            return None
+
+    runner = MigrationRunner(
+        module_id="memory",
+        db_path=tmp_path / "memory.db",
+        module_application_id=get_module_application_id("memory"),
+        backend_type="postgres",
+        engine=cast(Any, _Engine()),
+        postgres_schema=selection,
+    )
+    report = runner.migrate()
+    began_txs = [c.tx for c in conns if c.began]
+    assert len(began_txs) == 1 and began_txs[0].rolled_back is True
+    assert report.success is False
+    assert report.rolled_back is True
+    assert report.before.alembic_revision is None and report.before.om_meta == {}
+    assert report.after.alembic_revision == "0004_namespace"
+    assert report.after.om_meta == {
+        "module_id": "memory",
+        "schema_head": "0004_namespace",
+    }
+    assert report.error is not None and "Nothing was written" in report.error
+
+    pre_conns: list[_Conn] = []
+
+    class _PreEngine:
+        def connect(self) -> _Conn:
+            created = _Conn()
+            pre_conns.append(created)
+            return created
+
+        def dispose(self) -> None:
+            return None
+
+    def _refuse_pre_begin(_engine, _module_id: str):
+        raise SchemaOwnershipError(
+            "Module 'memory': PostgreSQL schema \"public__memory\" holds unproven tables. "
+            "Nothing was written."
+        )
+
+    monkeypatch.setattr(runner_mod, "select_module_schema", _refuse_pre_begin)
+    pre_report = MigrationRunner(
+        module_id="memory",
+        db_path=tmp_path / "memory-pre.db",
+        module_application_id=get_module_application_id("memory"),
+        backend_type="postgres",
+        engine=cast(Any, _PreEngine()),
+        select_postgres_schema=True,
+    ).migrate()
+    assert [c for c in pre_conns if c.began] == []
+    assert pre_report.success is False
+    assert pre_report.rolled_back is False
+    assert (
+        pre_report.before.alembic_revision is None
+        and pre_report.after.alembic_revision is None
+    )
+    assert pre_report.error is not None and "Nothing was written" in pre_report.error
+
+    probe_state = {"rolled_back": False}
+
+    class _CreateProbe:
+        @staticmethod
+        def begin():
+            class _Ctx:
+                def __enter__(self):
+                    return _Conn()
+
+                def __exit__(self, exc_type, *_args):
+                    if exc_type is not None:
+                        probe_state["rolled_back"] = True
+                    return False
+
+            return _Ctx()
+
+        @staticmethod
+        def dispose() -> None:
+            return None
+
+    monkeypatch.setattr(
+        ps,
+        "select_module_schema",
+        lambda _engine, module_id: ps.ModuleSchema(
+            module_id, "public", f"public__{module_id}", create=True
+        ),
+    )
+    monkeypatch.setattr(ps, "_require_landing", lambda _url, _schema: None)
+    import sqlalchemy
+
+    monkeypatch.setattr(sqlalchemy, "create_engine", lambda *_a, **_k: _CreateProbe())
+    with pytest.raises(SchemaOwnershipError) as store_refused:
+        ps.select_postgres_module_schema(
+            "postgresql+psycopg://app@db/om", "registry", create=True
+        )
+    assert probe_state["rolled_back"] is True
+    assert "Module 'registry': PostgreSQL schema \"public__registry\"" in str(
+        store_refused.value
+    )
+    assert "Nothing was written" in str(store_refused.value)
+
+
+def test_non_competing_schema_creation_errors_propagate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from types import SimpleNamespace
+    import sqlalchemy
+    from sqlalchemy.exc import IntegrityError, ProgrammingError
+
+    from openminion.modules.storage.migrations.module_ids import (
+        get_module_application_id,
+    )
+    from openminion.modules.storage.migrations.runner import MigrationRunner
+
+    class _Orig(Exception):
+        def __init__(
+            self,
+            code: str,
+            constraint: str | None,
+            *,
+            has_diag: bool = True,
+        ) -> None:
+            super().__init__(f"db error {code}")
+            self.sqlstate = code
+            self.pgcode = code
+            if has_diag:
+                self.diag = SimpleNamespace(constraint_name=constraint)
+
+    monkeypatch.setattr(
+        ps,
+        "select_module_schema",
+        lambda _engine, module_id: ps.ModuleSchema(
+            module_id, "public", f"public__{module_id}", create=True
+        ),
+    )
+    monkeypatch.setattr(ps, "_require_landing", lambda _url, _schema: None)
+
+    for err in (
+        ProgrammingError('CREATE SCHEMA "public__memory"', {}, _Orig("42501", None)),
+        IntegrityError('CREATE SCHEMA "public__memory"', {}, _Orig("23505", None)),
+        IntegrityError('CREATE SCHEMA "public__memory"', {}, _Orig("23505", "")),
+        IntegrityError(
+            'CREATE SCHEMA "public__memory"', {}, _Orig("23505", None, has_diag=False)
+        ),
+        IntegrityError(
+            'CREATE SCHEMA "public__memory"', {}, _Orig("23505", "other_unique_idx")
+        ),
+    ):
+
+        class _Tx:
+            def __init__(self) -> None:
+                self.is_active = True
+                self.rolled_back = False
+
+            def rollback(self) -> None:
+                self.rolled_back = True
+                self.is_active = False
+
+            def commit(self) -> None:
+                self.is_active = False
+
+        class _Conn:
+            def __init__(self) -> None:
+                self.tx = _Tx()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args) -> None:
+                return None
+
+            def begin(self) -> _Tx:
+                return self.tx
+
+            @staticmethod
+            def execute(statement, params=None):
+                del params
+                sql = str(statement)
+                if "CREATE SCHEMA" in sql:
+                    raise err
+                return SimpleNamespace(
+                    scalar=lambda: 1 if "SELECT 1" in sql else None,
+                    scalar_one=lambda: "public__memory",
+                    fetchone=lambda: None,
+                )
+
+        with pytest.raises(type(err)) as direct_exc:
+            ps.enter_module_schema(
+                cast(Any, _Conn()),
+                ps.ModuleSchema("memory", "public", "public__memory", create=True),
+            )
+        assert not isinstance(direct_exc.value, SchemaOwnershipError)
+        assert "another concurrent process" not in str(direct_exc.value)
+        assert "start again" not in str(direct_exc.value)
+
+        class _CreateProbe:
+            @staticmethod
+            def begin():
+                class _Ctx:
+                    def __enter__(self):
+                        return _Conn()
+
+                    def __exit__(self, *_args):
+                        return False
+
+                return _Ctx()
+
+            @staticmethod
+            def dispose() -> None:
+                return None
+
+        monkeypatch.setattr(
+            sqlalchemy, "create_engine", lambda *_a, **_k: _CreateProbe()
+        )
+        with pytest.raises(type(err)) as probe_exc:
+            ps.select_postgres_module_schema(
+                "postgresql+psycopg://app@db/om", "registry", create=True
+            )
+        assert not isinstance(probe_exc.value, SchemaOwnershipError)
+        assert "another concurrent process" not in str(probe_exc.value)
+        assert "start again" not in str(probe_exc.value)
+
+        class _Engine:
+            @staticmethod
+            def connect() -> _Conn:
+                return _Conn()
+
+            @staticmethod
+            def dispose() -> None:
+                return None
+
+        report = MigrationRunner(
+            module_id="memory",
+            db_path=tmp_path / "memory-err.db",
+            module_application_id=get_module_application_id("memory"),
+            backend_type="postgres",
+            engine=cast(Any, _Engine()),
+            postgres_schema=ps.ModuleSchema(
+                "memory", "public", "public__memory", create=True
+            ),
+        ).migrate()
+        assert report.success is False
+        assert report.rolled_back is True
+        assert report.error is not None
+        assert "another concurrent process" not in report.error
+        assert "start again" not in report.error

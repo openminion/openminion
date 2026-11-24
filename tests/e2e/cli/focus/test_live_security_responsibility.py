@@ -30,7 +30,11 @@ from openminion.modules.task import TaskManager
 from openminion.modules.task.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
 from openminion.modules.task.surface import build_task_surface
 from openminion.modules.telemetry.usage import usage_event_session_id
-from openminion.tools.security.review_schemas import SecurityFindingReview
+from openminion.modules.telemetry.usage.constants import LLM_USAGE_EVENT_TYPES
+from openminion.tools.security.review_schemas import (
+    SecurityFindingReview,
+    SecurityRepairSelection,
+)
 from openminion.tools.security.schedule import SourceScanAdmission
 from openminion.tools.security.schemas import SecurityAuditReport, SecurityScanResult
 from tests.e2e.cli.focus.harness import FocusProbe
@@ -51,6 +55,7 @@ from tests.e2e.cli.focus.test_live_security_remediation import (
     _repair,
 )
 from tests.e2e.cli.focus.test_live_goal_only import _events
+from tests.e2e.skill_learning.live_evidence import canonical_usage
 
 pytestmark = [pytest.mark.e2e, pytest.mark.timeout(2400)]
 
@@ -167,7 +172,7 @@ def _read_report(ctl, run, revision, image, socket):
     return result["report_ref"], report
 
 
-def _observed_phase_usage(events, roles):
+def _observed_phase_usage(events, roles, *, provider, model, token_limit):
     by_role = {
         role: [
             event
@@ -182,8 +187,47 @@ def _observed_phase_usage(events, roles):
     for field in fields:
         values = [phase[field] for phase in phases if isinstance(phase.get(field), int)]
         totals[field.removeprefix("provider_")] = sum(values) if values else None
+    calls = [
+        event
+        for event in events
+        if event["agent_id"] in roles and event["event_type"] in LLM_USAGE_EVENT_TYPES
+    ]
+    turns = []
+    matched = []
+    for role, records in by_role.items():
+        for event in records:
+            phase = event["data"]
+            turn_calls = [
+                call
+                for call in calls
+                if call["agent_id"] == role
+                and call["data"].get("trace_id") == phase["turn_id"]
+            ]
+            matched.extend(turn_calls)
+            tokens = canonical_usage(
+                [event, *turn_calls], provider=provider, model=model
+            )
+            turns.append(
+                {
+                    "agent_id": role,
+                    "turn_id": phase["turn_id"],
+                    "tokens": tokens,
+                    "overshoot_tokens": max(0, tokens - token_limit)
+                    if tokens is not None
+                    else None,
+                }
+            )
+    complete = (
+        all(by_role.values())
+        and bool(turns)
+        and all(turn["tokens"] is not None for turn in turns)
+        and len(matched) == len(calls)
+        and len({(call["agent_id"], call["data"].get("llm_call_id")) for call in calls})
+        == len(calls)
+        and len({(turn["agent_id"], turn["turn_id"]) for turn in turns}) == len(turns)
+    )
     return {
-        "usage_scope": "Observed canonical phase aggregates; complete per-call accounting is unavailable.",
+        "usage_scope": "Canonical response events reconciled against physical attempts per runtime turn.",
         "usage_by_role": by_role,
         "observed_tokens": totals,
         "phase_usage_fields_complete": all(by_role.values())
@@ -191,11 +235,49 @@ def _observed_phase_usage(events, roles):
         and all(
             isinstance(phase.get(field), int) for phase in phases for field in fields
         ),
-        "per_call_accounting_complete": False,
+        "physical_calls": calls,
+        "turns": turns,
+        "per_call_accounting_complete": complete,
     }
 
 
-def _review(probe, root, ctl, stage, refs):
+def _apply_candidate(target, candidate, base, *, approved):
+    assert _git(target, "rev-parse", "HEAD") == base
+    assert not _git(target, "status", "--porcelain")
+    assert _git(candidate, "diff", "--name-only", base) == "app.py"
+    patch_bytes = subprocess.check_output(
+        ["git", "diff", "--binary", base], cwd=candidate
+    )
+    receipt = {
+        "operator_decision": "approved" if approved else "declined",
+        "base_revision": base,
+        "candidate_patch_sha256": sha256(patch_bytes).hexdigest(),
+        "monitored_root": str(target),
+        "candidate_root": str(candidate),
+        "applied": False,
+    }
+    if not approved:
+        return receipt
+    subprocess.run(
+        ["git", "apply", "--index", "-"],
+        input=patch_bytes,
+        cwd=target,
+        check=True,
+        timeout=30,
+    )
+    _git(
+        target,
+        "commit",
+        "-qm",
+        "fix: apply independently reviewed authorization repair",
+    )
+    receipt.update(applied=True, result_revision=_git(target, "rev-parse", "HEAD"))
+    assert receipt["result_revision"] != base
+    assert not _git(target, "status", "--porcelain")
+    return receipt
+
+
+def _review(probe, root, ctl, stage, refs, *, source_task_id=None):
     previous = {item.sha256 for item in ctl.list_recent(limit=200)}
     if stage == "initial-review":
         instruction = (
@@ -213,6 +295,8 @@ def _review(probe, root, ctl, stage, refs):
             "for closure_reviews; omit optional empty lists. For resolved outcomes omit next_step_guidance "
             "and current_finding_ids. Choose resolved/residual/not_reproduced using evidence. "
         )
+        if source_task_id is not None:
+            instruction += f"Set source_task_id={source_task_id} to link this follow-up to the exact monitored task. "
     turn = _readonly_turn(
         probe,
         root,
@@ -354,6 +438,11 @@ def test_live_security_responsibility(
                 os.environ["OPENMINION_TEST_SECURITY_SCAN_IMAGE"],
                 os.environ["OPENMINION_TEST_SECURITY_LAB_DOCKER_SOCKET"],
             )
+            assert paused["security_scan"]["repair_handoff"] == {
+                "report_ref": report_ref,
+                "review_tool": "security.review_report",
+            }
+            assert paused["security_scan"]["repair_project"] is None
             evidence["first_run"] = first
             evidence["stage"] = "initial-review"
             review_ref, review, evidence["initial_review"] = _review(
@@ -364,23 +453,25 @@ def test_live_security_responsibility(
                 [report_ref, *report.evidence_refs],
             )
             assert review.review_status == "accepted"
-            before = subprocess.run(
-                [str(python_bin), "-B", "verify.py"],
-                cwd=target,
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            assert before.returncode == 1 and "AssertionError" in before.stderr
-            evidence["verification"] = {
-                "command": command,
-                "before_exit_code": 1,
-                "before_stderr": before.stderr,
-            }
-            handoff = _handoff(report_ref, review_ref, review, command)
-            evidence["approved_handoff"] = json.loads(handoff)
+            candidate = root / "candidate"
+            _git(target, "worktree", "add", "--detach", str(candidate), base)
+            parent = parent.for_workdir(candidate)
+            handoff = json.loads(_handoff(report_ref, review_ref, review, command))
+            handoff.pop("operator_approved")
+            evidence["repair_guidance"] = handoff
             evidence["stage"] = "approved-repair"
-            evidence["project"] = _repair(parent, ctl, handoff, command)
+            evidence["project"] = _repair(
+                parent,
+                ctl,
+                json.dumps(handoff),
+                command,
+                security_selection=SecurityRepairSelection(
+                    source_task_id=task_id,
+                    review_ref=review_ref,
+                    finding_id=review.remediation_brief[0].finding_id,
+                    write_paths=("app.py",),
+                ),
+            )
             proof = ctl.ingest_bytes(
                 Path(evidence["project"]["proof_packet_ref"]).read_bytes(),
                 mime="application/json",
@@ -389,24 +480,48 @@ def test_live_security_responsibility(
                 session_id=parent.session_id,
             )
             evidence["project"]["proof_packet_artifact_ref"] = proof.ref
-            assert _git(target, "diff", "--name-only", base) == "app.py"
+            assert _git(target, "rev-parse", "HEAD") == base
+            assert not _git(target, "status", "--porcelain")
+            assert _git(candidate, "diff", "--name-only", base) == "app.py"
+            assert surface.show_task(task_id)["lifecycle_state"] == "paused"
+            assert (
+                surface.show_task(task_id)["security_scan"]["repair_project"]["run_id"]
+                == evidence["project"]["run_id"]
+            )
+            assert (
+                SecurityFindingReview.model_validate_json(
+                    ctl.read_bytes(review_ref)
+                ).review_status
+                == "accepted"
+            )
             subprocess.run(
                 [str(python_bin), "-B", "verify.py"],
-                cwd=target,
+                cwd=candidate,
                 check=True,
                 timeout=120,
             )
-            evidence["verification"]["after_exit_code"] = 0
-            _git(target, "add", "app.py")
-            _git(
-                target,
-                "commit",
-                "-qm",
-                "fix: apply independently reviewed authorization repair",
+            candidate_patch = ctl.ingest_bytes(
+                subprocess.check_output(
+                    ["git", "diff", "--binary", base], cwd=candidate
+                ),
+                mime="text/x-diff",
+                original_name="verified-candidate.patch",
+                agent_id=_PARENT,
+                session_id=parent.session_id,
             )
-            repaired = _git(target, "rev-parse", "HEAD")
-            assert repaired != base and not _git(target, "status", "--porcelain")
+            evidence["candidate_patch_ref"] = candidate_patch.ref
+            evidence["candidate_only"] = _apply_candidate(
+                target, candidate, base, approved=False
+            )
+            assert not _git(target, "status", "--porcelain")
+            evidence["stage"] = "operator-application"
+            evidence["application"] = _apply_candidate(
+                target, candidate, base, approved=True
+            )
+            repaired = evidence["application"]["result_revision"]
             evidence["patched_revision"] = repaired
+            _git(target, "worktree", "remove", "--force", str(candidate))
+            evidence["candidate_cleanup_completed"] = not candidate.exists()
             evidence["stage"] = "daemon-restart"
             assert (
                 daemon_stop(str(config_path), home_root=home, data_root=data_root) == 0
@@ -467,10 +582,19 @@ def test_live_security_responsibility(
                     *report.evidence_refs,
                     *rescan.evidence_refs,
                 ],
+                source_task_id=task_id,
             )
             assert followup.review_status == "resolved"
             evidence["stage"] = "terminal-silence"
             terminal = surface.show_task(task_id)
+            assert (
+                terminal["security_scan"]["repair_project"]["follow_up_review_ref"]
+                == followup_ref
+            )
+            assert (
+                terminal["security_scan"]["repair_project"]["finding_outcome"]
+                == "resolved"
+            )
             assert not terminal["enabled"]
             assert terminal["security_scan"]["admitted_runs"] == 2
             assert terminal["security_scan"]["remaining_runs"] == 0
@@ -496,8 +620,15 @@ def test_live_security_responsibility(
             events = _events(data_root / "telemetry/telemetry.db", 0)
             evidence.update(
                 _observed_phase_usage(
-                    events, json.loads(config_path.read_text())["agents"]
+                    events,
+                    json.loads(config_path.read_text())["agents"],
+                    provider=model["provider"],
+                    model=model["model"],
+                    token_limit=tokens,
                 )
+            )
+            assert evidence["per_call_accounting_complete"], (
+                "physical usage is incomplete"
             )
             assert (
                 sha256(config_path.read_bytes()).hexdigest()
@@ -516,6 +647,7 @@ def test_live_security_responsibility(
             for ref in (
                 receipt.ref,
                 proof.ref,
+                candidate_patch.ref,
                 evidence["project"]["accepted_child_ref"],
                 report_ref,
                 review_ref,
@@ -544,5 +676,14 @@ def test_live_security_responsibility(
         finally:
             manager.close()
             store.close()
+            evidence.update(
+                _observed_phase_usage(
+                    _events(data_root / "telemetry/telemetry.db", 0),
+                    json.loads(config_path.read_text())["agents"],
+                    provider=model["provider"],
+                    model=model["model"],
+                    token_limit=tokens,
+                )
+            )
             evidence["elapsed_seconds"] = round(time.monotonic() - started, 3)
             (root / "evidence.json").write_text(json.dumps(evidence, indent=2))

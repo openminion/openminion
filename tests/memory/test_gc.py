@@ -1,10 +1,12 @@
 import unittest
+from unittest.mock import patch
 import tempfile
 import datetime
 from pathlib import Path
 
 from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
 from openminion.modules.memory.models import ArtifactRef, MemoryCandidate, MemoryRecord
+from openminion.modules.memory.runtime import purge as purge_module
 from openminion.modules.memory.runtime.gc import apply_confidence_decay, run_gc
 
 _VALID_REF_A = "a" * 64
@@ -305,3 +307,60 @@ class TestGC(unittest.TestCase):
         deleted = self.store.get("decay-edge")
         self.assertIsNotNone(deleted)
         self.assertTrue(deleted.is_deleted)
+
+    def test_gc_compares_expiry_as_instant_at_subsecond_boundary(self):
+        moment = datetime.datetime(
+            2026, 11, 6, 16, 0, 0, 100000, tzinfo=datetime.timezone.utc
+        )
+        rows = {
+            "exact-utc": "2026-11-06T16:00:00.100000+00:00",
+            "exact-offset": "2026-11-06T18:00:00.1+02:00",
+            "same-sec-z": "2026-11-06T16:00:00Z",
+            "past-plus14": "2026-11-07T01:00:00+14:00",
+            "past-naive": "2026-11-06T15:59:59",
+            "future-1us": "2026-11-06T16:00:00.100001+00:00",
+            "future-minus12": "2026-11-06T10:00:00-12:00",
+            "protected-expired": "2026-11-06T15:00:00+00:00",
+            "active-superseding": None,
+            "non-expiry": "!",
+            "year-zero": "0000-01-01T00:00:00+00:00",
+            "bad-date": "2020-02-30T00:00:00+00:00",
+            "bad-clock": "2020-01-01T24:59:00+00:00",
+        }
+        for rid, expires_at in rows.items():
+            refs = [_artifact_ref(_VALID_REF_A)] if rid == "past-plus14" else []
+            rec = make_record(rid, evidence_refs=refs)
+            self.store.put(rec)
+            if expires_at is not None:
+                with self.store._connect() as conn:
+                    conn.execute(
+                        "UPDATE memory_records SET expires_at = ? WHERE id = ?",
+                        (expires_at, rid),
+                    )
+        with self.store._connect() as conn:
+            conn.execute(
+                "UPDATE memory_records SET supersedes_id = 'protected-expired' "
+                "WHERE id = 'active-superseding'"
+            )
+        self.artifactctl.calls.clear()
+
+        with patch.object(purge_module, "utc_now", return_value=moment):
+            result = run_gc(self.store)
+
+        expected_purged = {
+            "exact-utc",
+            "exact-offset",
+            "same-sec-z",
+            "past-plus14",
+            "past-naive",
+        }
+        self.assertEqual(result.deleted_records, len(expected_purged))
+        for rid in rows:
+            if rid in expected_purged:
+                self.assertIsNone(self.store.get(rid), rid)
+            else:
+                self.assertIsNotNone(self.store.get(rid), rid)
+        self.assertEqual(
+            self.artifactctl.calls,
+            [("remove", "memory", "past-plus14", _VALID_REF_A)],
+        )

@@ -34,7 +34,8 @@ def main() -> int:
     try:
         handle = runtime.submit_turn(payload=payload)
         for chunk in handle.stream():
-            _print_chunk(chunk)
+            if line := _chunk_line(chunk):
+                print(line)
             if chunk.kind == "approval" and chunk.data.get("phase") == "requested":
                 handle.resolve_approval(
                     approval_id=str(chunk.data["approval_id"]),
@@ -47,8 +48,10 @@ def main() -> int:
     return 0
 
 
-def _print_chunk(chunk: TurnChunk) -> None:
-    print(f"[{chunk.kind}] sequence={chunk.sequence}")
+def _chunk_line(chunk: TurnChunk) -> str | None:
+    if chunk.kind not in {"status", "approval", "final_text"}:
+        return None
+    return f"[{chunk.kind}] sequence={chunk.sequence}"
 
 
 if __name__ == "__main__":

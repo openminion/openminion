@@ -11,8 +11,8 @@ class TestStorageConfigDefaults:
         cfg = StorageConfig()
         assert cfg.backend == "sqlite"
         assert cfg.postgres_url == ""
-        assert cfg.postgres_pool_min == 1
-        assert cfg.postgres_pool_max == 5
+        assert cfg.postgres_pool_min == 5
+        assert cfg.postgres_pool_max == 15
 
     def test_record_backend_sqlite(self):
         cfg = StorageConfig(backend="sqlite")
@@ -26,8 +26,8 @@ class TestStorageConfigDefaults:
         assert cfg.record_backend() == "record.postgres"
         opts = cfg.record_backend_options()
         assert opts["url"] == "postgresql://localhost/test"
-        assert opts["pool_min"] == 1
-        assert opts["pool_max"] == 5
+        assert opts["pool_size"] == 5
+        assert opts["pool_max_overflow"] == 10
 
 
 class TestStorageConfigValidation:

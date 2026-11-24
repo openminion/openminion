@@ -4,6 +4,7 @@ from openminion.services.runtime.plugins.discovery import (
 )
 from openminion.services.runtime.plugins.hooks import Plugin, PluginContext
 from openminion.services.runtime.plugins.manifests import (
+    PLUGIN_MANIFEST_CONTRACT_VERSION,
     PluginManifest,
     PluginManifestError,
     load_plugin_manifest,
@@ -18,6 +19,7 @@ from openminion.services.runtime.plugins.registry import (
 )
 
 __all__ = [
+    "PLUGIN_MANIFEST_CONTRACT_VERSION",
     "Plugin",
     "PluginContext",
     "PluginManifest",

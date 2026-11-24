@@ -36,6 +36,11 @@ python examples/sdk/tool_agent.py
 | `provider_switching.py` | Selecting configured agents without changing code |
 | `error_handling.py` | Provider, turn-deadline and output-validation failures |
 
+For a product-shaped integration, read
+[`docs/building-agentic-applications.md`](../../docs/building-agentic-applications.md).
+It defines which state stays in the application, the public turn and stream
+contract, restart limits, and the supported reusable-plugin route.
+
 Use `python <file> --help` to see each program's options. Provider setup and
 switching commands live in `examples/providers/README.md`.
 

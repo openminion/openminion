@@ -29,6 +29,11 @@ class TaskScheduleArgs(BaseModel):
             "For one-shot at an absolute time: {kind: 'at', at: '<ISO 8601 datetime>'}. "
             "For one-shot relative to now: {kind: 'at', after_seconds: <n>}."
         ),
+        json_schema_extra={
+            "properties": {
+                "after_seconds": {"type": "integer", "minimum": 1},
+            }
+        },
     )
     name: str | None = Field(default=None, description="Optional task name")
     goal_origin_action_type: Literal["watch", "task", "suggest", "none"] | None = Field(
