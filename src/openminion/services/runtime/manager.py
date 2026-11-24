@@ -355,6 +355,7 @@ class AgentRuntimeManager:
             session_id=str(req.session_id or "").strip(),
             input_text=str(req.input_text or ""),
             attachments=list(req.attachments or []),
+            image_refs=tuple(req.image_refs),
             mode=str(req.mode or "oneshot"),
             stream=bool(req.stream),
             meta=dict(req.meta or {}),
@@ -370,7 +371,7 @@ class AgentRuntimeManager:
             raise ValueError("agent_id must be non-empty")
         if not request.session_id:
             raise ValueError("session_id must be non-empty")
-        if not request.input_text.strip():
+        if not request.input_text.strip() and not request.image_refs:
             raise ValueError("input_text must be non-empty")
 
         self.get_or_create_agent(request.agent_id)

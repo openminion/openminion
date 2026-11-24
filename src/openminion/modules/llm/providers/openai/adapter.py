@@ -11,7 +11,6 @@ from ...constants import (
     LLM_TOOL_CALL_STATUS_PARSED,
     LLM_TOOL_CALL_STRATEGY_HYBRID,
     LLM_TOOL_CHOICE_AUTO,
-    LLM_TOOL_CHOICE_REQUIRED,
 )
 from ...errors import LLMCtlError
 from ...interfaces import LLM_RESPONSE_INTERFACE_VERSION
@@ -19,7 +18,6 @@ from ...schemas import (
     LLMRequest,
     LLMResponse,
     LLMStreamEvent,
-    Message,
     ResponseError,
     ToolCall,
 )
@@ -31,6 +29,7 @@ from ..message_payloads import (
     _extract_message_text,
     _extract_openai_like_thinking_blocks,
     _extract_openai_like_primary_text,
+    _openai_like_assistant_messages,
     _coerce_tool_calls,
     _http_json_get,
     _http_json_post,
@@ -46,7 +45,6 @@ from ..tool_choice import should_retry_with_auto_tool_choice
 from ..tool_calling import (
     build_tool_schema_name_map,
     build_openai_tools_payload,
-    normalize_tool_choice,
     remap_provider_tool_call_name,
     resolve_tool_call_source_precedence,
     supports_fallback_tool_calling,
@@ -55,6 +53,9 @@ from ..tool_calling import (
 )
 from ..behavior import resolve_behavior_profile
 from .request_compatibility import (
+    apply_openai_completion_options,
+    apply_openai_reasoning_effort,
+    openai_tool_choice,
     requires_auto_tool_choice_compat,
     resolve_openai_request_compat,
     should_retry_tool_transcript_error,
@@ -136,32 +137,6 @@ def _retry_2013(
     )
 
 
-def _openai_tool_choice(
-    request: LLMRequest,
-    *,
-    request_compat: Any,
-    tool_name_map: Any,
-) -> Any:
-    canonical_to_external = (
-        tool_name_map.canonical_to_external if tool_name_map else None
-    )
-    normalized = normalize_tool_choice(
-        request.tool_choice,
-        canonical_to_external=canonical_to_external,
-    )
-    if (
-        normalized == LLM_TOOL_CHOICE_REQUIRED
-        and request_compat.force_single_required_tool
-        and request.tools
-        and len(request.tools) == 1
-    ):
-        return normalize_tool_choice(
-            {"name": request.tools[0].name},
-            canonical_to_external=canonical_to_external,
-        )
-    return normalized
-
-
 def _openai_stream_payload(
     request: LLMRequest,
     *,
@@ -182,6 +157,7 @@ def _openai_stream_payload(
                 tool_name_map.canonical_to_external if tool_name_map else None
             ),
             preserve_tool_call_raw_arguments=request_compat.preserve_tool_arguments,
+            preserve_reasoning_content=request_compat.preserve_reasoning_content,
         ),
         "stream": True,
     }
@@ -193,6 +169,7 @@ def _openai_stream_payload(
         payload["max_tokens"] = request.max_output_tokens
     if request.stop:
         payload["stop"] = request.stop
+    apply_openai_reasoning_effort(payload, request, request_compat)
     if (
         request.tools
         and include_tool_contract
@@ -204,9 +181,9 @@ def _openai_stream_payload(
                 tool_name_map.canonical_to_external if tool_name_map else None
             ),
         )
-        payload["tool_choice"] = _openai_tool_choice(
+        payload["tool_choice"] = openai_tool_choice(
             request,
-            request_compat=request_compat,
+            profile=request_compat,
             tool_name_map=tool_name_map,
         )
     return payload
@@ -458,6 +435,12 @@ def _decode_openai_stream_chunk(
     return chunk
 
 
+def _apply_default_max_tokens(payload: dict[str, Any], config: dict[str, Any]) -> None:
+    configured = int(config.get("max_tokens") or 0)
+    if "max_tokens" not in payload and configured > 0:
+        payload["max_tokens"] = configured
+
+
 def _iter_openai_stream_events(
     lines: Iterable[str],
     *,
@@ -638,18 +621,12 @@ class OpenAIProvider:
                 preserve_tool_call_raw_arguments=(
                     request_compat.preserve_tool_arguments
                 ),
+                preserve_reasoning_content=request_compat.preserve_reasoning_content,
             ),
         }
 
-        if request.temperature is not None:
-            payload["temperature"] = request.temperature
-        if request.top_p is not None:
-            payload["top_p"] = request.top_p
-        if request.max_output_tokens is not None:
-            payload["max_tokens"] = request.max_output_tokens
-        if request.stop:
-            payload["stop"] = request.stop
-
+        apply_openai_completion_options(payload, request, request_compat)
+        _apply_default_max_tokens(payload, config)
         if (
             request.tools
             and request_compat.include_native_tool_contract
@@ -661,9 +638,9 @@ class OpenAIProvider:
                     tool_name_map.canonical_to_external if tool_name_map else None
                 ),
             )
-            normalized_tool_choice = _openai_tool_choice(
+            normalized_tool_choice = openai_tool_choice(
                 request,
-                request_compat=request_compat,
+                profile=request_compat,
                 tool_name_map=tool_name_map,
             )
             payload["tool_choice"] = normalized_tool_choice
@@ -781,7 +758,9 @@ class OpenAIProvider:
                 usage=_usage_from_openai_like(response_payload.get("usage")),
             )
 
-        assistant_messages = [Message(role="assistant", content=text)] if text else []
+        assistant_messages = _openai_like_assistant_messages(
+            text, tool_calls, message_payload
+        )
         usage = _usage_from_openai_like(response_payload.get("usage"))
         return adapter_result_to_llm_response(
             ProviderAdapterResult(
@@ -937,6 +916,7 @@ class OpenAIProvider:
             tool_name_map=tool_name_map,
             include_tool_contract=stream_contract_enabled,
         )
+        _apply_default_max_tokens(payload, config)
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",

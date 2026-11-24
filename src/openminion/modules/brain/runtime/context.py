@@ -53,6 +53,7 @@ _COMMON_HINT_KEYS = {
     "clarification_responses",
     "gateway_system_context",
     "model_capability_overrides",
+    "self_awareness",
 }
 _THINKING_CTL = ThinkingCtl()
 
@@ -706,6 +707,8 @@ def build_context(
     if runner.context_api is None:
         return {}
     hints = _runtime_freshness_hints(state=state, hints=dict(hints or {}))
+    if state.image_input is not None:
+        hints["image_input"] = state.image_input.model_dump()
 
     if state.unresolved_clarify_items:
         hints["pending_clarifications"] = [

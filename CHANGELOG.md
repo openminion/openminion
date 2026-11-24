@@ -1,11 +1,294 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-11-09
+Last updated: 2026-11-23
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
+
+- `import_omx` and `export_omx` now confine table payload paths inside `omx_dir`
+  (normalizing Windows separators while rejecting `..` escapes, absolute paths, and
+  external symlinks), prepare quoted table/column SQL identifiers (`_quote_ident`),
+  JSON object rows, verified `row_count` parity, and homogeneous row column sets in a
+  single pre-write pass before destructive `DELETE`/insert work, refuse caller-owned
+  active `target_record_store` transactions before writes while wrapping owned
+  `target_record_store` imports in `record_store.transaction()`, refuse foreign-owned
+  SQLite `application_id` targets for both owned and `module_application_id=0` bundles
+  before writes while preserving `application_id` and `user_version` pragmas on fresh
+  targets, and mark `RehydrateReport(success=False, error=...)` when post-import SQLite
+  `run_verification` reports fatal findings (Refs #827).
+
+- The ordinary brain tool caller now awaits an async `@tool` handler: `run_tool_spec`
+  runs a returned coroutine through the existing `run_async_compat` bridge instead of
+  shaping it as data, so the body executes once, the synchronous path and argument order
+  are untouched, `ToolRuntimeError` and the `EXEC_ERROR`/event mapping are unchanged, and
+  turn cancellation or an inherited turn deadline interrupt the await rather than only
+  being checked before it. The shared execution-path fix is separate and already
+  released; this closes the caller it did not cover (Refs #612).
+
+- Scheduled local source findings can enter an explicitly approved, isolated
+  repair project through the four `--security-*` launch arguments. Canonical
+  review evidence, exact writable files, a failing baseline and independent child
+  review bind the candidate; separate operator application and a fresh source
+  follow-up remain required for resolution.
+
+- The PostgreSQL pool options are emitted as the factory's own `pool_size` and
+  `pool_max_overflow`, so `storage.postgres_pool_min` / `postgres_pool_max` reach the pool
+  instead of being silently dropped, with the 5 retained / 15 total default preserved
+  (Refs #667).
+
+- `RepoMapCache.refresh` now preserves `root`-relative symbol paths across nested
+  subdirectories via `AstRepoMapBuilder.parse_file` (falling back to a single
+  `builder.parse(root)` pass for protocol-only `RepoMapBuilder` implementations),
+  binds cached symbol reuse to the `root` that produced those relative paths across
+  both in-memory refreshes and `save_to` / `load_from` round-trips, and re-parses
+  legacy hash-only, malformed, root-changed, or version-changed cache entries instead
+  of returning empty or stale-root symbol maps (Refs #825).
+
+
+## Current package line - 2026-11-21
+
+- The file family gains `file.mkdir` and `file.copy`: `file.mkdir` creates a
+  directory (missing parents only with `parents`) and reports whether it created it,
+  and `file.copy` copies one file's contents to a destination path, creating its
+  parents as `file.write` does and refusing an existing destination unless `overwrite`
+  is set. Both are write-scoped, blocked under read-only mode, resolved through the
+  existing workspace containment, and rejected by the memory backend. (Refs #813)
+
+
+- `purge_soft_deleted` (`run_gc` / `memctl gc`) now reuses the canonical SQLite
+  (`expiry_clause` + `expiry_bind_params`) and PostgreSQL (`EXPIRY_CLAUSE`) instant
+  predicates (`NOT <expiry_clause>`) instead of comparing `expires_at < now` as text,
+  so future negative-offset expiries and calendar-/clock-invalid or non-expiry values
+  are preserved while expired positive-offset, `Z`-suffixed, naive-UTC, and
+  exact-boundary instants are physically purged on both backends without altering
+  supersession protection or candidate/artifact-edge cleanup (Refs #824).
+
+
+- The shared `PromptBlockKind` literal now includes `self_awareness` and `memory`,
+  `segments_to_messages` merges `cache_invalidation_refs` across combined system
+  segments in a bucket, and brain runtime context assembly forwards `self_awareness`
+  hints to the context service without dropping them, so rendered `self_awareness`
+  and `memory` system segments pass LLM request adaptation and `Agent.run` before
+  the final user `turn_input` while keeping bucket ordering, roles, cache/provenance
+  metadata, secret redaction, and budget caps intact (Refs #483).
+
+- PostgreSQL runtime and in-place module schema ownership checks now verify base-schema
+  storage engine tables (`core_events`, `core_sidecar_rows`, `sidecar_ingest_log`) before
+  any DDL runs, refusing foreign or unowned base-schema engine tables without adding
+  columns, and concurrent first-start `CREATE SCHEMA` collisions (`pg_namespace_nspname_index`
+  `UniqueViolation` or `DuplicateSchema`) now roll back and report `"Nothing was written"` —
+  raising `SchemaOwnershipError` during runtime module-schema creation and returning a failed
+  `MigrationReport` (`rolled_back=True`) from `MigrationRunner` — while preserving existing
+  schema histories, no-adoption/no-repair behavior, and later-start recovery (Refs #446).
+
+
+- Memory retrieval honours `expires_at`: search, listing and entity lookups skip expired
+  records instead of serving them until someone runs `memory gc`, on both SQLite and
+  PostgreSQL. Expiry is compared as an instant, so a stored offset does not by itself change
+  readability, and stored values are read exactly as the caller supplied them (Refs #677).
+
+
+- A tool result that the policy/budget producers stamped with an explicit denial fact
+  (`denial_source` `policy`/`budget`, `blocked_kind` `policy_denied`/`approval_required`) now records
+  `state="denied"`; each fact is read and compared on its own, so a non-string value falls back to
+  `error` instead of raising, and the legacy reason-code/error-code branches are unchanged (Refs #639).
+
+- `KubernetesTransport.run` now validates the closed exec stream's terminal `returncode`
+  at the result-read boundary and raises a chained `RuntimeError` when the status frame
+  is missing or malformed instead of inventing exit code `0` or letting `WSClient`
+  parsing errors (`TypeError`, `KeyError`, `IndexError`, `ValueError`, `yaml.YAMLError`)
+  escape an active `OpsService` attempt unfinished (`remote_outcome="unknown"`).
+  (Refs #654)
+
+- `SsmTransport.run` now validates AWS `send_command` `CommandId`, documented
+  `get_command_invocation` `Status` / `StatusDetails` values, and integer terminal
+  `ResponseCode` facts at the transport boundary — preserving real `ResponseCode=-1`
+  sentinels on `Cancelled`/`Cancelling`/`TimedOut` (`remote_outcome="unknown"`),
+  routing missing/malformed payloads plus contradictory (`Success` with non-zero code,
+  `Failed` with `ResponseCode=0`) or unobserved (`Failed` with `ResponseCode=-1`, such
+  as `StatusDetails="Undeliverable"` or `"Terminated"`) outcomes through the `RuntimeError`
+  unknown-outcome boundary instead of fabricating exit codes or leaving dispatched
+  `OpsService` attempts unfinished, and normalizing `None` output streams to `""`.
+  (Refs #823)
+
+
+- The turn's tool-result projection now records a security event only for a real policy decision:
+  it keeps the producer's `blocked_kind`/`denial_source`, recognises the concrete legacy decision
+  codes (`require_approval`, `confirm_required`, `approval_denied`, `policy_denied`,
+  `tool_exposure_denied`; `approval_denied` keeps the `policy_denied` event it already had) and
+  records nothing for an ordinary tool failure — including a
+  `tool_budget`-prefixed code, which keeps its budget metadata but no longer implies a denial
+  (Refs #478).
+
+- `/model setup` now includes the redacted connection review summary inside the
+  `Save and use this connection now?` overlay prompt instead of buffering it into the
+  post-command slash console, so Connection, API format, Model, Base URL, Credential,
+  Config, and the unchanged current-agent-default notice are visible before confirmation
+  or cancellation (Refs #707).
+
+
+- Cached reads inside one adaptive loop are now dropped when a tool call could have changed the tree: a known
+  file writer invalidates by path containment (a cached read of `.` or `src` covers the files below it, and a
+  failed or timed-out write still counts, because a write can fail after touching the file), any other tool has
+  unknown reach and clears the cache, and only a pre-dispatch denial (`blocked`, `needs_user`) leaves it intact.
+  Paths are read from the tool schemas' own keys (`path`, `file_path`, `filename`, `destination`, `target`).
+  (Refs #783)
+
+- `BlobStoreFS._resolve_path` now resolves digest strings via `_owned_payload_paths`, so
+  `exists`, `open`, `stat`, `verify`, and `path_for` ignore unrelated shard files that
+  merely share a digest prefix (such as `<digest>backup` or `<digest>-backup`) both
+  before and after `delete`, while preserving legacy owned siblings, caller-owned
+  `BlobRef` paths, shard-local lookup/deletion, and first-write metadata idempotency.
+  (Refs #484)
+
+- `prepare_transaction` and `send_transaction` now validate `eth.get_transaction_count(sender, "pending")`
+  at the chain-read boundary (`_pending_nonce`) so boolean, floating-point, `null`, negative,
+  or non-integer RPC nonce observations fail immediately with structured `RPC_UNAVAILABLE`
+  (`{"operation": "chain_read"}`) before gas estimation, simulation, or transaction submission,
+  while preserving valid zero and positive Web3 integer nonces, canonical decimal serialization,
+  persisted preparation digests, and one-time send authorization. (Refs #663)
+
+- The freshness classifier is skipped only for the explicit `tool <name>` request form. Verb phrasing — including
+  `use the time tool to get now`, which previously took the shortcut — is classified again, because punctuation or a
+  dotted token cannot distinguish a real invocation from prose such as `use file.read documentation to explain its
+  latest behavior`. (Refs #784)
+
+- Interrupted or timed-out turns now close unresolved canonical `tool.call.requested` events
+  in that turn scope with bounded `tool.call.blocked` records (`TURN_TIMEOUT` or
+  `TURN_INTERRUPTED`) while preserving the original failure, existing telemetry/research
+  lifecycle cleanup, concurrent terminal winners, structural-only redaction, and late-worker
+  cancellation checks so later runs on the session do not fail `validate_tool_transcript`;
+  when transcript recovery itself hits a SQLite, PostgreSQL/SQLAlchemy, or session-storage
+  error, it records bounded `error_type` and `closed` diagnostics without copying raw
+  exception text or replacing an active turn failure. (Refs #797)
+
+- `diff_session_branches` now hashes session-independent structural projections via
+  `_stable_ref` (`summary_short`, `summary_long`, `base_ref`, `delta_refs` for `summary`
+  and `state_ref`, `state_inline` for `working_state`) instead of `session_id`, version,
+  or row timestamps, `carry_forward_branch_fields` preserves `base_ref`, `delta_refs`,
+  child-local summary refresh semantics (`based_on_seq=0`), and `state_inline=None` while
+  rejecting empty or non-sequence `fields` inputs with
+  `SessionBranchCarryForwardDeniedError` before child creation, and both entrypoints
+  raise `SessionBranchError` when a referenced session does not exist (Refs #826).
+
+- The agent loop's stall rule now counts consecutive failures: a productive batch clears
+  the no-progress counter, so two intermittent failures spread across a turn no longer end it
+  while work is still getting done (Refs #679).
+
+- Provider retries now respect a `Retry-After` hint (seconds or HTTP-date) on retryable
+  errors. A route is retried only after its hinted delay, and only when the turn has a
+  deadline with enough time left; otherwise the route's error is returned without
+  waiting, so an eligible configured fallback can run. The rule covers the inner retries
+  and the agent's entry retry loop, which no longer resends to a route before its hint.
+  Missing, malformed, zero or past hints keep the existing backoff, and attempt limits are
+  unchanged (Refs #717).
+
+- `action_result_to_tool_message` now attaches bounded `truncation` metadata (`field_count`,
+  capped per-field `kept`/`total` bounds across string, sequence, mapping and depth limits, plus
+  canonical CAS `artifact_refs` or `file_module` `path` reference hints when present on the
+  result) to serialized tool messages whenever compaction truncates `summary`, `outputs`,
+  `error.message` or `error.details`. Untruncated ordinary, error, approval and file-path
+  screenshot payloads remain unchanged; truncated error or approval payloads record the same
+  bounded `truncation` facts while keeping `tool_status` and `tool_error` intact; browser
+  screenshots keep their separate `ImageContentPart` vision attachment path; and any attached
+  `artifact_refs` or `path` values are reference hints only rather than a guarantee of later
+  retrieval. (Refs #790)
+
+- `enforce_url_policy` and `CoreHttpFetchProvider` redirect resolution (`join_redirect_url`)
+  now reject embedded whitespace or ASCII control characters, malformed bracketed IPv6 URLs,
+  non-numeric or out-of-range TCP ports, and port `0` with `INVALID_URL` before SSRF DNS
+  resolution or `urllib.request` connection setup, while preserving outer whitespace
+  trimming, percent-encoded paths, empty trailing port colons, valid ports `1..65535`, and
+  existing SSRF checks (Refs #821).
+
+- `AgentOutputValidationError` now reports why a recovered JSON object failed: when a reply
+  wraps a JSON object in prose and that object fails schema validation, the error carries that
+  object's `ValidationError` (for example the missing field) instead of the raw text's
+  `json_invalid` error. Non-JSON replies keep their parse error, and `raw_text` is unchanged
+  (Refs #803).
+
+
+## Current package line - 2026-11-17
+
+- The Playwright browser provider now creates its artifact directories (downloads,
+  screenshots, PDFs, traces) on the first `instance_start` instead of at construction,
+  so unused browser artifact directory creation no longer blocks runtime startup;
+  errors creating the required directories still surface on instance start, before
+  the browser launches, with the existing paths and containment check unchanged.
+  (Refs #769)
+
+- A turn whose accepted answer was truncated or filtered now reports the provider's
+  termination (`finish_reason: length`, `content_filter`, …) instead of an unconditional
+  `stop`, and keeps `stop` when the answer was replaced (Refs #602).
+
+
+- `openminion config diff <file>` shows what importing that file would change: per-leaf added, removed and changed values for the merge mode (or `--replace` for `config import --force`), with `--json` and exit code 1 when the config would differ, and no write in any case. The comparison is of the config the parser resolves (stored file plus environment overrides); credential values and URL passwords are redacted, so a secret-only change is reported without its value. (Refs #767)
+
+- Bare `openminion replay`, with no subcommand, now exits 2 with a usage line naming
+  `replay_command` instead of raising `AttributeError: 'Namespace' object has no attribute
+  'task_db'` from the group handler; the group requires one of `checkpoints`, `replay`,
+  `compare`, `rewind` or `branch`, and every existing subcommand invocation is unchanged.
+  (Refs #752)
+
+- `resolve_database_path` now treats a literal empty `storage.path` (`""`) like an
+  omitted value (`<data_root>/state/openminion.db`) instead of resolving to the
+  `data_root` directory and failing SQLite bootstrap, while keeping filenames
+  containing whitespace, explicit relative/absolute/`Path` values, and data-root
+  containment unchanged (Refs #766).
+
+- Configuration compatibility guidance now identifies accepted but inert
+  `self_improvement.max_applied_notes` and `self_improvement.min_token_overlap`
+  settings, explains the effective six-note context limit, and recommends leaving
+  both settings unset (Refs #779).
+
+## Current package line - 2026-11-15
+
+- MiniMax's OpenAI-compatible profile now targets MiniMax-M3.1-Flash and preserves
+  `reasoning_content` across provider normalization, tool rounds, and recovered tool
+  calls without changing reasoning behavior for other providers.
+
+- OpenAI-compatible providers now honor the configured maximum output-token cap while
+  preserving explicit per-request limits, so deployments can bound generated output
+  without overriding a caller's narrower request.
+
+- Brain finalization continues through the existing answer and quality-ratchet owners.
+  The experimental terminal read-result shortcut was removed after its frozen live
+  candidate failed the exact-output acceptance check.
+
+- `_tool_result_from_payload` now normalizes Pydantic `BaseModel` values across direct
+  results, nested collections, and `error.details` payloads with `model_dump(mode="json")`
+  so `ToolExecutionBatch.to_metadata_payload()` and tool-result summaries emit JSON
+  without altering tool-envelope fields or ordinary mapping-key serialization.
+
+- The README's Python `Agent` snippet now declares `lookup_order` as
+  `@tool(min_scope="READ_ONLY", idempotent=True)`, matching
+  `examples/sdk/tool_agent.py`: the bare `@tool` was classified as a write with
+  unknown reversibility, so under the default action policy the snippet ended at
+  a confirmation prompt instead of the answer. The `tool()` docstring and
+  `docs/runtime-surfaces.md` now describe how `min_scope`, `idempotent` and
+  `dangerous` map to approval; `tags` and `capabilities` do not declare risk.
+  Policy behavior is unchanged (Refs #745).
+
+- `docs/turn-budgets.md` now documents automatic fact extraction: the supported
+  top-level `brain.auto_fact_extraction` switch and its six defaults, model
+  selection from the effective agent profile, the auxiliary structured call it
+  adds when it runs, and the conditions that skip it. It also notes that an
+  `auto_fact_extraction` key under `agents.<id>` currently has no effect.
+  Behavior is unchanged (Refs #746).
+
+## Current package line - 2026-11-13
+
+- `examples/sdk/delegation.py --mode handoff --approval deny` now reports a denial only
+  when the run actually ended at the handoff confirmation; an ordinary answer with no
+  confirmation is printed unchanged, and the pause guidance is no longer shown after a
+  denial. Pause, allow_once and the approval callback are unchanged (Refs #526).
+
+- `build_delegate_tool` now dumps Pydantic `BaseModel` outputs from `Handoff` target
+  agents with `model_dump(mode="json")` so delegated structured results serialize cleanly
+  in `ToolExecutionBatch.to_metadata_payload()` while leaving non-model outputs and run
+  metadata unchanged.
 
 - `daemon start` now creates the `state/` and `logs/` parents under the storage
   private-directory contract instead of the process umask: the startup owner made them

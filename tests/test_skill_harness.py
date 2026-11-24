@@ -136,3 +136,28 @@ def test_skill_harness_does_not_double_count_nested_skills(tmp_path: Path) -> No
 
     assert report.total_skills == 1
     assert report.results[0].nested_skill_candidates == ("child/SKILL.md",)
+
+
+def test_skill_harness_distinguishes_same_named_skills_across_roots(
+    tmp_path: Path,
+) -> None:
+    roots = (tmp_path / "repo-a", tmp_path / "repo-b")
+    for root in roots:
+        _write_skill(root)
+    before = {
+        path.relative_to(tmp_path): path.read_bytes() if path.is_file() else None
+        for path in tmp_path.rglob("*")
+    }
+
+    for root in roots:
+        report = run_skill_harness(root)
+        assert report.ok
+        assert report.total_skills == 1
+        assert [result.skill_root for result in report.results] == [
+            str((root / "skills" / "hello").resolve())
+        ]
+
+    assert {
+        path.relative_to(tmp_path): path.read_bytes() if path.is_file() else None
+        for path in tmp_path.rglob("*")
+    } == before

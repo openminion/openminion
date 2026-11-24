@@ -1,7 +1,7 @@
 # OpenMinion Runtime Surfaces
 
 Status: active
-Last updated: 2026-10-06
+Last updated: 2026-11-21
 
 Purpose: give developers one package-local map of the public `openminion`
 surfaces and when to use each one.
@@ -61,6 +61,8 @@ Its `run_stream()` method is a synchronous turn with a progress callback. For
 iterator streaming, cancellation, or explicit approval resolution, call
 `APIRuntime.submit_turn()` and use the returned `RuntimeTurnHandle`.
 `examples/sdk/submitted_stream.py` shows that lifecycle using public imports.
+For an application boundary, identity mapping, stream semantics, restart
+limits, and plugin guidance, see `docs/building-agentic-applications.md`.
 
 `Agent.run()` and callback-progress `run_stream()` accept optional
 `timeout_seconds`, `approval_callback`, and `cancel_event` controls already
@@ -88,6 +90,21 @@ Action-policy confirmations reach `approval_callback` before tool execution.
 Returning true grants that invocation once; false or a callback failure prevents
 execution. Without a callback, the interactive confirmation flow remains in
 place. Submitted turns deliver the same request through approval stream events.
+
+Which `@tool` functions get a confirmation depends on how they are declared.
+Under the default action policy:
+
+- a bare `@tool` is a local write with unknown reversibility, so it is
+  confirmed before it runs;
+- `@tool(min_scope="READ_ONLY", idempotent=True)` is a read with no side
+  effects and runs without confirmation, as in `examples/sdk/tool_agent.py`.
+  Explicit denials, sensitive-target handling and operator policy still apply;
+- `idempotent=True` alone still leaves a write, which is confirmed;
+- `dangerous=True` is destructive and irreversible, and requires confirmation
+  unless a matching grant or an explicit policy rule resolves it first;
+- `tags` and `capabilities` do not declare risk.
+
+The docstring of `openminion.tool` lists the full mapping.
 
 In that flow the turn ends with `respond_kind` `policy_confirmation_prompt` in
 its metadata, and the call waits on the turn's thread. A later `run()` without

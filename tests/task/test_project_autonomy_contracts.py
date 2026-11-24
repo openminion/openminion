@@ -847,3 +847,40 @@ def test_project_turn_carries_explicit_successful_tool_artifact_refs(structural)
     )
     assert result.artifact_refs == (previous, accepted)
     assert result.evidence_refs == (previous, accepted)
+
+
+def test_project_checkpoint_keeps_security_admission_and_baseline_across_cycles():
+    from openminion.modules.task.project.models import ProjectCheckpoint
+    from openminion.modules.task.project.turn import (
+        ProjectTurnResult,
+        project_cycle_checkpoint_payload,
+    )
+    from openminion.modules.task import ProjectCycleDecision
+
+    repair = {"source_task_id": "scan-task", "write_paths": ["app.py"]}
+    baseline = [{"command": ["python", "verify.py"], "exit_code": 1}]
+    checkpoint = ProjectCheckpoint(
+        checkpoint_id="checkpoint-1",
+        project_run=_project_run(),
+        payload={"security_repair": repair, "security_repair_baseline": baseline},
+    )
+    for index in range(3):
+        payload = project_cycle_checkpoint_payload(
+            checkpoint,
+            ProjectTurnResult(summary="Model completion text is not authority"),
+            effect_payload={},
+            plan_payload={},
+            repository_payload={},
+            decision=ProjectCycleDecision.CONTINUE,
+            verification=(),
+            verification_closure={},
+            decision_reason="continue",
+            replan_count=0,
+            waiting_for_checks=False,
+            operator_guidance_consumed_revision=0,
+        )
+        assert payload["security_repair"] == repair
+        assert payload["security_repair_baseline"] == baseline
+        checkpoint = checkpoint.model_copy(
+            update={"checkpoint_id": f"checkpoint-{index + 2}", "payload": payload}
+        )

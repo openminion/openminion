@@ -5,11 +5,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
-from openminion.base.config import OpenMinionConfig
-from openminion.base.types import Message
 from openminion.modules.context.input_boundaries import (
     route_and_ledger as _pidf_route_and_ledger,
 )
+from openminion.base.config import OpenMinionConfig
+from openminion.base.types import Message
 from openminion.modules.brain.runtime.reasoning import (
     THINKING_ROUTE_BRIDGE,
     THINKING_ROUTE_DIRECT,
@@ -20,7 +20,7 @@ from openminion.modules.brain.runtime.reasoning import (
 )
 from openminion.modules.llm.reasoning.mapping import reconcile_route_support_metadata
 from openminion.modules.llm.client_call import (
-    provider_history_payload,
+    provider_request_payload,
     usage_payload_from_response_usage as _provider_usage_payload,
 )
 from openminion.modules.llm.providers.base import (
@@ -29,6 +29,8 @@ from openminion.modules.llm.providers.base import (
     ProviderResponse,
     ProviderToolCall,
     ProviderToolSpec,
+    assistant_message_meta,
+    response_contract_metadata,
 )
 from openminion.modules.llm.providers.envelope_v2 import CONTRACT_VERSION_V2
 from openminion.modules.llm.providers.normalization import normalize_provider_response
@@ -265,6 +267,7 @@ class AgentService(AgentTurnFlowMixin):
         self._provider = _provider_facade(provider, llm_runtime)
         self._logger = logger
         self._home_root = home_root
+        self._image_artifact_config = None
         self._tools = tools
         self._security_policy = security_policy
         self._self_improvement = self_improvement
@@ -538,41 +541,6 @@ class AgentService(AgentTurnFlowMixin):
                 chunks.append(content)
         return "\n".join(chunk for chunk in chunks if chunk).strip()
 
-    def _provider_request_to_llm_payload(
-        self, request: ProviderRequest
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, str]]:
-        messages: list[dict[str, Any]] = []
-        if str(request.system_prompt or "").strip():
-            messages.append({"role": "system", "content": str(request.system_prompt)})
-
-        for item in list(request.history or []):
-            payload = provider_history_payload(item)
-            if payload is not None:
-                messages.append(payload)
-
-        # PIDF: route user_message through the typed boundary owner.
-        _user_rendered, _ = _pidf_route_and_ledger(
-            "user_message",
-            str(request.user_message or ""),
-            seam_id="services.agent.service.user_message",
-        )
-        messages.append({"role": "user", "content": _user_rendered})
-
-        tools = [
-            {
-                "name": str(spec.name),
-                "description": str(spec.description or ""),
-                "input_schema": dict(spec.parameters or {}),
-                "strict": bool(spec.strict),
-            }
-            for spec in list(request.tools or [])
-            if str(spec.name or "").strip()
-        ]
-        metadata = {str(k): str(v) for k, v in dict(request.metadata or {}).items()}
-        if str(request.tool_call_strategy or "").strip():
-            metadata["tool_call_strategy"] = str(request.tool_call_strategy)
-        return messages, tools, metadata
-
     def _resolve_provider_request_thinking(self, request: ProviderRequest) -> None:
         metadata = {
             str(key): str(value)
@@ -715,12 +683,9 @@ class AgentService(AgentTurnFlowMixin):
                 )
             )
 
-        contract_version = str(getattr(response, "contract_version", "v1"))
-        recovered_empty = getattr(response, "empty_payload_recovered", False) is True
         normalization = {
             "adapter": "llm_runtime_client",
-            "llm_response_contract_version": contract_version,
-            "empty_payload_recovered": recovered_empty,
+            **response_contract_metadata(response),
         }
         if retry_override_id:
             normalization["provider_retry_override"] = retry_override_id
@@ -733,6 +698,7 @@ class AgentService(AgentTurnFlowMixin):
             finish_reason=str(getattr(response, "finish_reason", "") or ""),
             normalization=normalization,
             thinking=list(getattr(response, "thinking", []) or []),
+            assistant_meta=assistant_message_meta(response),
             cost_usd=getattr(response, "cost_usd", None),
             cost_source=getattr(response, "cost_source", None),
         )
@@ -769,8 +735,11 @@ class AgentService(AgentTurnFlowMixin):
                 or getattr(getattr(self, "_provider", object()), "model", "")
                 or ""
             )
-            messages, tools, metadata = self._provider_request_to_llm_payload(
-                provider_request
+            messages, tools, metadata = provider_request_payload(provider_request)
+            messages[-1]["content"], _ = _pidf_route_and_ledger(
+                "user_message",
+                messages[-1]["content"],
+                seam_id="services.agent.service.user_message",
             )
             completion_result = await asyncio.to_thread(
                 complete_with_provider_override_retry,
@@ -782,6 +751,7 @@ class AgentService(AgentTurnFlowMixin):
                 tool_choice=provider_request.tool_choice,
                 metadata=metadata,
                 thinking=provider_request.thinking,
+                max_output_tokens=provider_request.max_output_tokens,
                 policy=llm_runtime.retry_override_policy,
             )
             return self._llm_response_to_provider_response(

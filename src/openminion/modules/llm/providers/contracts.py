@@ -4,6 +4,8 @@ from typing import Any, Literal, Protocol, runtime_checkable
 
 from openminion.base.config.env import resolve_environment_config
 from openminion.base.constants import OPENMINION_STRICT_PROVIDER_RESPONSE_CONTRACTS_ENV
+from openminion.modules.artifact.models import ImageInputContext
+from openminion.modules.llm.schemas import MessageContentPart
 from openminion.modules.llm.constants import (
     LLM_TOOL_CALL_STRATEGY_HYBRID,
     LLM_TOOL_CHOICE_AUTO,
@@ -59,6 +61,8 @@ class ProviderRequest:
     tool_call_strategy: str = LLM_TOOL_CALL_STRATEGY_HYBRID
     metadata: dict[str, str] = field(default_factory=dict)
     max_output_tokens: int | None = None
+    content_parts: list[MessageContentPart] = field(default_factory=list)
+    image_input: ImageInputContext | None = None
 
 
 @dataclass
@@ -71,6 +75,8 @@ class ProviderHistoryMessage:
     tool_status: str | None = None
     tool_output: Any = None
     tool_error: dict[str, Any] | None = None
+    content_parts: list[MessageContentPart] = field(default_factory=list)
+    image_input: ImageInputContext | None = None
 
     @property
     def body(self) -> str:
@@ -90,6 +96,7 @@ class ProviderResponse:
     finish_reason: str = ""
     normalization: dict[str, Any] = field(default_factory=dict)
     thinking: list[ThinkingBlock] = field(default_factory=list)
+    assistant_meta: dict[str, Any] = field(default_factory=dict)
     cost_usd: float | None = None
     cost_source: Literal["provider", "estimated"] | None = None
 
@@ -103,6 +110,21 @@ class ProviderResponse:
     def raise_for_recovered_empty(self, message: str) -> None:
         if self.empty_payload_recovered:
             raise ProviderError(message, code="EMPTY_PROVIDER_RESPONSE")
+
+
+def assistant_message_meta(response: Any) -> dict[str, Any]:
+    messages = list(getattr(response, "assistant_messages", []) or [])
+    return dict(getattr(messages[-1], "meta", {}) or {}) if messages else {}
+
+
+def response_contract_metadata(response: Any) -> dict[str, Any]:
+    return {
+        "llm_response_contract_version": str(
+            getattr(response, "contract_version", "v1")
+        ),
+        "empty_payload_recovered": getattr(response, "empty_payload_recovered", False)
+        is True,
+    }
 
 
 @runtime_checkable

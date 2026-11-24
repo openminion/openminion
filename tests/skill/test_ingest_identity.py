@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -157,3 +158,71 @@ def test_operator_admission_is_the_only_path_into_selection(tmp_path: Path) -> N
         assert ctl.get_skill(skill_id).status == "verified"
     finally:
         ctl.close()
+
+
+def test_same_skill_id_isolated_across_explicit_stores(tmp_path: Path) -> None:
+    configs = (_config(tmp_path / "store-a"), _config(tmp_path / "store-b"))
+    procedures = ("Read repository A facts.", "Read repository B facts.")
+    paths = []
+    for folder, procedure in zip(("repo-a", "repo-b"), procedures, strict=True):
+        path = _write_skill(
+            tmp_path,
+            f"{folder}/skills/shared",
+            "---\nname: shared\nid: shared.probe\n---\n\n"
+            f"# Procedure\n{procedure}\n\n"
+            "# Verification\nConfirm the reference matches the repository.\n",
+        )
+        (path.parent / "references").mkdir()
+        (path.parent / "references/facts.txt").write_text(procedure, encoding="utf-8")
+        paths.append(path)
+
+    versions = []
+    packages = []
+    with closing(Skill(configs[0])) as first, closing(Skill(configs[1])) as second:
+        for ctl, path in zip((first, second), paths, strict=True):
+            skill_id, version, warnings = ctl.ingest_file(
+                path, scope="agent", agent_id="agent.main", authority=_operator()
+            )
+            assert skill_id == "shared.probe"
+            assert "admission.pending" in warnings
+            assert ctl.catalog_summaries("agent.main") == []
+            assert ctl.get_skill(skill_id, version).status == "draft"
+            versions.append(version)
+        assert versions[0] != versions[1]
+
+        for ctl, version in zip((first, second), versions, strict=True):
+            assert second.catalog_summaries("agent.main") == []
+            ctl.admit_skill_version(
+                skill_id=skill_id,
+                version_hash=version,
+                expected_active_version_hash=None,
+                target_status="verified",
+                reason="reviewed the repository fixture",
+                authority=_operator(),
+            )
+            assert [
+                (row["id"], row["version_hash"])
+                for row in ctl.catalog_summaries("agent.main")
+            ] == [(skill_id, version)]
+            packages.append(ctl.get_skill(skill_id).to_dict())
+
+    for config, version, foreign_version, procedure, package in zip(
+        configs, versions, reversed(versions), procedures, packages, strict=True
+    ):
+        with closing(Skill(config)) as ctl:
+            assert ctl.get_skill(skill_id).to_dict() == package
+            assert procedure in ctl.get_skill(skill_id).sections["procedure"]
+            assert [
+                (row["id"], row["version_hash"])
+                for row in ctl.catalog_summaries("agent.main")
+            ] == [(skill_id, version)]
+            assert (
+                ctl.read_skill_resource(
+                    skill_id=skill_id,
+                    version_hash=version,
+                    resource_path="references/facts.txt",
+                )["content"]
+                == procedure
+            )
+            with pytest.raises(SkillError, match="NOT_FOUND"):
+                ctl.get_skill(skill_id, foreign_version)

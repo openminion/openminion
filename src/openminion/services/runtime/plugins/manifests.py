@@ -13,6 +13,9 @@ from openminion.services.runtime.constants import (
     PLUGIN_TRUST_TIER_VALUES,
 )
 
+_PLUGIN_MANIFEST_CONTRACT_VERSION = "1"
+PLUGIN_MANIFEST_CONTRACT_VERSION = _PLUGIN_MANIFEST_CONTRACT_VERSION
+
 
 class PluginManifestError(RuntimeError):
     def __init__(self, errors: list[str]) -> None:
@@ -25,6 +28,7 @@ class PluginManifest:
     id: str
     name: str
     version: str
+    contract_version: str
     description: str
     config_schema: dict[str, Any]
     trust_tier: str
@@ -43,6 +47,12 @@ def validate_plugin_manifest(payload: Mapping[str, Any]) -> PluginManifest:
     plugin_id = _required_non_empty_string(payload.get("id"), "id", errors)
     name = _optional_string(payload.get("name")) or plugin_id or "plugin"
     version = _optional_string(payload.get("version")) or OPENMINION_VERSION
+    contract_version = (
+        _optional_string(payload.get("contract_version"))
+        or PLUGIN_MANIFEST_CONTRACT_VERSION
+    )
+    if contract_version != PLUGIN_MANIFEST_CONTRACT_VERSION:
+        errors.append(f"contract_version must be '{PLUGIN_MANIFEST_CONTRACT_VERSION}'.")
     description = _optional_string(payload.get("description"))
 
     config_schema = payload.get("config_schema")
@@ -116,6 +126,7 @@ def validate_plugin_manifest(payload: Mapping[str, Any]) -> PluginManifest:
         id=plugin_id,
         name=name,
         version=version,
+        contract_version=contract_version,
         description=description,
         config_schema=dict(config_schema),
         trust_tier=trust_tier,

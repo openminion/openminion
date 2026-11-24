@@ -211,7 +211,7 @@ def test_budget_extension_restores_transcript_with_applied_steering():
     _assert_applied_once(ctx, result.state.messages, (CORRECTION,))
     assert any(message.content == ORIGINAL for message in result.state.messages)
     assert not any(
-        "The tool budget or a per-tool limit has been reached." in str(message.content)
+        "No further tool calls are available in this turn." in str(message.content)
         for message in result.state.messages
     )
 

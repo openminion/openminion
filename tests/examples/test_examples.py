@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ast
 import os
 from pathlib import Path
+import re
 from runpy import run_path
 import shutil
 import subprocess
@@ -11,6 +13,7 @@ import pytest
 import yaml
 
 from openminion import tool
+from openminion.api import TurnChunk
 from openminion.base.config import OpenMinionConfig
 from openminion.base.version import OPENMINION_VERSION
 from openminion.modules.policy.runtime.action_policy import build_action_policy_service
@@ -158,6 +161,15 @@ def test_sdk_examples_expose_help_without_provider_calls() -> None:
         assert "usage:" in result.stdout
 
 
+def test_submitted_stream_ignores_additive_event_kinds() -> None:
+    chunk_line = run_path(str(SDK_EXAMPLES / "submitted_stream.py"))["_chunk_line"]
+
+    assert chunk_line(TurnChunk(trace_id="t", kind="status", sequence=1)) == (
+        "[status] sequence=1"
+    )
+    assert chunk_line(TurnChunk(trace_id="t", kind="future_kind", sequence=2)) is None
+
+
 def test_sdk_tool_example_uses_public_decorator_contract() -> None:
     module = run_path(str(SDK_EXAMPLES / "tool_agent.py"))
     tool_decl = module["lookup_order"].tool_decl
@@ -219,6 +231,37 @@ def test_sdk_tool_example_declares_read_only_lookup(tmp_path, source, expected):
         decision.risk.risk_class,
         decision.risk.reversibility,
     ) == expected
+
+
+def _readme_lookup_order():
+    """Build ``lookup_order`` exactly as the README's Python snippet declares it."""
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    blocks = re.findall(r"```python\n(.*?)```", readme, flags=re.DOTALL)
+    snippet = next(block for block in blocks if "def lookup_order" in block)
+    tree = ast.parse(snippet)
+    kept = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        or (isinstance(node, ast.FunctionDef) and node.name == "lookup_order")
+    ]
+    namespace: dict[str, object] = {}
+    exec(
+        compile(ast.Module(body=kept, type_ignores=[]), "README.md", "exec"), namespace
+    )
+    return namespace["lookup_order"]
+
+
+def test_readme_tool_snippet_declares_read_only_lookup(tmp_path):
+    decision = _default_policy_decision(_readme_lookup_order(), tmp_path)
+
+    assert (
+        decision.decision,
+        decision.reason_code,
+        decision.risk.risk_class,
+        decision.risk.reversibility,
+    ) == ("ALLOW", "READ_ONLY_ALLOW", "read", "reversible")
 
 
 def test_sdk_error_example_handles_existing_turn_timeout(monkeypatch, capsys):

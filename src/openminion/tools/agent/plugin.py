@@ -1,9 +1,10 @@
 import hashlib
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from openminion.base.logging import get_logger
 from openminion.modules.artifact.errors import ArtifactCtlError
@@ -32,11 +33,14 @@ from openminion.modules.brain.execution.worktree_children import (
 from openminion.modules.task import (
     TestEvidence,
     TestEvidenceStatus,
-    load_latest_project_checkpoint,
 )
-from openminion.modules.task.project import project_workspace
-from openminion.modules.task.project.policy import repository_project_launch_approved
+from openminion.modules.task.project.policy import (
+    code_bearing_project_inputs,
+    security_repair_child_scope,
+)
+from openminion.modules.task.project.models import SecurityRepairContext
 from openminion.modules.task.project.verification import (
+    check_security_repair_files,
     run_project_verification_commands,
 )
 from openminion.modules.telemetry.events.catalog import (
@@ -51,8 +55,6 @@ _LOG = get_logger("tools.agent")
 
 
 class AgentListArgs(BaseModel):
-    """Arguments for ``agent.list``."""
-
     status: str = Field(
         default="",
         description=(
@@ -69,8 +71,6 @@ class AgentListArgs(BaseModel):
 
 
 class AgentGetArgs(BaseModel):
-    """Arguments for ``agent.get``."""
-
     agent_id: str = Field(
         ...,
         min_length=1,
@@ -652,61 +652,11 @@ def _code_bearing_project_inputs(
             "Code-bearing delegation requires ArtifactCtl.",
             {"reason_code": "artifactctl_unavailable"},
         )
-    task_manager = getattr(ctx, "task_manager", None)
-    project_task_id = str(getattr(ctx, "project_task_id", "") or "").strip()
-    if task_manager is None or not project_task_id:
-        raise ToolRuntimeError(
-            "DEPENDENCY_MISSING",
-            "Code-bearing delegation requires an approved project.",
-            {"reason_code": "project_context_unavailable"},
-        )
-    try:
-        checkpoint = load_latest_project_checkpoint(
-            task_manager,
-            task_id=project_task_id,
-        )
-    except ValidationError:
-        raise
-    except ValueError as exc:
-        raise ToolRuntimeError(
-            "DEPENDENCY_MISSING",
-            "Code-bearing delegation requires an approved project checkpoint.",
-            {"reason_code": "project_checkpoint_unavailable"},
-        ) from exc
-    if checkpoint is None:
-        raise ToolRuntimeError(
-            "DEPENDENCY_MISSING",
-            "Code-bearing delegation requires an approved project checkpoint.",
-            {"reason_code": "project_checkpoint_unavailable"},
-        )
-    if not repository_project_launch_approved(checkpoint):
-        raise ToolRuntimeError(
-            "POLICY_DENIED",
-            "Code-bearing delegation requires an approved project.",
-            {"reason_code": "project_launch_unapproved"},
-        )
-    repository = project_workspace(checkpoint.project_run.workspace_ref)
-    if not (repository / ".git").exists():
-        raise ToolRuntimeError(
-            "POLICY_DENIED",
-            "Code-bearing delegation requires an approved Git project.",
-            {"reason_code": "project_repository_unavailable"},
-        )
-    verification_commands = (
-        checkpoint.project_run.execution_selectors.verification_commands
+    repository, commands, timeout = code_bearing_project_inputs(
+        getattr(ctx, "task_manager", None),
+        str(getattr(ctx, "project_task_id", "") or "").strip(),
     )
-    if not verification_commands:
-        raise ToolRuntimeError(
-            "POLICY_DENIED",
-            "Code-bearing delegation requires approved project verification.",
-            {"reason_code": "project_verifier_unavailable"},
-        )
-    return (
-        artifactctl,
-        repository,
-        verification_commands,
-        checkpoint.project_run.execution_selectors.verification_timeout_seconds,
-    )
+    return artifactctl, repository, commands, timeout
 
 
 def _delegate_and_verify_code(
@@ -729,15 +679,27 @@ def _delegate_and_verify_code(
     )
     completed = False
     try:
-        result = seam.delegate(
-            agent_id=args.agent_id,
-            instruction=instruction,
-            timeout_seconds=args.timeout_seconds,
-            permission_mode=ctx.base_permission_mode,
-            permission_overrides=ctx.permission_overrides,
-            workspace_root=str(lease.worktree),
-            cwd=str(lease.worktree),
-        )
+        with (
+            security_repair_child_scope(
+                ctx.task_manager,
+                ctx.project_task_id,
+                ctx.agent_id,
+                args.agent_id,
+                lease.worktree,
+            )
+            if _security_repair_context(ctx) is not None
+            else nullcontext(None)
+        ) as binding:
+            result = seam.delegate(
+                agent_id=args.agent_id,
+                instruction=instruction,
+                timeout_seconds=args.timeout_seconds,
+                permission_mode=ctx.base_permission_mode,
+                permission_overrides=ctx.permission_overrides,
+                workspace_root=str(lease.worktree),
+                cwd=str(lease.worktree),
+                **({"security_repair_binding": binding} if binding is not None else {}),
+            )
         if not result.ok:
             raise ToolRuntimeError(
                 _task_delegate_error_code(result.error_code, status=result.status),
@@ -749,6 +711,9 @@ def _delegate_and_verify_code(
                     "trace_id": result.trace_id,
                 },
             )
+        repair = _security_repair_context(ctx)
+        if repair is not None:
+            check_security_repair_files(repair, lease.worktree)
         evidence = run_project_verification_commands(
             verification_commands,
             workspace=lease.worktree,
@@ -759,6 +724,12 @@ def _delegate_and_verify_code(
     finally:
         if not completed:
             lease.isolator.release()
+
+
+def _security_repair_context(ctx: RuntimeContext) -> SecurityRepairContext | None:
+    policy = getattr(ctx, "policy", None)
+    raw = getattr(policy, "raw", {}).get("context_metadata", {}).get("security_repair")
+    return SecurityRepairContext.model_validate(raw) if raw is not None else None
 
 
 def _handle_child_artifact_disposition(
@@ -789,10 +760,22 @@ def _handle_child_artifact_disposition(
     if args.mode == "reject":
         result = reject_child_worktree_artifact(record=record, artifactctl=artifactctl)
     else:
+        repair = _security_repair_context(ctx)
+        if repair is not None:
+            if (
+                Path(str(record.get("repository") or "")).resolve()
+                != Path(repair.repository).resolve()
+            ):
+                raise ToolRuntimeError(
+                    "POLICY_DENIED",
+                    "Child artifact belongs to another repair workspace",
+                )
+            check_security_repair_files(repair, Path(repair.repository))
         result = accept_child_worktree_artifact(
             repo_root=str(record.get("repository") or ""),
             record=record,
             artifactctl=artifactctl,
+            allowed_paths=repair.write_paths if repair is not None else None,
         )
     if result.get("ok") is True:
         record_alias = save_child_worktree_record(artifactctl, record)
@@ -850,18 +833,31 @@ def _handle_child_artifact_review(
             {"reason_code": "verification_failed"},
         )
     artifact = record["artifact"]
-    result = seam.review_readonly(
-        reviewer_agent_id=args.agent_id,
-        objective=args.instruction,
-        criteria=args.review_criteria,
-        readable_base_repository=str(record.get("repository") or ""),
-        bundle_ref=str(artifact.get("bundle_ref") or ""),
-        target_digest=str(record.get("target_digest") or ""),
-        diff=str(record.get("diff") or ""),
-        verifier_refs=verifier_refs,
-        repository_instructions=args.repository_instructions,
-        timeout_seconds=args.timeout_seconds,
-    )
+    with (
+        security_repair_child_scope(
+            ctx.task_manager,
+            ctx.project_task_id,
+            ctx.agent_id,
+            args.agent_id,
+            Path(str(record["repository"])),
+            readonly=True,
+        )
+        if _security_repair_context(ctx) is not None
+        else nullcontext(None)
+    ) as binding:
+        result = seam.review_readonly(
+            reviewer_agent_id=args.agent_id,
+            objective=args.instruction,
+            criteria=args.review_criteria,
+            readable_base_repository=str(record.get("repository") or ""),
+            bundle_ref=str(artifact.get("bundle_ref") or ""),
+            target_digest=str(record.get("target_digest") or ""),
+            diff=str(record.get("diff") or ""),
+            verifier_refs=verifier_refs,
+            repository_instructions=args.repository_instructions,
+            timeout_seconds=args.timeout_seconds,
+            **({"security_repair_binding": binding} if binding is not None else {}),
+        )
     if not result.ok:
         raise ToolRuntimeError(
             _task_delegate_error_code(result.error_code, status=result.status),
@@ -945,30 +941,22 @@ def _emit_child_disposition(
 
 
 def register(registry: ToolRegistry) -> None:
-    registry.add(
-        ToolSpec(
-            name=MODEL_AGENT_LIST,
-            args_model=AgentListArgs,
-            min_scope="READ_ONLY",
-            handler=_h_agent_list,
-            dangerous=False,
-            idempotent=True,
-            tags=("plugin", "agent", "delegation"),
-            capabilities=("agent", "delegation"),
+    for name, args_model, handler in (
+        (MODEL_AGENT_LIST, AgentListArgs, _h_agent_list),
+        (MODEL_AGENT_GET, AgentGetArgs, _h_agent_get),
+    ):
+        registry.add(
+            ToolSpec(
+                name=name,
+                args_model=args_model,
+                handler=handler,
+                min_scope="READ_ONLY",
+                dangerous=False,
+                idempotent=True,
+                tags=("plugin", "agent", "delegation"),
+                capabilities=("agent", "delegation"),
+            )
         )
-    )
-    registry.add(
-        ToolSpec(
-            name=MODEL_AGENT_GET,
-            args_model=AgentGetArgs,
-            min_scope="READ_ONLY",
-            handler=_h_agent_get,
-            dangerous=False,
-            idempotent=True,
-            tags=("plugin", "agent", "delegation"),
-            capabilities=("agent", "delegation"),
-        )
-    )
     registry.add(
         ToolSpec(
             name=MODEL_TASK_DELEGATE,

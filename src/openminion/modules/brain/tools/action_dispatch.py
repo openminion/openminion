@@ -137,6 +137,63 @@ def _request_outcome_blocked_result(
     )
 
 
+def _emit_agent_request(
+    runner: Any, state: WorkingState, command: Any, logger: Any, lineage: dict[str, Any]
+) -> None:
+    logger.emit(
+        "a2a.request",
+        {
+            "target_agent_id": command.target_agent_id,
+            "method": command.method,
+            "has_delegation_context": bool(command.params.get("delegation_context")),
+            **lineage,
+        },
+        trace_id=state.trace_id,
+    )
+    runner._emit_brain_operation(
+        session_id=state.session_id,
+        turn_id=str(state.trace_id or "").strip(),
+        operation="tool_loop",
+        extra={
+            "provider": "a2a",
+            "target_agent_id": str(
+                getattr(command, "target_agent_id", "") or ""
+            ).strip(),
+        },
+    )
+    logger.emit(
+        "skill.step",
+        {
+            "step_index": state.cursor,
+            "status": "running",
+            "note": f"Starting A2A execution of {command.title}",
+        },
+        trace_id=state.trace_id,
+    )
+
+
+def _security_repair_active(runner: Any, state: WorkingState) -> bool:
+    if state.module_state.get("security_repair_binding"):
+        return True
+    manager = getattr(runner, "task_manager", None)
+    if manager is None or not state.resume_task_id_hint:
+        return False
+    latest = manager.get_latest_checkpoint(state.resume_task_id_hint)
+    return latest is not None and "security_repair" in latest[1].get("payload", {})
+
+
+def _security_repair_delegate_denied(command_id: str) -> ActionResult:
+    return ActionResult(
+        command_id=command_id,
+        status=BRAIN_ACTION_STATUS_BLOCKED,
+        summary="Security repairs require scoped task.delegate execution",
+        error=ActionError(
+            code="POLICY_DENIED",
+            message="Direct agent commands are outside the approved repair scope",
+        ),
+    )
+
+
 def execute_action_dispatch(
     runner: Any,
     *,
@@ -165,6 +222,11 @@ def execute_action_dispatch(
             ),
             None,
         )
+
+    if command.kind == BRAIN_COMMAND_KIND_AGENT and _security_repair_active(
+        runner, state
+    ):
+        return _security_repair_delegate_denied(command.command_id), None
 
     state.last_command_id = command.command_id
     if (
@@ -452,38 +514,7 @@ def execute_action_dispatch(
                 command_id=command.command_id, budget_name="a2a_calls"
             ), None
         state.budgets_remaining.a2a_calls -= 1
-        logger.emit(
-            "a2a.request",
-            {
-                "target_agent_id": command.target_agent_id,
-                "method": command.method,
-                "has_delegation_context": bool(
-                    command.params.get("delegation_context")
-                ),
-                **lineage,
-            },
-            trace_id=state.trace_id,
-        )
-        runner._emit_brain_operation(
-            session_id=state.session_id,
-            turn_id=str(state.trace_id or "").strip(),
-            operation="tool_loop",
-            extra={
-                "provider": "a2a",
-                "target_agent_id": str(
-                    getattr(command, "target_agent_id", "") or ""
-                ).strip(),
-            },
-        )
-        logger.emit(
-            "skill.step",
-            {
-                "step_index": state.cursor,
-                "status": "running",
-                "note": f"Starting A2A execution of {command.title}",
-            },
-            trace_id=state.trace_id,
-        )
+        _emit_agent_request(runner, state, command, logger, lineage)
         if runner.a2a_api is None:
             result = ActionResult(
                 command_id=command.command_id,

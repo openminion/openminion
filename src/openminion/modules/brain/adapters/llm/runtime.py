@@ -1,4 +1,7 @@
+from openminion.modules.artifact.models import ImageInputContext
+from openminion.modules.llm.schemas import LLMRequest, LLMResponse
 import json
+from collections.abc import Callable
 from typing import Any, cast
 
 from openminion.modules.brain.diagnostics.usage import record_llm_response
@@ -313,6 +316,23 @@ class LlmctlAdapter(LLMAPI):
         self.client = client
         self._last_trace_context: dict[str, Any] | None = None
 
+    def read_images(
+        self,
+        record: ImageInputContext,
+        *,
+        question: str,
+        max_output_tokens: int,
+        on_response: Callable[[LLMResponse], None],
+        before_request: Callable[[LLMRequest], LLMRequest],
+    ) -> LLMResponse:
+        return self.client.read_images(
+            record,
+            question=question,
+            max_output_tokens=max_output_tokens,
+            on_response=on_response,
+            before_request=before_request,
+        )
+
     def get_last_trace_context(self) -> dict[str, Any] | None:
         return dict(self._last_trace_context) if self._last_trace_context else None
 
@@ -345,6 +365,7 @@ class LlmctlAdapter(LLMAPI):
         context: dict[str, Any],
         schema: type,
         temperature: float = 0.0,
+        on_response: Callable[[LLMResponse], None] | None = None,
     ) -> Any:
         request = _build_request(
             model=model,
@@ -354,6 +375,8 @@ class LlmctlAdapter(LLMAPI):
             temperature=temperature,
         )
         response = self.client.call(request)
+        if on_response is not None:
+            on_response(response)
         record_llm_response(purpose=purpose, response=response)
         record_active_chat_provider_call(
             purpose=purpose,

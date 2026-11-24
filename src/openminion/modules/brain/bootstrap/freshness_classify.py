@@ -1,4 +1,3 @@
-import re
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -30,26 +29,19 @@ _FRESHNESS_CLASSIFIER_PROMPT = (
     "calendar assumptions would materially degrade the answer quality, including "
     "requests for latest/current/recent news, market-sensitive research, live "
     "stock baskets, or any answer that must be anchored to today's date rather "
-    "than an assumed month or year."
-)
-
-_DIRECT_TOOL_VERB_RE = re.compile(
-    r"^\s*(?:please\s+)?(?:use|run|call|invoke)\s+(?:the\s+)?([a-z][a-z0-9_.-]*)\b(?:\s+tool\b)?",
-    re.IGNORECASE,
+    "than an assumed month or year. Local runtime actions such as scheduling "
+    "tasks and relative delays are local_only unless they depend on current "
+    "external evidence."
 )
 
 
 def _direct_tool_request_name(user_input: str) -> str | None:
-    request_text = str(user_input or "").strip()
-    if not request_text:
-        return None
-    parts = request_text.split(maxsplit=2)
+    """Return the tool named by the explicit ``tool <name>`` request form."""
+
+    parts = str(user_input or "").strip().split(maxsplit=2)
     if len(parts) >= 2 and parts[0].lower() == "tool":
         return normalize_tool_name_for_brain(parts[1]) or None
-    match = _DIRECT_TOOL_VERB_RE.match(request_text)
-    if not match:
-        return None
-    return normalize_tool_name_for_brain(match.group(1)) or None
+    return None
 
 
 def _build_freshness_context(*, user_input: str) -> dict[str, Any]:

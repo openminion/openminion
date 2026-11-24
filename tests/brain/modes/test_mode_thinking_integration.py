@@ -66,6 +66,7 @@ class _Runner:
 
 def _state():
     return SimpleNamespace(
+        image_input=None,
         unresolved_clarify_items=[],
         clarify_responses={},
         session_id="sess-1",

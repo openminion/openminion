@@ -2,13 +2,16 @@
 
 import json
 import logging
+import math
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
 from pydantic import ValidationError
 
-from openminion.modules.runtime.sync import raise_if_cancelled
+from openminion.modules.runtime.sync import raise_if_cancelled, remaining_turn_timeout
 from openminion.modules.telemetry.trace.phase_timing import (
     active_chat_phase,
     record_active_chat_provider_attempt,
@@ -27,6 +30,7 @@ from ..diagnostics.events import (
 )
 from ..errors import ErrorCode, LLMCtlError
 from ..providers.cost import estimate_usage_cost_usd
+from ..providers.transport.error_facts import retry_after_seconds
 from ..schemas import (
     LLMRequest,
     LLMResponse,
@@ -38,6 +42,40 @@ from ..schemas import (
 
 RETRYABLE_CODES = {"RATE_LIMITED", "TIMEOUT", "PROVIDER_ERROR"}
 LOGGER = logging.getLogger(__name__)
+# Per entry retry loop: (provider, model) -> (monotonic not-before, its error response).
+_Routes = dict[tuple[str, str], tuple[float, LLMResponse]]
+_route_admission: ContextVar[_Routes | None] = ContextVar("llm_routes", default=None)
+
+
+@contextmanager
+def route_admission_scope() -> Iterator[None]:
+    token = _route_admission.set({})
+    try:
+        yield
+    finally:
+        _route_admission.reset(token)
+
+
+def _hint_not_before(response: LLMResponse) -> float | None:
+    error = response.error
+    if error is None or error.code not in RETRYABLE_CODES:
+        return None
+    raw = str((getattr(error, "details", None) or {}).get("retry_after") or "")
+    wait = retry_after_seconds(raw, now=time.time())
+    return None if not wait else time.monotonic() + wait
+
+
+def _hinted_wait_fits(not_before: float, step: float = 0.0) -> bool:
+    remaining: float = remaining_turn_timeout(math.inf)
+    wait = max(not_before - time.monotonic(), step)
+    return remaining != math.inf and wait < remaining
+
+
+def _wait_until(until: float) -> None:
+    while (left := until - time.monotonic()) > 0:
+        raise_if_cancelled()
+        time.sleep(min(left, 0.05))
+    raise_if_cancelled()
 
 
 @dataclass
@@ -403,11 +441,14 @@ def _complete_provider_attempt(
 ) -> LLMResponse:
     try:
         raise_if_cancelled()
+        if any(message.image_input is not None for message in call_request.messages):
+            if client.image_resolver is None:
+                raise LLMCtlError("POLICY_DENIED", "Image storage is unavailable")
+            call_request = client.image_resolver(call_request)
         with active_chat_phase("provider_round_trip"):
             raw_resp = provider.complete(call_request, cfg)
-        raise_if_cancelled()
         with active_chat_phase("response_normalization"):
-            return client._normalize_response(
+            response = client._normalize_response(
                 raw_resp,
                 provider_name,
                 model_name,
@@ -418,7 +459,7 @@ def _complete_provider_attempt(
                 },
             )
     except LLMCtlError as exc:
-        return client._error_response(
+        response = client._error_response(
             provider=provider_name,
             model=model_name,
             code=exc.code,
@@ -427,15 +468,20 @@ def _complete_provider_attempt(
             usage=exc.usage,
         )
     except Exception as exc:
-        return client._error_response(
+        response = client._error_response(
             provider=provider_name,
             model=model_name,
             code="PROVIDER_ERROR",
             message=f"{type(exc).__name__}: {exc}",
         )
 
+    if client.on_attempt_response is not None:
+        client.on_attempt_response(response)
+    raise_if_cancelled()
+    return response
 
-def _emit_provider_success(
+
+def _emit_provider_result(
     client: Any,
     *,
     call_request: LLMRequest,
@@ -444,6 +490,7 @@ def _emit_provider_success(
     provider_name: str,
     model_name: str,
     response: LLMResponse,
+    error_code: str | None = None,
 ) -> None:
     _record_provider_attempt_result(
         attempt_extra=attempt_extra,
@@ -451,17 +498,20 @@ def _emit_provider_success(
         provider_name=provider_name,
         model_name=model_name,
         response=response,
-        outcome="ok",
+        outcome="ok" if error_code is None else "error",
+        error_code=error_code,
     )
     client._emit_operation(
         request=call_request,
-        operation="response",
+        operation="response" if error_code is None else "error",
         provider_name=provider_name,
         model_name=model_name,
+        status="ok" if error_code is None else "error",
         attempt=attempt,
+        error_code=error_code,
         extra=_extra_with_latency(attempt_extra, response=response),
     )
-    cache_hit = client._cache_hit_payload(response)
+    cache_hit = client._cache_hit_payload(response) if error_code is None else None
     if cache_hit is not None:
         client._emit_operation(
             request=call_request,
@@ -589,6 +639,12 @@ def _call_with_retries(
     route_posture: str = "primary",
 ) -> LLMResponse:
     max_retries, backoff_ms = client._retry_config(overrides)
+    routes = _route_admission.get()
+    ready_at, recorded = (routes or {}).get((provider_name, model_name), (0.0, None))
+    if recorded is not None and ready_at > time.monotonic():
+        if not _hinted_wait_fits(ready_at):
+            return recorded
+        _wait_until(ready_at)
 
     for attempt in range(max_retries + 1):
         started = time.perf_counter()
@@ -638,41 +694,28 @@ def _call_with_retries(
         if response.latency_ms <= 0:
             response = response.model_copy(update={"latency_ms": elapsed_ms})
 
-        if response.ok:
-            _emit_provider_success(
-                client,
-                call_request=call_request,
-                attempt_extra=attempt_extra,
-                attempt=attempt_number,
-                provider_name=provider_name,
-                model_name=model_name,
-                response=response,
-            )
-            return response
-
         err_code = (
             response.error.code if response.error is not None else "PROVIDER_ERROR"
         )
-        _record_provider_attempt_result(
+        _emit_provider_result(
+            client,
+            call_request=call_request,
             attempt_extra=attempt_extra,
             attempt=attempt_number,
             provider_name=provider_name,
             model_name=model_name,
             response=response,
-            outcome="error",
-            error_code=err_code,
+            error_code=None if response.ok else err_code,
         )
-        client._emit_operation(
-            request=call_request,
-            operation="error",
-            provider_name=provider_name,
-            model_name=model_name,
-            status="error",
-            attempt=attempt_number,
-            error_code=err_code,
-            extra=_extra_with_latency(attempt_extra, response=response),
-        )
+        if response.ok:
+            return response
+        not_before = _hint_not_before(response)
+        if routes is not None:
+            routes[(provider_name, model_name)] = (not_before or -math.inf, response)
         if err_code in RETRYABLE_CODES and attempt < max_retries:
+            step = max(0.0, (backoff_ms / 1000.0) * (2**attempt))
+            if not_before is not None and not _hinted_wait_fits(not_before, step):
+                return response
             client._emit_operation(
                 request=call_request,
                 operation="retry",
@@ -682,7 +725,10 @@ def _call_with_retries(
                 error_code=err_code,
                 extra={**attempt_extra, "attempt_posture": "retry"},
             )
-            time.sleep(max(0.0, (backoff_ms / 1000.0) * (2**attempt)))
+            if not_before is not None:
+                _wait_until(max(not_before, time.monotonic() + step))
+            else:
+                time.sleep(step)
             continue
         return response
 

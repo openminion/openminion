@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
+from openminion.modules.artifact.models import ImageInputContext
 from openminion.modules.brain.loop.continuation import (
     AUTONOMOUS_TURN_FIRED_EVENT,
     AutonomousContinuationCapsExceeded,
@@ -612,6 +613,7 @@ class _StubRunner:
         root_turn_id: str | None = None,
         capture_event_id: str | None = None,
         capture_id: str | None = None,
+        image_input: ImageInputContext | None = None,
     ) -> Any:
         self.call_log.append(
             {
@@ -1471,6 +1473,7 @@ class ProductionPathCtgpWiringTests(unittest.TestCase):
         # Minimal Message-like object the mixin reads.
         class _Msg:
             body = "go build"
+            image_refs = ()
 
         mixin = BrainBridgeTurnMixin()
         return (mixin, runner, _Msg())

@@ -167,7 +167,13 @@ def build_delegate_tool(handoff: Handoff) -> ToolDecl:
 
     def _handler_fn(message: str) -> dict[str, Any]:
         result = handoff.target.run(message)
-        data = {"output": result.output}
+        raw_output = result.output
+        output_value = (
+            raw_output.model_dump(mode="json")
+            if hasattr(raw_output, "model_dump")
+            else raw_output
+        )
+        data = {"output": output_value}
         if result.run_id:
             data["run_id"] = result.run_id
         if result.run_state:

@@ -39,6 +39,7 @@ def test_plugin_trust_denial_raises_domain_error(monkeypatch) -> None:
         id="sample",
         name="Sample",
         version="0.0.1",
+        contract_version="1",
         description="",
         config_schema={"type": "object"},
         trust_tier="local_dev",

@@ -367,7 +367,7 @@ WORKING_MODULES = (
 def test_new_database_gives_every_module_its_own_schema(
     database: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    assert _start_runtime(database, tmp_path / "rt1") == 15
+    assert _start_runtime(database, tmp_path / "rt1") == 16
     _runtime_rows(database)
     runtime_before = _snapshot(database)["public"]
 
@@ -394,7 +394,7 @@ def test_new_database_gives_every_module_its_own_schema(
     finally:
         audit.close()
     assert _snapshot(database)["public"] == runtime_before
-    assert _start_runtime(database, tmp_path / "rt2") == 15
+    assert _start_runtime(database, tmp_path / "rt2") == 16
 
 
 def test_modules_first_then_runtime_storage(
@@ -403,7 +403,7 @@ def test_modules_first_then_runtime_storage(
     for module_id in ("memory", "a2a", "session", "registry"):
         assert _migrate(database, tmp_path, capsys, module_id)["code"] == 0
 
-    assert _start_runtime(database, tmp_path / "rt") == 15
+    assert _start_runtime(database, tmp_path / "rt") == 16
     columns = _scalars(
         database,
         "SELECT column_name FROM information_schema.columns "
@@ -469,7 +469,7 @@ def test_runtime_storage_after_the_session_store_tried_its_url(
         database, "SELECT indexname FROM pg_indexes WHERE schemaname = 'public'"
     )
 
-    assert _start_runtime(database, tmp_path / "rt2") == 15
+    assert _start_runtime(database, tmp_path / "rt2") == 16
     before = _snapshot(database)["public"]
     result = _migrate(database, tmp_path, capsys)
     assert {m: result[m]["status"] for m in WORKING_MODULES} == {
@@ -578,7 +578,7 @@ def _runtime_then_a2a(url: str, tmp_path: Path) -> None:
 
 
 def _artifact_then_registry(url: str, tmp_path: Path) -> None:
-    _legacy_module(url, "artifact")
+    _legacy_module(url, "artifact", "0001_baseline")
     _legacy_module(url, "registry")
 
 
@@ -637,7 +637,7 @@ LAYOUTS = {
     "runtime-then-a2a-audit-store": (
         _runtime_then_a2a,
         ["a2a", "a2a-audit-store"],
-        ["idempotency_keys is recorded by runtime storage v15"],
+        ["idempotency_keys is recorded by runtime storage v16"],
         ["registry", "memory", "runtime"],
     ),
     "artifact-then-registry": (
@@ -650,7 +650,7 @@ LAYOUTS = {
         _altered_runtime_table,
         ["runtime", "session"],
         [
-            "sessions has other columns than runtime storage v15 lists",
+            "sessions has other columns than runtime storage v16 lists",
             "sessions matches no recorded ledger",
         ],
         ["memory", "a2a"],
@@ -752,7 +752,7 @@ def test_unproven_layouts_are_refused_without_writing(
         assert _ledger(database, f"public__{owner}")[1] == owner
     assert _snapshot(database)["public"] == before["public"]
     if "runtime" in unaffected:
-        assert _start_runtime(database, tmp_path / "rt-unaffected") == 15
+        assert _start_runtime(database, tmp_path / "rt-unaffected") == 16
 
 
 def test_a_store_behind_head_opens_after_storage_migrate(
@@ -1420,7 +1420,7 @@ def test_relocation_r1_and_its_inverse(database: str, tmp_path: Path) -> None:
         memory.put(_memory_record("rec-2"))
     finally:
         memory.close()
-    assert _start_runtime(database, tmp_path / "rt1") == 15
+    assert _start_runtime(database, tmp_path / "rt1") == 16
     assert _ledger(database, "public__memory") == (["0004_namespace"], "memory")
     assert _schemas(database) == ["public", "public__memory"]
 
@@ -1430,7 +1430,7 @@ def test_relocation_r1b_lets_runtime_resume(database: str, tmp_path: Path) -> No
 
     _execute(database, *_documented_sql("R1b"))
 
-    assert _start_runtime(database, tmp_path / "rt") == 15
+    assert _start_runtime(database, tmp_path / "rt") == 16
     memory = _memory(database, tmp_path)
     try:
         assert memory.get("rec-1") is not None
@@ -1459,4 +1459,193 @@ def test_relocation_r2_parks_and_copies_the_module_rows(
     finally:
         audit.close()
     assert _snapshot(database)["public"]["tables"]["idempotency_keys"] == runtime_keys
-    assert _start_runtime(database, tmp_path / "rt2") == 15
+    assert _start_runtime(database, tmp_path / "rt2") == 16
+
+
+@pytest.mark.parametrize(
+    "table",
+    ["core_events", "core_sidecar_rows", "sidecar_ingest_log"],
+)
+def test_foreign_base_engine_tables_refuse_runtime_without_writing(
+    table: str,
+    database: str,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _execute(
+        database,
+        f"CREATE TABLE public.{table} (foreign_payload text)",
+        f"INSERT INTO public.{table} VALUES ('someone else')",
+    )
+    capsys.readouterr()
+    before = _snapshot(database)
+
+    message = _attempt("runtime", database, tmp_path, capsys)
+
+    assert _snapshot(database) == before
+    assert (
+        f"{table} has other columns than this code's storage engine creates" in message
+    )
+    assert "Nothing was written" in message
+    assert _migrate(database, tmp_path, capsys, "secret")["secret"]["status"] == "ok"
+    _registry_store(database, tmp_path / "reg").close()
+    assert _snapshot(database)["public"] == before["public"]
+
+
+def test_concurrent_first_starts_refuse_cleanly_and_recover_on_next_start(
+    database: str, tmp_path: Path
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+    import time
+
+    from openminion.modules.storage.migrations import postgres_schema
+    from openminion.modules.storage.migrations.errors import SchemaOwnershipError
+
+    _execute(
+        database,
+        "CREATE TABLE public.app_records (id text PRIMARY KEY, note text NOT NULL)",
+        "INSERT INTO public.app_records VALUES ('row-1', 'untouched')",
+    )
+    public_before = _snapshot(database)["public"]
+
+    observer = sa.create_engine(database, isolation_level="AUTOCOMMIT")
+    try:
+
+        def wait_until_blocked_on(holder_pid: int) -> None:
+            deadline = time.monotonic() + 20.0
+            while time.monotonic() < deadline:
+                with observer.connect() as obs:
+                    waiters = int(
+                        obs.execute(
+                            sa.text(
+                                "SELECT count(*) FROM pg_stat_activity "
+                                "WHERE datname = current_database() "
+                                "AND :holder = ANY(pg_blocking_pids(pid))"
+                            ),
+                            {"holder": holder_pid},
+                        ).scalar_one()
+                    )
+                if waiters >= 1:
+                    return
+                time.sleep(0.02)
+            raise AssertionError(
+                f"competing connection did not block on pid {holder_pid}"
+            )
+
+        holder_ready = threading.Event()
+        paused = False
+
+        def pause_before_commit(conn):
+            nonlocal paused
+            current_schema = str(
+                conn.execute(sa.text("SELECT current_schema()")).scalar_one()
+            )
+            if not paused and current_schema == "public__secret":
+                paused = True
+                pid = int(conn.execute(sa.text("SELECT pg_backend_pid()")).scalar_one())
+                holder_ready.set()
+                wait_until_blocked_on(pid)
+            return []
+
+        def run_first_secret():
+            eng = sa.create_engine(database)
+            try:
+                return MigrationRunner(
+                    module_id="secret",
+                    db_path=tmp_path / "sec-first.db",
+                    module_application_id=get_module_application_id("secret"),
+                    backend_type="postgres",
+                    engine=eng,
+                    select_postgres_schema=True,
+                    verifier_hook=pause_before_commit,
+                ).migrate()
+            finally:
+                eng.dispose()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first_secret = pool.submit(run_first_secret)
+            assert holder_ready.wait(timeout=20.0)
+            competing_secret = pool.submit(
+                _migrate_in, database, "secret", tmp_path / "sec-competing"
+            )
+            report1 = first_secret.result(timeout=20.0)
+            report2 = competing_secret.result(timeout=20.0)
+
+        assert report1.success is True and report1.rolled_back is False
+        assert report2.success is False and report2.rolled_back is True
+        assert report2.before.alembic_revision is None and report2.before.om_meta == {}
+        assert report2.after.alembic_revision == "0001_baseline"
+        assert report2.after.om_meta.get("module_id") == "secret"
+        assert report2.error is not None and "Nothing was written" in report2.error
+
+        holder_engine = sa.create_engine(database)
+        try:
+            with holder_engine.connect() as holder_conn:
+                holder_tx = holder_conn.begin()
+                holder_pid = int(
+                    holder_conn.execute(sa.text("SELECT pg_backend_pid()")).scalar_one()
+                )
+                holder_conn.execute(sa.text('CREATE SCHEMA "public__registry"'))
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    competing_store = pool.submit(
+                        _registry_store, database, tmp_path / "reg-competing"
+                    )
+                    wait_until_blocked_on(holder_pid)
+                    holder_tx.commit()
+                    with pytest.raises(SchemaOwnershipError) as store_refused:
+                        competing_store.result(timeout=20.0)
+        finally:
+            holder_engine.dispose()
+
+        assert "Module 'registry': PostgreSQL schema \"public__registry\"" in str(
+            store_refused.value
+        )
+        assert "Nothing was written" in str(store_refused.value)
+        assert not _tables(database, "public__registry")
+
+        mem_engine = sa.create_engine(database)
+        try:
+            stale_runner = MigrationRunner(
+                module_id="memory",
+                db_path=tmp_path / "mem-stale.db",
+                module_application_id=get_module_application_id("memory"),
+                backend_type="postgres",
+                engine=mem_engine,
+                select_postgres_schema=True,
+            )
+            assert stale_runner.postgres_module_schema().create is True
+            first_mem = _memory(database, tmp_path / "mem-first")
+            try:
+                first_mem.put(_memory_record("rec-1"))
+            finally:
+                first_mem.close()
+            mem_before = _snapshot(database)["public__memory"]
+            dup_report = stale_runner.migrate()
+        finally:
+            mem_engine.dispose()
+
+        assert dup_report.success is False and dup_report.rolled_back is True
+        assert dup_report.before.alembic_revision == "0004_namespace"
+        assert dup_report.after == dup_report.before
+        assert (
+            dup_report.error is not None and "Nothing was written" in dup_report.error
+        )
+        assert _snapshot(database)["public__memory"] == mem_before
+    finally:
+        observer.dispose()
+
+    _registry_store(database, tmp_path / "reg-later").close()
+    later_mem = _memory(database, tmp_path / "mem-later")
+    try:
+        assert later_mem.get("rec-1") is not None
+    finally:
+        later_mem.close()
+    later_sec = _migrate_in(database, "secret", tmp_path / "sec-later")
+    assert later_sec.success is True and later_sec.rolled_back is False
+    for module_id in ("registry", "memory", "secret"):
+        history = postgres_schema.complete_history(
+            module_id, _read(database, f"public__{module_id}")
+        )
+        assert history is not None and "current" in history.measured, module_id
+    assert _snapshot(database)["public"] == public_before

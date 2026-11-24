@@ -580,7 +580,7 @@ def test_hosted_more_menu_back_and_cancel_stays_readable_at_80_columns(
     write_transcript(artifact_root(tmp_path), "onboarding-more-back-cancel", transcript)
 
 
-def test_hosted_minimax_setup_lists_all_recommended_models(
+def test_hosted_minimax_setup_uses_current_recommended_model(
     tmp_path: Path,
     python_bin: Path,
     openminion_root: Path,
@@ -606,7 +606,7 @@ def test_hosted_minimax_setup_lists_all_recommended_models(
         ),
     ) as session:
         _reply(session, "Choose your model provider:", "4")
-        _reply(session, "Choose a recommended model", "2")
+        _reply(session, r"Model \[MiniMax-M3\.1-Flash\]:")
         _reply(session, r"Save this configuration\? \[Y/n\]:")
         _reply(
             session,
@@ -621,10 +621,8 @@ def test_hosted_minimax_setup_lists_all_recommended_models(
 
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     assert payload["agents"]["openminion"]["provider"] == "openai"
-    assert payload["providers"]["openai"]["model"] == "MiniMax-M2.7-highspeed"
-    assert "MiniMax-M2.7 (recommended)" in transcript
-    assert "MiniMax-M2.7-highspeed (recommended)" in transcript
-    assert "model: MiniMax-M2.7-highspeed [recommended]" in transcript
+    assert payload["providers"]["openai"]["model"] == "MiniMax-M3.1-Flash"
+    assert "model: MiniMax-M3.1-Flash [recommended]" in transcript
     assert fixture_key not in transcript
     assert fixture_key not in config_path.read_text(encoding="utf-8")
     _assert_owner_only(config_path)
@@ -964,7 +962,7 @@ def test_setup_repairs_shared_adapter_without_changing_existing_agent(
         ),
     ) as session:
         _reply(session, "Choose your model provider:", "4")
-        _reply(session, "Choose a recommended model", "1")
+        _reply(session, r"Model \[MiniMax-M3\.1-Flash\]:")
         _reply(session, r"Save this configuration\? \[Y/n\]:")
         _reply(
             session,
@@ -982,7 +980,7 @@ def test_setup_repairs_shared_adapter_without_changing_existing_agent(
     assert payload["providers"]["openai"]["model"] == "gpt-4.1-mini"
     assert (
         payload["agents"]["minimax-agent"]["provider_config_overrides"]["model"]
-        == "MiniMax-M2.7"
+        == "MiniMax-M3.1-Flash"
     )
     assert "repair: existing agents remain unchanged" in transcript
     assert "provider: MiniMax" in transcript
@@ -1028,7 +1026,7 @@ def test_provider_listing_is_width_safe(
     assert "API format: openai-compatible" in transcript
     assert "Credential: MINIMAX_API_KEY" in transcript
     assert "Endpoint: https://api.minimax.io/v1" in transcript
-    assert "Recommended models: MiniMax-M2.7" in transcript
+    assert "Recommended models: MiniMax-M3.1-Flash" in transcript
     write_transcript(
         artifact_root(tmp_path),
         f"onboarding-provider-list-{cols}",

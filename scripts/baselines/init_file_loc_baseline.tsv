@@ -30,7 +30,7 @@ src/openminion/modules/retrieve/__init__.py	62	VOL-28 existing init-file volume 
 src/openminion/modules/runtime/__init__.py	215	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
 src/openminion/modules/session/storage/migrations/__init__.py	83	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
 src/openminion/modules/skill/runtime/skill/__init__.py	145	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
-src/openminion/modules/storage/__init__.py	96	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
+src/openminion/modules/storage/__init__.py	97	SMI typed image lifecycle uses the existing SessionStore through the storage public surface.
 src/openminion/modules/storage/migrations/__init__.py	92	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
 src/openminion/modules/storage/runtime/__init__.py	95	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
 src/openminion/modules/task/__init__.py	236	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.

@@ -43,10 +43,12 @@ class OpenMinionLLMClient:
         *,
         invoke_provider_request: Callable[[ProviderRequest], Awaitable[Any]]
         | None = None,
+        read_images: Callable[..., Any] | None = None,
         runtime_tools: list[Any] | None = None,
         telemetryctl: Any | None = None,
         home_root: Path | None = None,
     ) -> None:
+        self.read_images = read_images
         self.provider = provider
         self.name = provider.name
         self._invoke_provider_request = invoke_provider_request
@@ -227,7 +229,7 @@ class OpenMinionLLMClient:
         sys_prompt, conversational = _split_system_and_conversation(
             _normalized_request_messages(req)
         )
-        latest_msg, history = _latest_prompt_and_history(
+        latest_msg, history, content_parts, image_input = _latest_prompt_and_history(
             conversational=conversational,
             metadata=metadata_payload,
         )
@@ -245,6 +247,8 @@ class OpenMinionLLMClient:
 
         provider_req = ProviderRequest(
             user_message=latest_msg,
+            content_parts=content_parts,
+            image_input=image_input,
             system_prompt=sys_prompt,
             history=history,
             tools=tools,

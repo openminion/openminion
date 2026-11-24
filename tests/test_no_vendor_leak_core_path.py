@@ -14,7 +14,7 @@ def test_llm_bridge_does_not_parse_vendor_raw_payload() -> None:
     src = _read(str(_OPENMINION_ROOT / "modules" / "llm" / "providers" / "bridge.py"))
     assert "provider_raw.get(" not in src
     assert '.get("done_reason"' not in src
-    assert 'finish_reason = str(getattr(response, "finish_reason", "") or "")' in src
+    assert 'finish_reason=str(getattr(response, "finish_reason", "") or "")' in src
 
 
 def test_agent_service_normalizes_provider_response_before_core_loop_logic() -> None:

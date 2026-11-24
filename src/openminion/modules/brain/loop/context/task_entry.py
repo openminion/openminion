@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from openminion.modules.brain.constants import TASK_CONTEXT_MAX_CHARS
 from openminion.modules.brain.schemas import RespondDecision
 from openminion.modules.llm.schemas import Message
 from .task_context import (
@@ -13,14 +14,25 @@ from .task_context import (
 
 
 def prepare_task_context_prompt(
-    runner: Any, state: Any, *, model: str, has_new_input: bool, target: int
+    runner: Any, state: Any, *, model: str, user_input: str | None, target: int
 ) -> tuple[list[Message], int, RespondDecision | None]:
 
     adapter = getattr(runner, "llm_api", None)
+    has_new_input = bool(str(user_input or "").strip())
+    instructions = TASK_UPDATE_INSTRUCTIONS
+    if (
+        state.resolved_task_context is None
+        and len(user_input or "") > TASK_CONTEXT_MAX_CHARS
+    ):
+        instructions += (
+            " This first input exceeds the task-state size limit. Include exactly one "
+            "task_update with operation=start and expected_revision=0 across the entry "
+            "response. Resolve a compact objective and preserve all applicable independent "
+            "conditions with exact quotes; do not copy the full input into the objective. "
+            "If the required conditions cannot fit, ask the user to split the request."
+        )
     required_messages = (
-        [Message(role="system", content=TASK_UPDATE_INSTRUCTIONS)]
-        if has_new_input
-        else []
+        [Message(role="system", content=instructions)] if has_new_input else []
     )
     if has_new_input:
         required_messages.append(
@@ -183,7 +195,7 @@ def build_task_entry_context(
         runner,
         state,
         model=model,
-        has_new_input=bool(str(user_input or "").strip()),
+        user_input=user_input,
         target=target,
     )
     if task_error is not None:
@@ -284,7 +296,9 @@ def entry_task_tool_specs(
     try:
         return [
             with_task_update_schema(
-                spec, required=state.resolved_task_context is not None
+                spec,
+                required=state.resolved_task_context is not None
+                and spec.name == "respond",
             )
             for spec in specs
         ], None

@@ -30,11 +30,16 @@ def remaining_turn_timeout(timeout_s: float) -> float:
     return min(timeout_s, remaining)
 
 
+def is_turn_deadline_elapsed() -> bool:
+    deadline = _turn_deadline.get()
+    return deadline is not None and monotonic() >= deadline
+
+
 def raise_if_cancelled() -> None:
     """Stop work inherited from a cancelled turn, including nested SDK calls."""
-    deadline = _turn_deadline.get()
-    if any(event.is_set() for event in _turn_cancellations.get()) or (
-        deadline is not None and monotonic() >= deadline
+    if (
+        any(event.is_set() for event in _turn_cancellations.get())
+        or is_turn_deadline_elapsed()
     ):
         raise asyncio.CancelledError("Turn cancelled.")
 
@@ -105,6 +110,7 @@ def run_async_compat(coro: Coroutine[Any, Any, _T]) -> _T:
 
 __all__ = [
     "await_with_cancel",
+    "is_turn_deadline_elapsed",
     "raise_if_cancelled",
     "remaining_turn_timeout",
     "run_async_compat",

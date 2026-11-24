@@ -181,6 +181,7 @@ def _append_turn_input(
             "turn_input",
             "turn_input",
             turn_rendered,
+            image_input=request.image_input,
             role="user",
             pinned=True,
         )

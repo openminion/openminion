@@ -603,17 +603,11 @@ class ActLoopFinalizationMixin:
             and not isinstance(loop_outcome.finalization_status, dict)
             and not closure_final_answer
         ):
-            message = (
-                "General act work ended without the required typed "
-                "finalization_status contract."
-            )
-            return ExecutionResult(
-                status=BRAIN_STATE_ERROR,
-                working_state=ctx.state,
-                message=message,
-                action_result=_build_error_result(
-                    message,
-                    "act_finalization_contract_missing",
+            return _finalization_contract_missing_result(
+                ctx,
+                message=(
+                    "General act work ended without the required typed "
+                    "finalization_status contract."
                 ),
             )
         if self._seeded_continue_stays_autonomous(ctx) and disposition in {

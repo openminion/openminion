@@ -792,6 +792,16 @@ def _delegated_inbound_metadata(
         "workspace_root": str(params.get("workspace_root", "") or "").strip(),
         "cwd": str(params.get("cwd") or params.get("workspace_root") or "").strip(),
     }
+    if "security_repair_binding" in params:
+        binding = params["security_repair_binding"]
+        payload["security_repair_binding"] = json.dumps(
+            {
+                "task_id": binding["task_id"],
+                "binding_id": binding["binding_id"],
+                "parent_agent_id": payload["a2a_from_agent"],
+                "target_agent_id": target_agent_id,
+            }
+        )
     if params.get("permission_overrides") and payload["permission_mode"] != "readonly":
         payload["permission_overrides"] = json.dumps(params["permission_overrides"])
     parent_context = _delegation_context_from_payload(params)

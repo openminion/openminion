@@ -30,7 +30,21 @@ from tests.brain.runner_test_support import (
     unittest,
 )
 
+import asyncio
+
+from openminion.modules.brain.adapters.llm import LlmctlAdapter
+from openminion.modules.llm import LLMCTL
 from openminion.modules.llm.errors import LLMCtlError
+from openminion.modules.llm.providers.bridge import LLMCTLBridgeProvider
+from openminion.modules.llm.runtime import flow
+from openminion.modules.runtime.sync import await_with_cancel
+from openminion.services.brain.client import OpenMinionLLMClient
+from tests.llm.test_telemetry_ops import (
+    _FakeClock,
+    _make_response,
+    _OrderedProvider,
+    _rate_limited,
+)
 from openminion.modules.llm.providers.base import ProviderError
 from openminion.modules.llm.schemas import (
     LLMRequest,
@@ -2187,3 +2201,131 @@ class RunnerDecisionTests(unittest.TestCase):
             current_datetime = str(hints.get("current_datetime") or "")
             self.assertTrue(current_datetime)
             self.assertIsNotNone(datetime.fromisoformat(current_datetime))
+
+
+def _bridged_entry_llm(
+    order: list[str],
+    primary: list[Any],
+    fallback: list[Any] | None,
+) -> LlmctlAdapter:
+    a = _OrderedProvider("provider_a", primary, order, purpose="entry")
+    routing: dict[str, Any] = {"primary": {"provider": a.name, "model": "a-model"}}
+    providers: dict[str, Any] = {a.name: {}}
+    if fallback is not None:
+        b = _OrderedProvider("provider_b", fallback, order, purpose="entry")
+        routing["fallbacks"] = [
+            {"provider": b.name, "model": "b-model", "on": ["RATE_LIMITED"]}
+        ]
+        providers[b.name] = {}
+    runtime = LLMCTL.from_config(
+        {
+            "version": 1,
+            "llmctl": {
+                "default_provider": a.name,
+                "default_model": "a-model",
+                "retries": {"max_retries": 0, "backoff_ms": 0},
+                "routing_defaults": routing,
+            },
+            "providers": providers,
+            "agents": {"default": {"tool_policy": {"enable_tools": True}}},
+        }
+    )
+    runtime.registry.add(a)
+    if fallback is not None:
+        runtime.registry.add(b)
+    bridge = LLMCTLBridgeProvider(
+        provider_name=a.name, model="a-model", provider_config={}
+    )
+    # The bridge's own client has no fallbacks; route it through the one above.
+    bridge._client = runtime.client(agent_name="default")
+    return LlmctlAdapter(OpenMinionLLMClient(bridge))
+
+
+class EntryRetryAfterAdmissionTests(unittest.TestCase):
+    def _decide(self, llm_api: LlmctlAdapter, *, timeout_s: float | None) -> Any:
+        runner = BrainRunner(
+            profile=_profile(),
+            session_api=fake_session_api(),
+            llm_api=llm_api,
+            context_api=fake_context_builder(),
+            tool_api=SimpleNamespace(registry=SimpleNamespace(_tools={})),
+        )
+        state = WorkingState(
+            session_id="s-retry-after",
+            agent_id="router-agent",
+            budgets_remaining=BudgetCounters(
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=20000, time_ms=10000
+            ),
+        )
+
+        def _run() -> Any:
+            return runner._decide(state=state, user_input="hi", logger=fake_logger())
+
+        with (
+            patch.object(runner, "_estimate_tokens", return_value=1),
+            patch.object(runner, "_debit_tokens", return_value=None),
+            patch(
+                "openminion.modules.brain.loop.orchestration._BACKOFF_SLEEP",
+                side_effect=self.backoffs.append,
+            ),
+        ):
+            if timeout_s is None:
+                return _run()
+            return asyncio.run(
+                await_with_cancel(asyncio.to_thread(_run), timeout_s=timeout_s)
+            )
+
+    def setUp(self) -> None:
+        self.clock = _FakeClock()
+        self.backoffs: list[float] = []
+        patcher = patch.object(flow, "time", self.clock)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_entry_reentry_waits_for_primary_hint_that_fits(self) -> None:
+        order: list[str] = []
+        llm_api = _bridged_entry_llm(
+            order,
+            [_rate_limited("30"), _make_response(output_text="after the wait")],
+            [_rate_limited()],
+        )
+
+        decision = self._decide(llm_api, timeout_s=120)
+
+        self.assertEqual(decision.mode, "respond")
+        self.assertEqual(order, ["provider_a", "provider_b", "provider_a"])
+        self.assertAlmostEqual(sum(self.clock.sleeps), 30.0)
+        self.assertEqual(len(self.backoffs), 1)
+
+    def test_entry_reentry_skips_primary_that_cannot_wait(self) -> None:
+        for timeout_s in (5.0, None):
+            with self.subTest(timeout_s=timeout_s):
+                order: list[str] = []
+                self.clock.sleeps.clear()
+                llm_api = _bridged_entry_llm(
+                    order,
+                    [_rate_limited("30")],
+                    [_rate_limited(), _make_response(output_text="fallback")],
+                )
+
+                decision = self._decide(llm_api, timeout_s=timeout_s)
+
+                self.assertEqual(decision.mode, "respond")
+                self.assertEqual(order, ["provider_a", "provider_b", "provider_b"])
+                self.assertEqual(self.clock.sleeps, [])
+
+    def test_entry_without_fallback_raises_original_rate_limit(self) -> None:
+        order: list[str] = []
+        llm_api = _bridged_entry_llm(order, [_rate_limited("30")], None)
+
+        with self.assertRaises(ProviderError) as raised:
+            self._decide(llm_api, timeout_s=None)
+
+        self.assertEqual(order, ["provider_a"])
+        self.assertEqual(raised.exception.code, "RATE_LIMITED")
+        self.assertEqual(raised.exception.details["status_code"], 429)
+        self.assertEqual(raised.exception.details["retry_after"], "30")
+        self.assertEqual(
+            raised.exception.details["reason_code"], "provider_rate_limited"
+        )
+        self.assertEqual(self.clock.sleeps, [])

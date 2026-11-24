@@ -222,17 +222,21 @@ def finalize_watch_turn(
 ) -> dict[str, Any]:
     checks_completed = int(watch.get("checks_completed", 0) or 0) + 1
     previous_condition = bool(watch.get("last_condition_met", False))
-    effective_condition = (
-        previous_condition if condition_value is None else condition_value
-    )
     checked_at = datetime.now(timezone.utc)
+    accepted_summary = str(
+        dict(result.get("metadata") or {}).get("watch_summary", "") or ""
+    ).strip()
+    accepted_condition = condition_value if accepted_summary else None
+    effective_condition = (
+        previous_condition if accepted_condition is None else accepted_condition
+    )
     terminal_state = watch_terminal_state(
         watch_terminal_summary=watch_terminal_summary,
         watch_ttl_expired=watch_ttl_expired,
         job=job,
         watch=watch,
         checks_completed=checks_completed,
-        condition_met=condition_value,
+        condition_met=accepted_condition,
         summary=summary,
     )
     terminal = bool(terminal_state["terminal"])
@@ -241,7 +245,7 @@ def finalize_watch_turn(
     summary = str(terminal_state["summary"])
     deliver, delivery_transition, alert_requested_at = monitoring_delivery_state(
         watch=watch,
-        condition_value=condition_value,
+        condition_value=accepted_condition,
         checked_at=checked_at,
         terminal=terminal,
         terminal_delivery=deliver,
@@ -261,8 +265,9 @@ def finalize_watch_turn(
         watch=watch,
         checks_completed=checks_completed,
         summary=summary,
+        accepted_summary=accepted_summary,
         condition_met=effective_condition,
-        condition_valid=condition_value is not None,
+        condition_valid=accepted_condition is not None,
         terminal_reason=terminal_reason,
         checked_at=checked_at,
         alert_requested_at=alert_requested_at,
@@ -279,7 +284,7 @@ def finalize_watch_turn(
     result["summary"] = summary
     result["output"] = watch_output_builder(
         condition_met=effective_condition,
-        condition_valid=condition_value is not None,
+        condition_valid=accepted_condition is not None,
         terminal=terminal,
         deliver=deliver,
         checks_completed=checks_completed,
@@ -300,6 +305,7 @@ def persist_watch_progress(
     watch: dict[str, Any],
     checks_completed: int,
     summary: str,
+    accepted_summary: str,
     condition_met: bool,
     condition_valid: bool,
     terminal_reason: str,
@@ -317,6 +323,11 @@ def persist_watch_progress(
     updated_watch["last_check_summary"] = summary
     if condition_valid:
         updated_watch["last_condition_met"] = bool(condition_met)
+        if accepted_summary:
+            updated_watch["last_accepted_observation"] = {
+                "summary": accepted_summary,
+                "condition_met": bool(condition_met),
+            }
     if alert_requested_at is not None:
         updated_watch["last_alert_requested_at"] = alert_requested_at
     updated_watch["last_terminal_reason"] = terminal_reason
@@ -541,6 +552,16 @@ def _add_watch_cron_meta(cron_meta: dict[str, str], watch: dict[str, Any]) -> No
     cron_meta["watch_alert_condition"] = str(
         watch.get("alert_condition", "") or ""
     ).strip()
+    previous_observation = watch.get("last_accepted_observation")
+    if isinstance(previous_observation, dict) and isinstance(
+        previous_observation.get("condition_met"), bool
+    ):
+        cron_meta["watch_previous_summary"] = str(
+            previous_observation.get("summary", "") or ""
+        ).strip()
+        cron_meta["watch_previous_condition_met"] = str(
+            previous_observation["condition_met"]
+        ).lower()
     for metadata_key, watch_key in (
         ("watch_profile_id", "check_profile_id"),
         ("watch_target_id", "target_id"),

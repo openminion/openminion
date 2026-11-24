@@ -235,6 +235,7 @@ def test_decision_prompt_fragments_preserve_current_contract() -> None:
     assert "first call coding or research with project_handoff" in entry_rule
     assert "test -f report.md" in entry_rule
     assert "not a prose criterion" in entry_rule
+    assert "scheduling tasks and relative delays are local_only" in entry_rule
     assert "clarify(question=...)" in DECIDE_STYLE_OVERRIDES["entry_clarify_rule"]
     assert "optional tool arguments" in DECIDE_STYLE_OVERRIDES["entry_clarify_rule"]
     assert fixed_profile_rewrites("full") == {

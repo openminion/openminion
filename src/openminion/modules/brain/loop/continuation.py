@@ -1,3 +1,4 @@
+from openminion.modules.artifact.models import ImageInputContext
 from typing import Any, TYPE_CHECKING
 
 from openminion.modules.brain.config import (
@@ -387,6 +388,7 @@ def run_with_autonomous_continuation(
     initial_trigger: str = "user_input",
     runtime_session_id: str | None = None,
     runtime_conversation_id: str | None = None,
+    image_input: ImageInputContext | None = None,
     root_turn_id: str | None = None,
     capture_event_id: str | None = None,
     capture_id: str | None = None,
@@ -402,6 +404,7 @@ def run_with_autonomous_continuation(
         approval_callback=approval_callback,
         runtime_session_id=runtime_session_id,
         runtime_conversation_id=runtime_conversation_id,
+        image_input=image_input,
         root_turn_id=root_turn_id,
         capture_event_id=capture_event_id,
         capture_id=capture_id,

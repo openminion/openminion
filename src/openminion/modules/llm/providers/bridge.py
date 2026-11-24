@@ -25,6 +25,7 @@ from openminion.modules.llm.providers.base import (
     ProviderRequest,
     ProviderResponse,
     ProviderToolCall,
+    assistant_message_meta,
     ensure_provider_response_compatibility,
 )
 from openminion.modules.llm.providers.behavior import (
@@ -383,8 +384,6 @@ class LLMCTLBridgeProvider(LLMProvider):
                 )
             )
 
-        finish_reason = str(getattr(response, "finish_reason", "") or "")
-
         raw_thinking = getattr(response, "thinking", None) or []
         response_telemetry = dict(getattr(response, "telemetry", {}) or {})
         raw_bridge_response = ProviderResponse(
@@ -392,7 +391,7 @@ class LLMCTLBridgeProvider(LLMProvider):
             model=str(response.model or self._model),
             usage=usage,
             tool_calls=tool_calls,
-            finish_reason=finish_reason,
+            finish_reason=str(getattr(response, "finish_reason", "") or ""),
             normalization={
                 "adapter": "llmctl_bridge",
                 "behavior_profile_id": behavior_profile.profile_id,
@@ -407,6 +406,7 @@ class LLMCTLBridgeProvider(LLMProvider):
                 ),
             },
             thinking=list(raw_thinking),
+            assistant_meta=assistant_message_meta(response),
         )
         return normalize_provider_response(
             raw_bridge_response,

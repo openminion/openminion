@@ -42,7 +42,7 @@ def resolve_database_path(
         env=resolved_env,
     )
 
-    if database_path is None:
+    if database_path is None or database_path == "":
         candidate = resolved_data_root / DEFAULT_DATABASE_PATH
     else:
         candidate = Path(database_path).expanduser()

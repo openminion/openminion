@@ -359,6 +359,18 @@ class InMemoryStorageBackend:
             "recoverable trash is unavailable for the memory backend",
         )
 
+    def mkdir(self, path: str, *, parents: bool = False) -> bool:
+        raise ToolRuntimeError(
+            "INVALID_ARGUMENT", "directories are unavailable for the memory backend"
+        )
+
+    def copy_file(
+        self, source: str, destination: str, *, overwrite: bool = False
+    ) -> int:
+        raise ToolRuntimeError(
+            "INVALID_ARGUMENT", "file copies are unavailable for the memory backend"
+        )
+
     def exists(self, path: str) -> bool:
         normalized = self._normalize(path)
         return normalized in self._files or normalized in self._dirs

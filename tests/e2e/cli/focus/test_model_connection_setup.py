@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import re
 import shutil
+from collections.abc import Callable
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
@@ -13,6 +14,11 @@ from rich.console import Console
 from openminion.api.core.profiles import AgentConfigActivationError
 from openminion.base.config import load_config, save_config
 from openminion.cli.interactive.terminal.shell.model_setup import handle_model_setup
+from openminion.cli.interactive.terminal.shell.slash_output import (
+    handle_prompt_safe_output_slash,
+)
+from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
+from openminion.cli.interactive.terminal.transcript import TerminalTranscript
 from openminion.modules.llm.setup_catalog import get_setup_preset
 from openminion.services.bootstrap.provider_setup import (
     ProviderSetupConnectionConflict,
@@ -25,11 +31,19 @@ pytestmark = pytest.mark.e2e
 
 
 class _Overlay:
-    def __init__(self, prompts: list[str | None], confirms: list[bool]) -> None:
+    def __init__(
+        self,
+        prompts: list[str | None],
+        confirms: list[bool],
+        *,
+        on_confirm: Callable[[str], None] | None = None,
+    ) -> None:
         self.prompts = prompts
         self.confirms = confirms
         self.secret_prompts: list[bool] = []
         self.prompt_texts: list[str] = []
+        self.confirm_texts: list[str] = []
+        self._on_confirm = on_confirm
 
     async def present_prompt_async(
         self,
@@ -43,11 +57,14 @@ class _Overlay:
 
     async def present_confirm_async(
         self,
-        _prompt: str,
+        prompt: str,
         *,
         default: bool = False,
     ) -> bool:
         del default
+        self.confirm_texts.append(prompt)
+        if self._on_confirm is not None:
+            self._on_confirm(prompt)
         return self.confirms.pop(0)
 
 
@@ -155,7 +172,92 @@ async def test_model_setup_masks_local_credential_after_consent() -> None:
     assert runtime.build_calls[-1]["allow_local_api_key"] is True
     assert overlay.secret_prompts[-1] is True
     assert secret not in output.getvalue()
-    assert "local config (redacted)" in output.getvalue()
+    assert secret not in overlay.confirm_texts[-1]
+    assert "local config (redacted)" in overlay.confirm_texts[-1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("preset_id", "prompts", "confirms", "needs_secret", "expected_credential"),
+    [
+        pytest.param(
+            "ollama", ["1", ""], [False], False, "not required", id="numeric-cancel"
+        ),
+        pytest.param(
+            "ollama", ["ollama", ""], [True], False, "not required", id="normal-save"
+        ),
+        pytest.param(
+            "minimax",
+            ["minimax", "", "fixture-secret-value"],
+            [True, True],
+            True,
+            "local config (redacted)",
+            id="local-credential-save",
+        ),
+    ],
+)
+async def test_model_setup_presents_review_before_buffered_slash_flush(
+    preset_id: str,
+    prompts: list[str | None],
+    confirms: list[bool],
+    needs_secret: bool,
+    expected_credential: str,
+) -> None:
+    runtime = _Runtime(preset_id)
+    if needs_secret:
+        runtime.failures.append(
+            ProviderSetupMissingCredential("MiniMax", "MINIMAX_API_KEY")
+        )
+    outer_console, outer_output = _console()
+    transcript = TerminalTranscript(outer_console)
+    status_line = TerminalStatusLine()
+    save_snapshots: list[tuple[str, str]] = []
+
+    def record_confirm(prompt: str) -> None:
+        if prompt.endswith("Save and use this connection now?"):
+            save_snapshots.append((prompt, outer_output.getvalue()))
+
+    overlay = _Overlay(list(prompts), list(confirms), on_confirm=record_confirm)
+
+    async def slash_handler(_text: str, **kwargs: Any) -> bool:
+        await handle_model_setup(
+            runtime=kwargs["runtime"],
+            console=kwargs["console"],
+            overlay=kwargs["overlay"],
+        )
+        return False
+
+    await handle_prompt_safe_output_slash(
+        "/model setup",
+        slash_handler=slash_handler,
+        runtime=runtime,
+        console=outer_console,
+        transcript=transcript,
+        overlay=overlay,
+        status_line=status_line,
+        working_dir=".",
+    )
+
+    assert len(save_snapshots) == 1
+    confirm_prompt, pre_confirm_transcript = save_snapshots[0]
+    assert pre_confirm_transcript == ""
+    assert confirm_prompt.startswith("Review\n")
+    assert (
+        f"  Connection: {runtime.preset.display_label} ({preset_id})" in confirm_prompt
+    )
+    assert f"  API format: {runtime.preset.api_format_label}" in confirm_prompt
+    assert f"  Credential: {expected_credential}" in confirm_prompt
+    assert "  Config: /tmp/config.json" in confirm_prompt
+    assert "  Current agent default: unchanged" in confirm_prompt
+    assert confirm_prompt.endswith("\nSave and use this connection now?")
+    assert "fixture-secret-value" not in confirm_prompt
+    assert "fixture-secret-value" not in outer_output.getvalue()
+    if confirms[-1]:
+        assert len(runtime.applied) == 1
+        assert "selected for this session; not tested yet" in outer_output.getvalue()
+    else:
+        assert runtime.applied == []
+        assert "model setup cancelled" in outer_output.getvalue()
 
 
 @pytest.mark.asyncio
@@ -450,9 +552,16 @@ def test_focus_model_setup_corrects_invalid_base_url_in_pty(
             timeout=60,
         )
         session.type_line("https://models.example.test/v1")
-        session.wait_for_after(
+        pre_confirm = session.wait_for_after(
             "Save and use this connection now?", offset=offset, timeout=60
         )
+        review_before_prompt = pre_confirm.split(
+            "Save and use this connection now?", 1
+        )[0]
+        assert "Review" in review_before_prompt
+        assert "Model: fixture-model" in review_before_prompt
+        assert "Base URL: https://models.example.test/v1" in review_before_prompt
+        assert "Current agent default: unchanged" in review_before_prompt
         session.type_line("n")
         transcript = session.wait_for_after(
             "model setup cancelled", offset=offset, timeout=60
@@ -506,9 +615,16 @@ def test_focus_model_setup_corrects_invalid_replacement_id_in_pty(
         session.type_line("bad/id")
         session.wait_for_after("New connection id:", offset=offset, timeout=60)
         session.type_line("ollama-local")
-        session.wait_for_after(
+        pre_confirm = session.wait_for_after(
             "Save and use this connection now?", offset=offset, timeout=60
         )
+        review_before_prompt = pre_confirm.split(
+            "Save and use this connection now?", 1
+        )[0]
+        assert "Review" in review_before_prompt
+        assert "Connection: Ollama (ollama-local)" in review_before_prompt
+        assert "Model: llama3.1" in review_before_prompt
+        assert "Current agent default: unchanged" in review_before_prompt
         session.type_line("n")
         transcript = session.wait_for_after(
             "model setup cancelled", offset=offset, timeout=60

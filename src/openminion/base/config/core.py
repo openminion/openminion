@@ -7,6 +7,7 @@ from openminion.base.config.base import DEFAULT_STORAGE_PATH, UnknownProfileErro
 from openminion.base.config.parse import _normalize_brain_integration_mode
 
 from .providers import ProvidersConfig
+from .image_input import ImageInputConfig, validate_image_connections
 from .skill_selection import skill_value_to_payload
 from .runtime.capability import (
     ModeRuntimePolicyConfig,
@@ -131,6 +132,7 @@ class AgentProfileConfig:
     system_prompt: str = ""
     provider_config_overrides: dict[str, Any] = field(default_factory=dict)
     model_connections: dict[str, dict[str, Any]] = field(default_factory=dict)
+    image_input: ImageInputConfig | None = None
     model_capability_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
     action_policy: ActionPolicyConfig | None = None
     command_policy: dict[str, Any] = field(default_factory=dict)
@@ -151,6 +153,9 @@ class AgentProfileConfig:
     mcp_exposure: MCPExposureConfig = field(default_factory=MCPExposureConfig)
 
     def __post_init__(self) -> None:
+        if self.image_input is not None:
+            self.image_input = ImageInputConfig.model_validate(self.image_input)
+        validate_image_connections(self.image_input, self.model_connections)
         self.thinking_policy = coerce_thinking_runtime_policy_config(
             self.thinking_policy,
             field_path="agents.<id>.thinking_policy",
@@ -223,6 +228,8 @@ class AgentProfileConfig:
             )
         if turn_usage_display := self.turn_usage_display.strip():
             payload["turn_usage_display"] = turn_usage_display
+        if self.image_input is not None:
+            payload["image_input"] = self.image_input.model_dump(exclude_none=True)
         for key, value in (
             ("thinking_policy", thinking_runtime_policy_to_dict(self.thinking_policy)),
             ("provider_policy", provider_runtime_policy_to_dict(self.provider_policy)),
@@ -266,8 +273,8 @@ class StorageConfig:
     path: str = str(DEFAULT_STORAGE_PATH)
     backend: str = "sqlite"
     postgres_url: str = ""
-    postgres_pool_min: int = 1
-    postgres_pool_max: int = 5
+    postgres_pool_min: int = 5
+    postgres_pool_max: int = 15
 
     def __post_init__(self) -> None:
         allowed = {"sqlite", "postgres"}
@@ -284,13 +291,13 @@ class StorageConfig:
         return "record.postgres" if self.backend == "postgres" else "record.sqlite"
 
     def record_backend_options(self) -> dict[str, object]:
-        if self.backend == "postgres":
-            return {
-                "url": self.postgres_url,
-                "pool_min": self.postgres_pool_min,
-                "pool_max": self.postgres_pool_max,
-            }
-        return {}
+        if self.backend != "postgres":
+            return {}
+        url = self.postgres_url
+        kept, total = self.postgres_pool_min, self.postgres_pool_max
+        if not 1 <= kept <= total:
+            raise ConfigValidationError("postgres_pool_min/max out of range")
+        return {"url": url, "pool_size": kept, "pool_max_overflow": total - kept}
 
 
 @dataclass

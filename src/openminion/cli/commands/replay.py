@@ -160,7 +160,7 @@ def _add_branch_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _register_subcommands(parser: argparse.ArgumentParser) -> None:
-    subcommands = parser.add_subparsers(dest="replay_command")
+    subcommands = parser.add_subparsers(dest="replay_command", required=True)
 
     checkpoints = subcommands.add_parser("checkpoints", help="List task checkpoints")
     checkpoints.add_argument("task_id")

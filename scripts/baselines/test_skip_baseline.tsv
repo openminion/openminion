@@ -9,7 +9,7 @@ e2e/cli/focus/test_harness_assertions.py	1	0	PTY process groups require POSIX
 e2e/project_worker/test_completion.py	1	0	git binary is required
 e2e/project_worker/test_repository_lifecycle.py	3	0	git binary is required
 e2e/test_live_cli_chat_minimax_official_task_cron.py	4	0	missing live config
-e2e/test_live_focus_daemon_task_delivery.py	2	0	missing live config
+e2e/test_live_focus_daemon_task_delivery.py	4	0	four live daemon cases require the official MiniMax config
 e2e/test_live_github_pr_review_routine.py	2	0	GITHUB_TOKEN not set (live PAT required)
 e2e/test_live_github_write_actions.py	2	0	GITHUB_TOKEN not set (live PAT required)
 mcp/test_stdio_framing_interop.py	2	0	opt-in live MCP interop; npx is required

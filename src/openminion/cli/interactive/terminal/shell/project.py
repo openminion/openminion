@@ -107,7 +107,7 @@ async def run_slash_project(
     console: Console,
     approval_callback: Callable[..., Any] | None,
 ) -> None:
-    from openminion.cli.commands.autonomy_project import focus_project_help
+    from openminion.cli.commands.project_launch import focus_project_help
 
     if text.strip() in {"/project", "/project help", "/project start --help"}:
         console.print(
@@ -143,10 +143,11 @@ async def run_slash_project(
         return
     try:
         request = runtime.prepare_project_command(text)
+        approval_args = runtime.project_launch_approval_args(request)
         approved = bool(
             await approval_callback(
                 "project.start",
-                runtime.project_launch_approval_args(request),
+                approval_args,
                 request.run.run_id,
                 build_policy_facts(
                     canonical_tool="project.start",
@@ -160,6 +161,8 @@ async def run_slash_project(
                 ),
             )
         )
+        if approved and runtime.project_launch_approval_args(request) != approval_args:
+            raise ValueError("Project launch inputs changed during approval")
         tone, body = (
             runtime.launch_prepared_project(request)
             if approved

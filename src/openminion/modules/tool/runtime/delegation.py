@@ -96,6 +96,7 @@ class A2ADelegateApi(Protocol):
         permission_overrides: Mapping[str, str] | None = None,
         workspace_root: str = "",
         cwd: str = "",
+        security_repair_binding: Mapping[str, str] | None = None,
     ) -> A2ADelegateResult: ...
 
     def status(self, *, task_id: str) -> A2ADelegateResult: ...
@@ -121,6 +122,7 @@ class A2ADelegateApi(Protocol):
         verifier_refs: list[str],
         repository_instructions: str,
         timeout_seconds: int,
+        security_repair_binding: Mapping[str, str] | None = None,
     ) -> A2ADelegateResult: ...
 
 
@@ -377,6 +379,7 @@ class A2aRuntimeDelegateAdapter:
         verifier_refs: list[str],
         repository_instructions: str,
         timeout_seconds: int,
+        security_repair_binding: Mapping[str, str] | None = None,
     ) -> A2ADelegateResult:
         if hashlib.sha256(diff.encode("utf-8")).hexdigest() != target_digest:
             return self._reject_review_target(
@@ -385,23 +388,23 @@ class A2aRuntimeDelegateAdapter:
                 target_digest=target_digest,
                 verifier_refs=verifier_refs,
             )
-        instruction = _readonly_review_instruction(
-            objective=objective,
-            criteria=criteria,
-            readable_base_repository=readable_base_repository,
-            bundle_ref=bundle_ref,
-            target_digest=target_digest,
-            diff=diff,
-            verifier_refs=verifier_refs,
-            repository_instructions=repository_instructions,
-        )
         result, session_id, turn_id, handoff_payload = self._delegate_request(
             agent_id=reviewer_agent_id,
-            instruction=instruction,
+            instruction=_readonly_review_instruction(
+                objective=objective,
+                criteria=criteria,
+                readable_base_repository=readable_base_repository,
+                bundle_ref=bundle_ref,
+                target_digest=target_digest,
+                diff=diff,
+                verifier_refs=verifier_refs,
+                repository_instructions=repository_instructions,
+            ),
             timeout_seconds=timeout_seconds,
             permission_mode="readonly",
             workspace_root=readable_base_repository,
             cwd=readable_base_repository,
+            security_repair_binding=security_repair_binding,
             review_target_digest=target_digest,
             review_bundle_ref=bundle_ref,
             review_verifier_refs=verifier_refs,
@@ -449,6 +452,7 @@ class A2aRuntimeDelegateAdapter:
             )
             return invalid
         result.outputs["review_receipt"] = receipt
+        outcome = "passed" if receipt["passed"] else "correction_required"
         self._emit_handoff(
             session_id,
             turn_id,
@@ -456,9 +460,7 @@ class A2aRuntimeDelegateAdapter:
             {
                 **handoff_payload,
                 "reviewer_agent_id": reviewer_agent_id,
-                "review_outcome": (
-                    "passed" if receipt["passed"] else "correction_required"
-                ),
+                "review_outcome": outcome,
                 "finding_count": len(receipt["findings"]),
             },
             "completed",
@@ -568,6 +570,7 @@ class A2aRuntimeDelegateAdapter:
         idempotency_key: str,
         observability: dict | None,
         session_id: str,
+        security_repair_binding: Mapping[str, str] | None = None,
         review_target_digest: str = "",
         review_bundle_ref: str = "",
         review_verifier_refs: list[str] | None = None,
@@ -581,6 +584,8 @@ class A2aRuntimeDelegateAdapter:
             "workspace_root": workspace_root,
             "cwd": cwd,
         }
+        if security_repair_binding is not None:
+            params["security_repair_binding"] = dict(security_repair_binding)
         if permission_overrides and permission_mode != "readonly":
             params["permission_overrides"] = dict(permission_overrides)
         if review_target_digest:
@@ -613,6 +618,7 @@ class A2aRuntimeDelegateAdapter:
         permission_overrides: Mapping[str, str] | None = None,
         workspace_root: str = "",
         cwd: str = "",
+        security_repair_binding: Mapping[str, str] | None = None,
         review_target_digest: str = "",
         review_bundle_ref: str = "",
         review_verifier_refs: list[str] | None = None,
@@ -627,18 +633,14 @@ class A2aRuntimeDelegateAdapter:
         if timeout <= 0:
             timeout = TOOL_A2A_DELEGATE_DEFAULT_TIMEOUT_SECONDS
         if not target or not text:
-            return (
-                A2ADelegateResult(
-                    ok=False,
-                    status="failed",
-                    error_code="TASK_DELEGATE_INVALID_ARGS",
-                    error_message="task.delegate requires agent_id and instruction.",
-                    target_agent_id=target,
-                ),
-                "",
-                "",
-                {},
+            invalid = A2ADelegateResult(
+                ok=False,
+                status="failed",
+                error_code="TASK_DELEGATE_INVALID_ARGS",
+                error_message="task.delegate requires agent_id and instruction.",
+                target_agent_id=target,
             )
+            return invalid, "", "", {}
 
         normalized_workspace_root = str(workspace_root or "").strip()
         normalized_cwd = str(cwd or workspace_root or "").strip()
@@ -648,7 +650,6 @@ class A2aRuntimeDelegateAdapter:
             workspace_root=normalized_workspace_root,
             cwd=normalized_cwd,
         )
-        trace_id = idem
         session_id, turn_id, handoff_payload, observability = self._handoff_context(
             target,
             review_target_digest=review_target_digest,
@@ -675,6 +676,7 @@ class A2aRuntimeDelegateAdapter:
                 idempotency_key=idem,
                 observability=observability,
                 session_id=self._delegation_session_id(),
+                security_repair_binding=security_repair_binding,
                 review_target_digest=review_target_digest,
                 review_bundle_ref=review_bundle_ref,
                 review_verifier_refs=review_verifier_refs,
@@ -688,7 +690,7 @@ class A2aRuntimeDelegateAdapter:
                     error_code="A2A_RUNTIME_ERROR",
                     error_message=str(exc),
                     target_agent_id=target,
-                    trace_id=trace_id,
+                    trace_id=idem,
                 ),
                 session_id,
                 turn_id,
@@ -698,7 +700,7 @@ class A2aRuntimeDelegateAdapter:
         result = map_a2a_delegate_result(
             raw,
             target=target,
-            trace_id=trace_id,
+            trace_id=idem,
             async_requested=normalized_mode == "async",
         )
         return result, session_id, turn_id, handoff_payload
@@ -714,6 +716,7 @@ class A2aRuntimeDelegateAdapter:
         permission_overrides: Mapping[str, str] | None = None,
         workspace_root: str = "",
         cwd: str = "",
+        security_repair_binding: Mapping[str, str] | None = None,
     ) -> A2ADelegateResult:
         result, session_id, turn_id, handoff_payload = self._delegate_request(
             agent_id=agent_id,
@@ -724,6 +727,7 @@ class A2aRuntimeDelegateAdapter:
             permission_overrides=permission_overrides,
             workspace_root=workspace_root,
             cwd=cwd,
+            security_repair_binding=security_repair_binding,
         )
         if handoff_payload and not is_a2a_delegate_running_status(result.status):
             self._emit_handoff(

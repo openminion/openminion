@@ -85,6 +85,10 @@ def _inject_runtime_tool_metadata(
     meta["base_permission_mode"] = state.permission_mode
     meta["permission_overrides"] = dict(state.permission_overrides)
     module_state = getattr(state, STATE_KEY_MODULE_STATE, None)
+    if isinstance(module_state, dict) and "security_repair_binding" in module_state:
+        meta["orchestration"]["security_repair_binding"] = module_state[
+            "security_repair_binding"
+        ]
     worktree_state = (
         module_state.get("worktree_children")
         if isinstance(module_state, dict)

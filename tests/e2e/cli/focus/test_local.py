@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import re
 import shlex
 import time
@@ -70,6 +71,40 @@ def test_focus_pty_launches_and_handles_help(
         focus_probe.wait_ready(session)
         transcript = focus_probe.run_slash(session, "/help", marker="/exit")
         write_transcript(artifact_root(tmp_path), "local-help", transcript)
+
+
+def test_focus_pty_shows_observation_only_learning_handoff(
+    focus_probe: FocusProbe, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from openminion.modules.skill.runtime.skill import Skill
+
+    env = focus_probe.environment()
+    monkeypatch.setenv("OPENMINION_HOME", env["OPENMINION_HOME"])
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", env["OPENMINION_DATA_ROOT"])
+    skill = Skill(focus_probe.config_path, home_root=Path(env["OPENMINION_HOME"]))
+    try:
+        skill.config.runtime_workflow_observation_enabled = True
+        skill.observe_workflow(
+            agent_id=focus_probe.agent_id,
+            source_run_ref="fixture:focus-observation-only",
+            intent_category="modify",
+            capability_category="code",
+            tool_names=["file.write", "exec.run"],
+        )
+    finally:
+        skill.close()
+
+    with focus_probe.session(rows=45, cols=360) as session:
+        focus_probe.wait_ready(session)
+        transcript = focus_probe.run_slash(
+            session, "/skills", marker="learning-observation-list"
+        )
+        write_transcript(artifact_root(tmp_path), "observation-only", transcript)
+    assert "observations       1" in transcript
+    assert "authoring ready    0" in transcript
+    assert "--data-root" in transcript
+    assert str(focus_probe.data_root) in transcript
+    assert f"learning-observation-list --agent-id {focus_probe.agent_id}" in transcript
 
 
 def test_focus_pty_handles_contextual_slash_help(

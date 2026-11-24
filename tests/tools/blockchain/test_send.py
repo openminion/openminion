@@ -8,6 +8,7 @@ from eth_abi.exceptions import DecodingError
 import pytest
 from web3 import Web3
 from web3.exceptions import ContractLogicError, TimeExhausted
+from web3.providers.base import JSONBaseProvider
 
 from openminion.modules.tool.plugin_api import PolicyAuthorization
 from openminion.tools.blockchain.runtime import preparation_digest, send_transaction
@@ -347,6 +348,131 @@ def test_send_rejects_stale_nonce_without_broadcast(tmp_path) -> None:
     assert result["data"]["broadcast_attempts"] == 0
     assert client.eth.broadcasts == 0
     assert context.events[0]["state"] == "stale"
+
+
+class _SendRpcProvider(JSONBaseProvider):
+    def __init__(self, nonce_result: Any) -> None:
+        super().__init__()
+        self.nonce_result = nonce_result
+        self.calls: list[str] = []
+
+    def make_request(self, method: Any, params: Any) -> Any:
+        name = str(method)
+        self.calls.append(name)
+        if name == "eth_chainId":
+            return {"jsonrpc": "2.0", "id": 1, "result": "0x7a69"}
+        if name == "eth_getTransactionCount":
+            assert list(params) == [SENDER, "pending"]
+            return {"jsonrpc": "2.0", "id": 1, "result": self.nonce_result}
+        if name == "eth_call":
+            return {"jsonrpc": "2.0", "id": 1, "result": "0x"}
+        if name == "eth_sendRawTransaction":
+            tx_hash = "0x" + Web3.keccak(hexstr=params[0]).hex()
+            self._tx_hash = tx_hash
+            return {"jsonrpc": "2.0", "id": 1, "result": tx_hash}
+        if name == "eth_getTransactionReceipt":
+            return {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "transactionHash": self._tx_hash,
+                    "status": "0x1",
+                    "blockNumber": "0xa",
+                    "gasUsed": "0x5208",
+                    "effectiveGasPrice": "0x17",
+                },
+            }
+        raise AssertionError(f"unexpected RPC method: {name}")
+
+
+@pytest.mark.parametrize(
+    ("raw_nonce", "expected_decimal"),
+    [
+        ("0x0", "0"),
+        ("0x1", "1"),
+    ],
+)
+def test_send_real_web3_accepts_valid_zero_and_positive_pending_nonces(
+    tmp_path,
+    raw_nonce: str,
+    expected_decimal: str,
+) -> None:
+    context = _context(tmp_path)
+    transaction = {**context.transaction, "nonce": expected_decimal}
+    digest = preparation_digest(transaction, None)
+    provider = _SendRpcProvider(raw_nonce)
+
+    result = send_transaction(
+        {
+            "transaction": transaction,
+            "call_context": None,
+            "preparation_digest": digest,
+        },
+        context,
+        web3=Web3(provider),
+    )
+
+    assert result["ok"] is True
+    assert result["state"] == "succeeded"
+    assert result["data"]["preparation_digest"] == digest
+    assert result["data"]["broadcast_attempts"] == 1
+    assert provider.calls.count("eth_sendRawTransaction") == 1
+    assert context.events[0]["consumed_grant_id"] == "grant"
+
+
+@pytest.mark.parametrize("prepared_nonce", ["0", "1"])
+@pytest.mark.parametrize(
+    "malformed_nonce",
+    [
+        True,
+        False,
+        1.75,
+        0.0,
+        None,
+        "",
+        "0x",
+        "0xzz",
+        "-0x1",
+        -1,
+        {},
+        [],
+    ],
+)
+def test_send_real_web3_rejects_malformed_pending_nonce_without_simulation_or_broadcast(
+    tmp_path,
+    prepared_nonce: str,
+    malformed_nonce: Any,
+) -> None:
+    context = _context(tmp_path)
+    transaction = {**context.transaction, "nonce": prepared_nonce}
+    digest = preparation_digest(transaction, None)
+    provider = _SendRpcProvider(malformed_nonce)
+
+    result = send_transaction(
+        {
+            "transaction": transaction,
+            "call_context": None,
+            "preparation_digest": digest,
+        },
+        context,
+        web3=Web3(provider),
+    )
+
+    assert result["ok"] is False
+    assert result["state"] == "failed"
+    assert result["error"] == {
+        "code": "RPC_UNAVAILABLE",
+        "message": "Blockchain RPC operation failed.",
+        "retryable": False,
+        "details": {"operation": "chain_read"},
+    }
+    assert result["data"]["preparation_digest"] == digest
+    assert result["data"]["transaction_hash"] == ""
+    assert result["data"]["broadcast_attempts"] == 0
+    assert provider.calls == ["eth_chainId", "eth_getTransactionCount"]
+    assert context.events[0]["state"] == "failed"
+    assert context.events[0]["consumed_grant_id"] == "grant"
+    assert context.events[0]["broadcast_attempts"] == 0
 
 
 def test_send_time_contract_revert_is_structured_without_broadcast(

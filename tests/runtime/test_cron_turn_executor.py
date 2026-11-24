@@ -154,7 +154,26 @@ def _monitoring_job(
     max_checks: int = 10,
     deliver_resolution: bool = True,
     profile_id: str = "ops_minimal",
+    last_accepted_observation: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    watch: dict[str, object] = {
+        "description": "Watch local service health",
+        "check_instruction": "Inspect local service health.",
+        "alert_condition": "the service is unhealthy",
+        "check_profile_id": profile_id,
+        "target_id": "local",
+        "stop_on_condition": False,
+        "delivery_cooldown_minutes": 60,
+        "deliver_resolution": deliver_resolution,
+        "checks_completed": checks_completed,
+        "max_checks": max_checks,
+        "ttl_minutes": 60,
+        "timeout_seconds": 45,
+        "last_condition_met": last_condition_met,
+        "last_alert_requested_at": last_alert_requested_at,
+    }
+    if last_accepted_observation is not None:
+        watch["last_accepted_observation"] = last_accepted_observation
     return {
         "job_id": "job-monitor",
         "agent_id": "agent-main",
@@ -163,22 +182,7 @@ def _monitoring_job(
             "kind": "agentTurn",
             "message": "inspect local service health",
             "session_id": "watch:job-monitor",
-            "_openminion_watch": {
-                "description": "Watch local service health",
-                "check_instruction": "Inspect local service health.",
-                "alert_condition": "the service is unhealthy",
-                "check_profile_id": profile_id,
-                "target_id": "local",
-                "stop_on_condition": False,
-                "delivery_cooldown_minutes": 60,
-                "deliver_resolution": deliver_resolution,
-                "checks_completed": checks_completed,
-                "max_checks": max_checks,
-                "ttl_minutes": 60,
-                "timeout_seconds": 45,
-                "last_condition_met": last_condition_met,
-                "last_alert_requested_at": last_alert_requested_at,
-            },
+            "_openminion_watch": watch,
         },
     }
 
@@ -914,6 +918,10 @@ def test_monitoring_watch_uses_exact_default_profile_and_stays_active() -> None:
     assert result["output"]["watch_terminal"] is False
     stored_watch = store.replaced_payloads[-1][1]["_openminion_watch"]
     assert stored_watch["last_condition_met"] is True
+    assert stored_watch["last_accepted_observation"] == {
+        "condition_met": True,
+        "summary": "Service is unhealthy.",
+    }
     assert stored_watch["last_alert_requested_at"]
     assert not any(
         event["event"] == "activated" for event in runtime.tools.exposure_service.events
@@ -954,7 +962,10 @@ def test_monitoring_watch_repeat_cooldown_and_resolution() -> None:
             [
                 SimpleNamespace(
                     final_text="monitoring result",
-                    metadata={"watch_condition_met": condition},
+                    metadata={
+                        "watch_condition_met": condition,
+                        "watch_summary": "Accepted observation.",
+                    },
                 )
             ],
             registered_agents=["agent-main"],
@@ -1000,7 +1011,13 @@ def test_monitoring_watch_invalid_result_preserves_condition_state() -> None:
     )
 
     result = executor.execute(
-        _monitoring_job(last_condition_met=True),
+        _monitoring_job(
+            last_condition_met=True,
+            last_accepted_observation={
+                "condition_met": True,
+                "summary": "Service was unhealthy.",
+            },
+        ),
         {"run_id": "run-invalid", "due_at": "2026-08-19T00:00:00Z"},
     )
 
@@ -1009,6 +1026,154 @@ def test_monitoring_watch_invalid_result_preserves_condition_state() -> None:
     assert result["output"]["watch_delivery_requested"] is False
     stored_watch = store.replaced_payloads[-1][1]["_openminion_watch"]
     assert stored_watch["last_condition_met"] is True
+    assert stored_watch["last_accepted_observation"] == {
+        "condition_met": True,
+        "summary": "Service was unhealthy.",
+    }
+
+
+def test_monitoring_watch_empty_summary_preserves_accepted_state() -> None:
+    store = _FakeCronStore()
+    runtime, _runtime_manager = _runtime(
+        [
+            SimpleNamespace(
+                final_text="Condition remains false.",
+                metadata={"watch_condition_met": "true", "watch_summary": ""},
+            )
+        ],
+        registered_agents=["agent-main"],
+        monitoring=True,
+    )
+    executor = CronTurnExecutor(
+        runtime=runtime,
+        cron_store=store,
+        request_builder=_request_builder,
+        timeout_s=90.0,
+    )
+
+    result = executor.execute(
+        _monitoring_job(
+            last_accepted_observation={
+                "condition_met": False,
+                "summary": "Service was healthy.",
+            },
+        ),
+        {"run_id": "run-empty-summary", "due_at": "2026-08-19T00:00:00Z"},
+    )
+
+    stored_watch = store.replaced_payloads[-1][1]["_openminion_watch"]
+    assert result["output"]["watch_condition_valid"] is False
+    assert result["output"]["watch_condition_met"] is False
+    assert result["output"]["watch_delivery_requested"] is False
+    assert stored_watch["last_condition_met"] is False
+    assert stored_watch["last_accepted_observation"] == {
+        "condition_met": False,
+        "summary": "Service was healthy.",
+    }
+
+
+def test_monitoring_watch_projects_atomic_previous_observation() -> None:
+    store = _FakeCronStore()
+    runtime, runtime_manager = _runtime(
+        [
+            SimpleNamespace(
+                final_text="Service remains healthy.",
+                metadata={
+                    "watch_condition_met": "false",
+                    "watch_summary": "Service remains healthy.",
+                },
+            )
+        ],
+        registered_agents=["agent-main"],
+        monitoring=True,
+    )
+    executor = CronTurnExecutor(
+        runtime=runtime,
+        cron_store=store,
+        request_builder=_request_builder,
+        timeout_s=90.0,
+    )
+
+    executor.execute(
+        _monitoring_job(
+            last_accepted_observation={
+                "condition_met": False,
+                "summary": "Service was healthy.",
+            }
+        ),
+        {"run_id": "run-previous", "due_at": "2026-08-19T00:00:00Z"},
+    )
+
+    request = runtime_manager.submitted[0]
+    assert request.meta["watch_previous_summary"] == "Service was healthy."
+    assert request.meta["watch_previous_condition_met"] == "false"
+    assert request.trusted_watch_context["watch_previous_summary"] == (
+        "Service was healthy."
+    )
+
+
+def test_monitoring_watch_carries_ready_ready_blocked_history() -> None:
+    store = _FakeCronStore()
+    runtime, runtime_manager = _runtime(
+        [
+            SimpleNamespace(
+                final_text="ready",
+                metadata={
+                    "watch_condition_met": "false",
+                    "watch_summary": "status is ready",
+                },
+            ),
+            SimpleNamespace(
+                final_text="still ready",
+                metadata={
+                    "watch_condition_met": "false",
+                    "watch_summary": "status is ready; timestamp changed",
+                },
+            ),
+            SimpleNamespace(
+                final_text="blocked",
+                metadata={
+                    "watch_condition_met": "true",
+                    "watch_summary": "status changed from ready to blocked",
+                },
+            ),
+        ],
+        registered_agents=["agent-main"],
+        monitoring=True,
+    )
+    executor = CronTurnExecutor(
+        runtime=runtime,
+        cron_store=store,
+        request_builder=_request_builder,
+        timeout_s=90.0,
+    )
+    job = _monitoring_job()
+
+    outcomes: list[bool] = []
+    for index in range(3):
+        result = executor.execute(
+            job,
+            {
+                "run_id": f"run-transition-{index}",
+                "due_at": f"2026-08-19T00:0{index}:00Z",
+            },
+        )
+        outcomes.append(result["output"]["watch_condition_met"])
+        job["payload"] = store.replaced_payloads[-1][1]
+
+    assert outcomes == [False, False, True]
+    assert runtime_manager.submitted[1].meta["watch_previous_summary"] == (
+        "status is ready"
+    )
+    assert runtime_manager.submitted[2].meta["watch_previous_summary"] == (
+        "status is ready; timestamp changed"
+    )
+    assert store.replaced_payloads[-1][1]["_openminion_watch"][
+        "last_accepted_observation"
+    ] == {
+        "condition_met": True,
+        "summary": "status changed from ready to blocked",
+    }
 
 
 def test_monitoring_watch_unavailable_target_preserves_state_before_turn() -> None:

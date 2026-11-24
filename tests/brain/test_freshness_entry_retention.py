@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -218,3 +219,21 @@ def test_first_empty_step_without_a_contract_keeps_the_empty_input_default() -> 
     assert state.freshness_diagnostics.classifier_mode == "skipped_empty_request"
     assert logger.fallback_reasons() == ["missing_or_invalid_contract"]
     assert "brain.freshness.classified" in logger.types()
+
+
+def test_dotted_prose_reaches_the_entry_fallback_classifier() -> None:
+    state = _state()
+    prose = "use file.read documentation to explain its latest behavior"
+
+    with patch(
+        "openminion.modules.brain.bootstrap.freshness_classify.call_structured_with_retry",
+        return_value=dict(LIVE_NO_DATE),
+    ) as classify_call:
+        _apply(state, _text_response(), prose)
+
+    assert classify_call.call_count == 1
+    assert classify_call.call_args.kwargs["purpose"] == "freshness_classify"
+    assert state.freshness_diagnostics is not None
+    assert state.freshness_diagnostics.classifier_mode == "llm"
+    assert state.freshness_obligations is not None
+    assert state.freshness_obligations.require_live_data is True

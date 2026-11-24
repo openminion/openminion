@@ -6,7 +6,11 @@ from pathlib import Path
 import pytest
 
 from openminion.modules.skill.interfaces import SkillIngestAuthority
-from openminion.modules.skill.diagnostics.harness import validate_skill
+from openminion.modules.skill.diagnostics.harness import (
+    run_skill_harness,
+    validate_skill,
+)
+from openminion.modules.skill.runtime import bundle_metadata
 from openminion.modules.skill.runtime.skill import Skill
 from openminion.modules.skill.runtime.skill import resources as bundle_resources
 
@@ -20,6 +24,96 @@ def _config(tmp_path: Path) -> dict[str, object]:
             "wal": False,
         }
     }
+
+
+@pytest.mark.parametrize("flags", ["neither", "openai", "claude", "both"])
+def test_invocation_warnings_preserve_structural_conformance(
+    tmp_path: Path, flags: str
+) -> None:
+    claude = "disable-model-invocation: true\n" if flags in {"claude", "both"} else ""
+    (tmp_path / "SKILL.md").write_text(
+        f"---\nname: manual-skill\ndescription: Read local facts.\n{claude}---\n"
+        "## Purpose\nRead facts.\n## Procedure\nRead the input.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "agents").mkdir()
+    (tmp_path / "agents/openai.yaml").write_text(
+        "policy:\n  allow_implicit_invocation: false\n"
+        if flags in {"openai", "both"}
+        else "{}",
+        encoding="utf-8",
+    )
+    (tmp_path / "fixtures").mkdir()
+    (tmp_path / "fixtures/input.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "fixtures/expected.txt").write_text("facts", encoding="utf-8")
+
+    report = run_skill_harness(tmp_path)
+    result = report.results[0]
+    expected = []
+    if flags in {"openai", "both"}:
+        expected.append(
+            "parse.warning:unsupported_invocation_policy:openai.policy.allow_implicit_invocation"
+        )
+    if flags in {"claude", "both"}:
+        expected.append(
+            "parse.warning:unsupported_invocation_policy:claude.disable-model-invocation"
+        )
+        assert (
+            "parse.warning:unknown_front_matter_key:disable-model-invocation"
+            in result.parse_warnings
+        )
+    assert list(result.warnings) == expected
+    assert report.warning_count == len(expected)
+    assert result.ok and result.parse_ok and report.ok
+    assert result.portable_conformance == {"ok": True, "errors": []}
+
+
+@pytest.mark.parametrize("case", ["symlink", "oversize"])
+def test_companion_skip_warnings_reach_ingest_and_harness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    root = tmp_path / "bundle"
+    (root / "agents").mkdir(parents=True)
+    skill_path = root / "SKILL.md"
+    skill_path.write_text(
+        "---\nname: manual-skill\ndescription: Read facts.\n---\n## Procedure\nRead input.\n",
+        encoding="utf-8",
+    )
+    companion = root / "agents/openai.yaml"
+    if case == "symlink":
+        outside = tmp_path / "private.yaml"
+        outside.write_text(
+            "policy:\n  allow_implicit_invocation: false\n", encoding="utf-8"
+        )
+        companion.symlink_to(outside)
+        reason = "symlink"
+    else:
+        companion.write_bytes(b"x" * 33)
+        monkeypatch.setattr(bundle_metadata, "SKILL_BUNDLE_MAX_RESOURCE_BYTES", 32)
+        reason = "file_size_limit"
+    warning = f"parse.warning:companion_metadata_skipped:{reason}"
+    result = validate_skill(root)
+    assert result.ok and result.parse_ok
+    assert warning in result.warnings
+    assert "parse.warning:companion_metadata_unavailable" in result.warnings
+    assert not any(
+        "unsupported_invocation_policy:openai" in item for item in result.warnings
+    )
+    ctl = Skill(_config(tmp_path))
+    try:
+        skill_id, version_hash, warnings = ctl.ingest_file(skill_path)
+        assert warning in warnings
+        assert "parse.warning:companion_metadata_unavailable" in warnings
+        assert not any(
+            "unsupported_invocation_policy:openai" in item for item in warnings
+        )
+        assert ctl.get_skill(skill_id, version_hash).bundle_metadata == {
+            "source": "none",
+            "trust": "untrusted_local",
+        }
+        assert ctl.catalog_summaries("agent-1") == []
+    finally:
+        ctl.close()
 
 
 def test_agent_skills_metadata_and_resources_are_passive_and_progressive(
@@ -128,6 +222,8 @@ def test_bundle_non_regular_file_is_skipped(tmp_path: Path) -> None:
     root = tmp_path / "portable-skill"
     root.mkdir()
     os.mkfifo(root / "events.pipe")
+    (root / "agents").mkdir()
+    os.mkfifo(root / "agents/openai.yaml")
     skill_path = root / "SKILL.md"
     skill_path.write_text("# Procedure\nDo the task.", encoding="utf-8")
 
@@ -135,7 +231,12 @@ def test_bundle_non_regular_file_is_skipped(tmp_path: Path) -> None:
     try:
         skill_id, version_hash, warnings = ctl.ingest_file(skill_path)
         assert "bundle.resources.non_regular_skipped" in warnings
+        assert "parse.warning:companion_metadata_skipped:non_regular" in warnings
         assert ctl.get_skill(skill_id, version_hash).resources == []
+        assert (
+            "parse.warning:companion_metadata_skipped:non_regular"
+            in validate_skill(root).warnings
+        )
     finally:
         ctl.close()
 

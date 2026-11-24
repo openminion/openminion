@@ -1,3 +1,5 @@
+"""AST-based Python repository symbol map builder."""
+
 import ast
 from dataclasses import dataclass
 from pathlib import Path
@@ -87,17 +89,20 @@ def _walk_module(path: str, tree: ast.Module) -> list[RepoSymbol]:
 class AstRepoMapBuilder:
     parser_version: str = RMP_PARSER_VERSION_AST_V1
 
+    def parse_file(self, file: Path, *, relpath: str) -> list[RepoSymbol]:
+        try:
+            source = file.read_text(encoding="utf-8")
+            tree = ast.parse(source, filename=str(file))
+        except (OSError, SyntaxError):
+            return []
+        return _walk_module(relpath, tree)
+
     def parse(self, root: Path) -> RepoMap:
         root = Path(root)
         symbols: list[RepoSymbol] = []
         for file in sorted(root.rglob("*.py")):
-            try:
-                source = file.read_text(encoding="utf-8")
-                tree = ast.parse(source, filename=str(file))
-            except (OSError, SyntaxError):
-                continue
             relpath = str(file.relative_to(root))
-            symbols.extend(_walk_module(relpath, tree))
+            symbols.extend(self.parse_file(file, relpath=relpath))
         return RepoMap(
             root=str(root),
             symbols=tuple(symbols),

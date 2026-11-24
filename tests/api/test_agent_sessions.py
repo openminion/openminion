@@ -98,3 +98,42 @@ def test_agent_receives_a_pending_undelivered_reply_once(echo_runtime):
         pending["run_id"],
         follow_up.run_id,
     }
+
+
+def test_runtime_idempotency_replays_exact_request_and_rejects_conflict(
+    echo_runtime,
+):
+    payload = {
+        "message": "idempotent request",
+        "session_id": "sdk-idempotency",
+        "idempotency_key": "app-request-1",
+        "deliver": False,
+    }
+    first = echo_runtime.run_turn(payload=payload)
+    duplicate = echo_runtime.run_turn(payload=payload)
+
+    assert duplicate["id"] == first["id"]
+    assert duplicate["body"] == first["body"]
+    with pytest.raises(ValueError, match="idempotency key conflicts"):
+        echo_runtime.run_turn(payload={**payload, "message": "different request"})
+
+
+def test_submitted_turn_idempotency_replays_exact_request(echo_runtime):
+    payload = {
+        "message": "submitted idempotent request",
+        "session_id": "sdk-submitted-idempotency",
+        "idempotency_key": "submitted-app-request-1",
+        "deliver": False,
+    }
+
+    first = echo_runtime.submit_turn(payload=payload).result(timeout_s=30)
+    duplicate = echo_runtime.submit_turn(payload=payload).result(timeout_s=30)
+
+    assert first.errors == []
+    assert duplicate.errors == []
+    assert duplicate.final_text == first.final_text
+    conflict = echo_runtime.submit_turn(
+        payload={**payload, "message": "changed submitted request"}
+    ).result(timeout_s=30)
+    assert [error.code for error in conflict.errors] == ["turn_failed"]
+    assert "idempotency key conflicts" in conflict.errors[0].message

@@ -96,7 +96,7 @@ def _handle_legacy_turn_request(
             config_path=ctx.config_path,
             payload=body,
             runtime=ctx.runtime,
-            request_id=ctx.request_id,
+            request_id=ctx.request_id if ctx.request_id_supplied else None,
         )
         session_id = str(turn_payload.get("session_id", "")).strip() or None
         run_id = str(turn_payload.get("run_id", "")).strip() or None

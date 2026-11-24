@@ -2,8 +2,28 @@
   "channel": "stable",
   "distribution": "pypi",
   "product": "openminion",
-  "published_at": "2026-11-10T11:07:36Z",
+  "published_at": "2026-11-21T14:43:08Z",
   "releases": [
+    {
+      "manifest_sha256": "3c6be020886418252a6fb715d2fa29ebbd7cddbf00b670c312a4add5a22492bc",
+      "manifest_url": "https://raw.githubusercontent.com/openminion/openminion/1f3e334cefeb8bd90e63cc75123ebacc1745390d/releases/runtime/v1/pypi/releases/0.1.24/source.44912907020.1.json",
+      "runtime_version": "0.1.24"
+    },
+    {
+      "manifest_sha256": "2c7fd4ee37837da7f4baa69b3ee2354b4c35ed16dd8ddea6c136879954f3d48a",
+      "manifest_url": "https://raw.githubusercontent.com/openminion/openminion/0d00194e3864079f6042323ee70e135532f79b69/releases/runtime/v1/pypi/releases/0.1.23/source.44079885597.1.json",
+      "runtime_version": "0.1.23"
+    },
+    {
+      "manifest_sha256": "9fe0d098c87934b96f3b006a42c3b4fabcb248e38d15df8d5e8f963503cbffde",
+      "manifest_url": "https://raw.githubusercontent.com/openminion/openminion/ce6a212ca76403bbbbb0195511824136a317ee46/releases/runtime/v1/pypi/releases/0.1.22/source.43731846094.1.json",
+      "runtime_version": "0.1.22"
+    },
+    {
+      "manifest_sha256": "5edff40482fc2fcb701cf5388577bebf0f905ce9d4aba5c29e1f1376b3016746",
+      "manifest_url": "https://raw.githubusercontent.com/openminion/openminion/94f5da38577b2d0de56225b649edbf7cdb05d9a8/releases/runtime/v1/pypi/releases/0.1.21/source.43424466402.1.json",
+      "runtime_version": "0.1.21"
+    },
     {
       "manifest_sha256": "bdcd24f8f2229004ba7e97b17d2afffe70fae5a12529ed2d4fa9fe3deec8c196",
       "manifest_url": "https://raw.githubusercontent.com/openminion/openminion/8c199ed040acc2996f977ddcd0553107a6113cc7/releases/runtime/v1/pypi/releases/0.1.20/source.42799798878.1.json",
