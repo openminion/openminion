@@ -346,7 +346,10 @@ class PluginExtensionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             plugin_root = tmp_path / "plugins"
-            _write_extension_plugin(plugin_root, contract_version="2")
+            marker = tmp_path / "loaded.txt"
+            _write_extension_plugin(
+                plugin_root, contract_version="2", import_marker=marker
+            )
             config = OpenMinionConfig()
             _csc_install_default_agent(config, provider="echo")
             config.enabled_plugins = ["example.extension"]
@@ -358,6 +361,34 @@ class PluginExtensionTests(unittest.TestCase):
                     )
 
             self.assertIn("contract_version must be '1'", str(context.exception))
+            self.assertFalse(marker.exists())
+
+    def test_plugin_contract_version_rejects_malformed_values_before_loading(
+        self,
+    ) -> None:
+        for invalid_version in (2, 1, None, False, True, {}, [], "", "   "):
+            with self.subTest(contract_version=invalid_version):
+                with tempfile.TemporaryDirectory() as tmp:
+                    tmp_path = Path(tmp)
+                    plugin_root = tmp_path / "plugins"
+                    marker = tmp_path / "loaded.txt"
+                    _write_extension_plugin(
+                        plugin_root,
+                        contract_version=invalid_version,
+                        import_marker=marker,
+                    )
+                    config = OpenMinionConfig()
+                    _csc_install_default_agent(config, provider="echo")
+                    config.enabled_plugins = ["example.extension"]
+                    with _plugin_paths_env([plugin_root]):
+                        with self.assertRaises(PluginDiscoveryError) as build_ctx:
+                            LifecycleService.from_config(config).build(
+                                security_policy=SecurityPolicyEngine()
+                            )
+                    self.assertIn(
+                        "contract_version must be '1'", str(build_ctx.exception)
+                    )
+                    self.assertFalse(marker.exists())
 
 
 def _write_extension_plugin(
@@ -371,7 +402,8 @@ def _write_extension_plugin(
     runtime_tool_name: str = "plugin.example.extension.echo",
     register_twice: bool = False,
     registration_error: bool = False,
-    contract_version: str = "1",
+    contract_version: object = "1",
+    import_marker: Optional[Path] = None,
 ) -> None:
     capabilities = list(requested_capabilities or [])
     provenance_payload = dict(
@@ -441,8 +473,15 @@ def _write_extension_plugin(
         if not include_registrar
         else ""
     )
+    import_marker_block = (
+        "from pathlib import Path as _ImportMarkerPath\n"
+        f"_ImportMarkerPath({str(import_marker)!r}).write_text('loaded', encoding='utf-8')\n"
+        if import_marker is not None
+        else ""
+    )
     (root / "extension.py").write_text(
-        "from openminion.tools import Plugin\n"
+        import_marker_block
+        + "from openminion.tools import Plugin\n"
         + provider_import_block
         + "from openminion.modules.tool.base import Tool, ToolExecutionContext, ToolExecutionResult\n\n"
         + "from openminion.modules.tool.contracts import ModelToolDef, RuntimeBindingDef, ToolBindingManifest\n\n"

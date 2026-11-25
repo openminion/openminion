@@ -5,6 +5,8 @@ import pytest
 from openminion.base.config import OpenMinionConfig
 from openminion.base.version import OPENMINION_VERSION
 from openminion.services.runtime.plugins import (
+    PLUGIN_MANIFEST_CONTRACT_VERSION,
+    PluginManifestError,
     build_default_plugin_registry,
     load_plugin_manifest,
     validate_plugin_manifest,
@@ -51,8 +53,41 @@ def test_validate_plugin_manifest_accepts_minimal_required_fields() -> None:
     assert manifest.id == "example.minimal"
     assert manifest.name == "example.minimal"
     assert manifest.version == OPENMINION_VERSION
+    assert manifest.contract_version == PLUGIN_MANIFEST_CONTRACT_VERSION
     assert manifest.provenance_source == "local-path"
     assert manifest.provenance_publisher == ""
+
+
+def test_validate_plugin_manifest_accepts_explicit_supported_contract_version() -> None:
+    manifest = validate_plugin_manifest(
+        {
+            "id": "example.explicit-version",
+            "contract_version": PLUGIN_MANIFEST_CONTRACT_VERSION,
+            "config_schema": {"type": "object"},
+        }
+    )
+    assert manifest.contract_version == PLUGIN_MANIFEST_CONTRACT_VERSION
+
+
+@pytest.mark.parametrize(
+    "invalid_version",
+    ["2", "", "   ", 1, 2, None, False, True, {}, []],
+)
+def test_validate_plugin_manifest_rejects_invalid_explicit_contract_version(
+    invalid_version: object,
+) -> None:
+    with pytest.raises(PluginManifestError) as exc_info:
+        validate_plugin_manifest(
+            {
+                "id": "example.invalid-contract",
+                "contract_version": invalid_version,
+                "config_schema": {"type": "object"},
+            }
+        )
+    assert (
+        f"contract_version must be '{PLUGIN_MANIFEST_CONTRACT_VERSION}'."
+        in exc_info.value.errors
+    )
 
 
 def test_validate_plugin_manifest_accepts_provenance_payload() -> None:
