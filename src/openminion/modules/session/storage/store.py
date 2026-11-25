@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import hashlib
 import logging
+import shutil
 import sqlite3
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
 from typing import Any, Mapping
@@ -29,8 +28,13 @@ from openminion.modules.storage.runtime.module_integrity import (
 from .base import SessionStore
 from .component_wiring import build_store_components
 from .context import RunStore
-from .json_utils import to_json
 from .migrations import MIGRATIONS, list_migrations
+from .schema import _ensure_store_column
+from .slices import (
+    SliceLimits as SliceLimits,
+    normalize_slice_limits,
+    stable_slice_hash,
+)
 from .queries import (
     _CLOSED_TASK_STATUSES as _SLICE_CLOSED_TASK_STATUSES,
 )
@@ -145,11 +149,18 @@ def _resolve_session_storage_roots(
     return (db_path.parent / "storage").resolve(), db_path.parent.resolve()
 
 
-def _stable_hash(value: Any) -> str:
-    return hashlib.sha256(to_json(value).encode()).hexdigest()
-
-
 _MODULE_ID = module_id_from_package(__package__)
+
+
+def _remove_temp_root(temp_root: Path, *, suppress_os_error: bool = False) -> None:
+    try:
+        shutil.rmtree(temp_root)
+    except FileNotFoundError:
+        return
+    except OSError:
+        if not suppress_os_error:
+            raise
+        _LOG.warning("Failed to remove session temp root %s", temp_root, exc_info=True)
 
 
 def _build_default_hybrid_store(
@@ -162,55 +173,24 @@ def _build_default_hybrid_store(
     temp_root: Path | None = None
     if is_memory:
         temp_root = Path(tempfile.mkdtemp(prefix="openminion-session-store-")).resolve()
-        blob_root = temp_root / "storage"
-        fallback_root = temp_root
+        blob_root, fallback_root = temp_root / "storage", temp_root
     else:
         blob_root, fallback_root = _resolve_session_storage_roots(
-            database_path,
-            env=env,
+            database_path, env=env
         )
-    blob_store = BlobStoreFS(blob_root)
-    return (
-        HybridStore(
+    built = False
+    try:
+        hybrid_store = HybridStore(
             record_store=record_store,
-            blob_store=blob_store,
+            blob_store=BlobStoreFS(blob_root),
             fallback_root=fallback_root,
             default_namespace="sessctl",
-        ),
-        temp_root,
-    )
-
-
-def _table_columns(record_store: RecordStore, table_name: str) -> set[str]:
-    capabilities = record_store.capabilities()
-    if bool(capabilities.get("raw_sql")):
-        rows = record_store.query_dicts(f"PRAGMA table_info({table_name})")
-        return {str(row["name"]) for row in rows}
-    rows = record_store.query_dicts(
-        """
-        SELECT column_name AS name
-        FROM information_schema.columns
-        WHERE table_schema = current_schema()
-          AND table_name = ?
-        """,
-        (table_name,),
-    )
-    return {str(row["name"]) for row in rows}
-
-
-def _ensure_store_column(
-    record_store: RecordStore,
-    *,
-    table_name: str,
-    column_name: str,
-    ddl_tail: str,
-) -> None:
-    columns = _table_columns(record_store, table_name)
-    if not columns or column_name in columns:
-        return
-    record_store.execute_count(
-        f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl_tail}"
-    )
+        )
+        built = True
+        return hybrid_store, temp_root
+    finally:
+        if not built and temp_root is not None:
+            _remove_temp_root(temp_root, suppress_os_error=True)
 
 
 def _resolve_session_storage_provider(
@@ -230,15 +210,6 @@ def _resolve_session_storage_provider(
             )
         ),
     )
-
-
-@dataclass(frozen=True)
-class SliceLimits:
-    max_turns: int = 8
-    max_tool_events: int = 12
-    summary_variant: str = "auto"  # short|long|auto
-    include_open_tasks: bool = True
-    include_active_state: bool = True
 
 
 _ARTIFACTCTL_UNSET = object()
@@ -262,29 +233,33 @@ class SQLiteSessionStore(SessionStore):
         env: EnvironmentConfig | Mapping[str, Any] | None = None,
     ) -> None:
         is_memory = self._init_backend_path_and_env(
-            database_path=database_path,
-            env=env,
-            artifactctl=artifactctl,
+            database_path=database_path, env=env, artifactctl=artifactctl
         )
         self._storage_provider = _resolve_session_storage_provider(env=self._env)
         raw_db_path = str(database_path).strip()
-        self._record_store: RecordStore
-        if record_store is None:
-            self._record_store = RecordStoreSQLite(
-                raw_db_path if is_memory else self._path, wal=True
-            )
-        else:
-            self._record_store = record_store
-        self._conn = getattr(self._record_store, "connection", None)
-        self._configure_connection()
-        self._verify_startup_integrity(is_memory=is_memory)
-        self._init_hybrid_store_and_temp_root(
-            hybrid_store=hybrid_store,
-            is_memory=is_memory,
+        self._owns_record_store = record_store is None
+        self._record_store: RecordStore = (
+            RecordStoreSQLite(raw_db_path if is_memory else self._path, wal=True)
+            if record_store is None
+            else record_store
         )
-        self._migrate()
-        self._finalize_module_metadata()
-        self._initialize_store_components()
+        self._conn = getattr(self._record_store, "connection", None)
+        initialized = False
+        try:
+            self._configure_connection()
+            self._verify_startup_integrity(is_memory=is_memory)
+            self._init_hybrid_store_and_temp_root(
+                hybrid_store=hybrid_store, is_memory=is_memory
+            )
+            self._migrate()
+            self._finalize_module_metadata()
+            self._initialize_store_components()
+            initialized = True
+        finally:
+            if not initialized:
+                self._close_owned_resources(
+                    close_record_store=self._owns_record_store, suppress_errors=True
+                )
 
     def _finalize_module_metadata(self) -> None:
         ensure_module_metadata_via_store(
@@ -310,6 +285,8 @@ class SQLiteSessionStore(SessionStore):
             self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = RLock()
         self._slice_cache: dict[tuple[str, str, str, int], dict[str, Any]] = {}
+        self._temp_root: Path | None = None
+        self._owned_temp_root: Path | None = None
         return is_memory
 
     def _init_hybrid_store_and_temp_root(
@@ -328,6 +305,7 @@ class SQLiteSessionStore(SessionStore):
         else:
             self._hybrid_store = hybrid_store
             self._temp_root = None
+        self._owned_temp_root = self._temp_root
 
     def _initialize_store_components(self) -> None:
         components = build_store_components(
@@ -340,8 +318,8 @@ class SQLiteSessionStore(SessionStore):
             invalidate_slice_cache=self._invalidate_slice_cache,
             add_artifact_refs=self._add_artifact_refs,
             latest_event_seq=self._latest_event_seq,
-            normalize_limits=self._normalize_limits,
-            stable_hash=_stable_hash,
+            normalize_limits=normalize_slice_limits,
+            stable_hash=stable_slice_hash,
         )
         self._event_store = components.event_store
         self._slice_queries = components.slice_queries
@@ -467,16 +445,64 @@ class SQLiteSessionStore(SessionStore):
     def database_path(self) -> Path:
         return self._path
 
-    def close(self) -> None:
+    def _close_resource(
+        self, close_fn: Any, *, label: str, suppress_errors: bool
+    ) -> None:
+        if not callable(close_fn):
+            return
+        try:
+            close_fn()
+        except (OSError, sqlite3.Error):
+            if not suppress_errors:
+                raise
+            _LOG.warning("Failed to close %s during cleanup", label, exc_info=True)
+
+    def _close_owned_resources(
+        self, *, close_record_store: bool, suppress_errors: bool
+    ) -> None:
         with self._lock:
-            close_fn = getattr(self._record_store, "close", None)
-            if callable(close_fn):
-                close_fn()
-            if self._owns_artifactctl and self._artifactctl is not _ARTIFACTCTL_UNSET:
-                self._owns_artifactctl = False
-                artifactctl = self._artifactctl
-                self._artifactctl = None
-                artifactctl.close()
+            record_failed = close_record_store
+            artifact_failed = False
+            try:
+                if close_record_store:
+                    self._close_resource(
+                        getattr(self._record_store, "close", None),
+                        label="session record store",
+                        suppress_errors=suppress_errors,
+                    )
+                    record_failed = False
+            finally:
+                try:
+                    if (
+                        self._owns_artifactctl
+                        and self._artifactctl is not _ARTIFACTCTL_UNSET
+                    ):
+                        self._owns_artifactctl = False
+                        artifactctl = self._artifactctl
+                        self._artifactctl = None
+                        if artifactctl is not None:
+                            artifact_failed = True
+                            self._close_resource(
+                                getattr(artifactctl, "close", None),
+                                label="session artifactctl",
+                                suppress_errors=suppress_errors or record_failed,
+                            )
+                            artifact_failed = False
+                finally:
+                    owned_root = getattr(self, "_owned_temp_root", None)
+                    if owned_root is not None:
+                        self._owned_temp_root = None
+                        if getattr(self, "_temp_root", None) == owned_root:
+                            self._temp_root = None
+                        _remove_temp_root(
+                            owned_root,
+                            suppress_os_error=suppress_errors
+                            or record_failed
+                            or artifact_failed,
+                        )
+
+    def close(self) -> None:
+        self._close_owned_resources(close_record_store=True, suppress_errors=False)
 
     def _configure_connection(self) -> None:
         if self._conn is None:
@@ -912,31 +938,6 @@ class SQLiteSessionStore(SessionStore):
             based_on_seq=based_on_seq,
         )
 
-    def _normalize_limits(
-        self, limits: SliceLimits | Mapping[str, Any]
-    ) -> dict[str, Any]:
-        if isinstance(limits, SliceLimits):
-            source: Mapping[str, Any] = {
-                "max_turns": limits.max_turns,
-                "max_tool_events": limits.max_tool_events,
-                "summary_variant": limits.summary_variant,
-                "include_open_tasks": limits.include_open_tasks,
-                "include_active_state": limits.include_active_state,
-            }
-        else:
-            source = limits
-        summary_variant = str(source.get("summary_variant", "auto")).lower().strip()
-        if summary_variant not in {"short", "long", "auto"}:
-            summary_variant = "auto"
-        return {
-            "max_turns": max(1, int(source.get("max_turns", 8))),
-            "max_tool_events": max(1, int(source.get("max_tool_events", 12))),
-            "archive_ref_limit": max(1, int(source.get("archive_ref_limit", 3))),
-            "summary_variant": summary_variant,
-            "include_open_tasks": bool(source.get("include_open_tasks", True)),
-            "include_active_state": bool(source.get("include_active_state", True)),
-        }
-
     def _touch_session_tx(self, *, session_id: str, ts: str) -> None:
         self._record_store.execute_count(
             "UPDATE sessions SET updated_at = ? WHERE session_id = ?",
@@ -973,18 +974,23 @@ class PostgresSessionStore(SQLiteSessionStore):
         env: EnvironmentConfig | Mapping[str, Any] | None = None,
     ) -> None:
         is_memory = self._init_backend_path_and_env(
-            database_path=database_path,
-            env=env,
-            artifactctl=artifactctl,
+            database_path=database_path, env=env, artifactctl=artifactctl
         )
         self._storage_provider = "postgres"
-        self._record_store: RecordStore
-        self._record_store = record_store
+        self._owns_record_store = False
+        self._record_store: RecordStore = record_store
         self._conn = None
-        self._init_hybrid_store_and_temp_root(
-            hybrid_store=hybrid_store,
-            is_memory=is_memory,
-        )
-        self._bootstrap_record_store_schema()
-        self._finalize_module_metadata()
-        self._initialize_store_components()
+        initialized = False
+        try:
+            self._init_hybrid_store_and_temp_root(
+                hybrid_store=hybrid_store, is_memory=is_memory
+            )
+            self._bootstrap_record_store_schema()
+            self._finalize_module_metadata()
+            self._initialize_store_components()
+            initialized = True
+        finally:
+            if not initialized:
+                self._close_owned_resources(
+                    close_record_store=False, suppress_errors=True
+                )
