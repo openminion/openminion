@@ -1,5 +1,5 @@
 # path	total	unconditional	reason
-api/test_tool_controls.py	1	1	expected xfail: shared-runtime sanitizing path is not the @tool handler
+api/test_tool_controls.py	1	0	Pydantic 2.11+ validation config control is version-gated
 cli/interactive/terminal/test_evpf_diff_slash.py	1	0	git is required
 cli/interactive/terminal/test_fvi_composer_streaming.py	2	0	create_pipe_input is unstable on Windows
 cli/interactive/terminal/test_streaming_integration.py	1	0	terminal Escape watcher requires a POSIX pseudo-terminal

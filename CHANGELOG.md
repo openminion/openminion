@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Preserve accepted Pydantic argument contracts through SDK tool
+  sanitizing and execution. Alias-only inputs remain usable; recursive checks
+  follow only fields and nested values present in the actual `model_dump()`
+  output, so excluded fields do not discard unrelated transformed values.
+  Transformed values are retained without an extra validation pass (Refs #454).
+
 - `import_omx` and `export_omx` now confine table payload paths inside `omx_dir`
   (normalizing Windows separators while rejecting `..` escapes, absolute paths, and
   external symlinks), prepare quoted table/column SQL identifiers (`_quote_ident`),
