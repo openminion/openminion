@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `utility.calculate_expression` now maps float-overflowing numeric literals and binary
+  operations (`OverflowError`) to `ToolRuntimeError("INVALID_ARGUMENT", "Expression result is out of bounds")`
+  and applies the shared finite and `UTILITY_MAX_ABS_VALUE` (`10**12`) result guard to bare
+  literals and unary expressions as well as binary operations, while preserving exact
+  `±10**12` boundary values and scaled intermediate operands whose final result stays
+  within bounds (Refs #819).
 - `import_omx` and `export_omx` now confine table payload paths inside `omx_dir`
   (normalizing Windows separators while rejecting `..` escapes, absolute paths, and
   external symlinks), prepare quoted table/column SQL identifiers (`_quote_ident`),

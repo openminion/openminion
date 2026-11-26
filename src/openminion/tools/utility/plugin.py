@@ -69,6 +69,14 @@ def _h_utc_now(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     }
 
 
+def _validate_numeric_result(result: float | complex) -> float:
+    if isinstance(result, complex) or not math.isfinite(result):
+        raise ToolRuntimeError("INVALID_ARGUMENT", "Expression result is not finite")
+    if abs(result) > UTILITY_MAX_ABS_VALUE:
+        raise ToolRuntimeError("INVALID_ARGUMENT", "Expression result is out of bounds")
+    return float(result)
+
+
 def _eval_expression(expression: str) -> float:
     try:
         tree = ast.parse(expression, mode="eval")
@@ -96,7 +104,17 @@ def _eval_expression(expression: str) -> float:
                 raise ToolRuntimeError(
                     "INVALID_ARGUMENT", "Only numeric literals are allowed"
                 )
-            return float(value)
+            try:
+                numeric = float(value)
+            except OverflowError as exc:
+                raise ToolRuntimeError(
+                    "INVALID_ARGUMENT", "Expression result is out of bounds"
+                ) from exc
+            if not math.isfinite(numeric):
+                raise ToolRuntimeError(
+                    "INVALID_ARGUMENT", "Expression result is not finite"
+                )
+            return numeric
         if isinstance(node, ast.BinOp):
             operator_fn = _ALLOWED_BINARY_OPERATORS.get(type(node.op))
             if operator_fn is None:
@@ -110,20 +128,13 @@ def _eval_expression(expression: str) -> float:
                     raise ToolRuntimeError("INVALID_ARGUMENT", "Exponent is too large")
                 if right < 0 and left == 0:
                     raise ToolRuntimeError("INVALID_ARGUMENT", "Division by zero")
-            result = operator_fn(left, right)
-            if isinstance(result, complex):
-                raise ToolRuntimeError(
-                    "INVALID_ARGUMENT", "Expression result is not finite"
-                )
-            if not math.isfinite(result):
-                raise ToolRuntimeError(
-                    "INVALID_ARGUMENT", "Expression result is not finite"
-                )
-            if abs(result) > UTILITY_MAX_ABS_VALUE:
+            try:
+                result = operator_fn(left, right)
+            except OverflowError as exc:
                 raise ToolRuntimeError(
                     "INVALID_ARGUMENT", "Expression result is out of bounds"
-                )
-            return float(result)
+                ) from exc
+            return _validate_numeric_result(result)
         if isinstance(node, ast.UnaryOp):
             operator_fn = _ALLOWED_UNARY_OPERATORS.get(type(node.op))
             if operator_fn is None:
@@ -133,7 +144,7 @@ def _eval_expression(expression: str) -> float:
             return float(operator_fn(_eval(node.operand)))
         raise ToolRuntimeError("INVALID_ARGUMENT", "Unsupported expression element")
 
-    return _eval(tree)
+    return _validate_numeric_result(_eval(tree))
 
 
 def _h_calculate_expression(
