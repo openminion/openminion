@@ -57,6 +57,7 @@ def _ctx(session_api: _FakeSessionAPI) -> SimpleNamespace:
     )
     return SimpleNamespace(
         state=state,
+        context_llm_call_id=None,
         _services=SimpleNamespace(
             runner=SimpleNamespace(session_api=session_api),
         ),

@@ -32,6 +32,8 @@ from tests.e2e.cli.focus.test_live_memory_continuity import (
     _phase_outcomes,
 )
 
+pytestmark = pytest.mark.e2e
+
 
 @pytest.fixture(autouse=True)
 def no_live_effects(monkeypatch):
