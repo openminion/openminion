@@ -44,6 +44,7 @@ def process_slots() -> list[str]:
 
 
 def load_campaign(path: Path, *, require_approval: bool = True) -> dict:
+    _reject_campaign_overrides()
     manifest = json.loads(path.read_text())
     if require_approval:
         if (
@@ -102,7 +103,7 @@ def restricted_runtime(config_path, *, agent_id: str, **kwargs):
     from openminion.modules.identity.storage import SQLiteIdentityStore
     from openminion.services.identity import ensure_default_profile
 
-    _reject_identity_overrides()
+    _reject_campaign_overrides()
     config = json.loads(Path(config_path).read_text())
     identity_path = Path(config["identity"]["db_path"])
     identity_path.parent.mkdir(parents=True, exist_ok=True)
@@ -138,12 +139,18 @@ def restricted_runtime(config_path, *, agent_id: str, **kwargs):
         raise
 
 
-def _reject_identity_overrides() -> None:
+def _reject_campaign_overrides() -> None:
     if any(
         os.environ.get(name)
-        for name in ("OPENMINION_IDENTITY_DB", "OPENMINION_IDENTITY_ROOT")
+        for name in (
+            "OPENMINION_IDENTITY_DB",
+            "OPENMINION_IDENTITY_ROOT",
+            "OPENMINION_MEMORY_PROVIDER",
+            "OPENMINION_MEMORY_CAPSULE_STRATEGY",
+            "OPENMINION_MEMORY_DYNAMIC_RETRIEVAL_ENABLED",
+        )
     ):
-        raise ValueError("campaign forbids inherited identity overrides")
+        raise ValueError("campaign forbids inherited identity or memory overrides")
 
 
 def read_state(
@@ -155,7 +162,7 @@ def read_state(
     from tests.e2e.cli.focus.harness.assertions import read_focus_evidence
 
     home = data_root.parent / "home-roots" / slot
-    _reject_identity_overrides()
+    _reject_campaign_overrides()
     with patch(
         "socket.socket.connect",
         side_effect=AssertionError("inspection must stay offline"),

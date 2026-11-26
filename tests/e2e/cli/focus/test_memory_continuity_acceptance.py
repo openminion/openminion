@@ -585,6 +585,50 @@ def test_inherited_identity_cannot_mutate_external_profile(tmp_path, monkeypatch
     assert external.read_bytes() == b"external sentinel"
 
 
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        ("OPENMINION_MEMORY_PROVIDER", "memory_v2_smoke"),
+        ("OPENMINION_MEMORY_CAPSULE_STRATEGY", "frozen_session"),
+        ("OPENMINION_MEMORY_DYNAMIC_RETRIEVAL_ENABLED", "1"),
+    ],
+)
+def test_memory_overrides_rejected_before_loading_or_runtime(
+    tmp_path, monkeypatch, name, value
+):
+    monkeypatch.setenv(name, value)
+    monkeypatch.delenv("OPENMINION_LIVE_CLI_FOCUS_E2E", raising=False)
+    monkeypatch.delenv("CSMA_APPROVED_MANIFEST_SHA256", raising=False)
+    missing = tmp_path / "absent.json"
+    for require_approval in (False, True):
+        with pytest.raises(ValueError, match="memory overrides"):
+            load_campaign(missing, require_approval=require_approval)
+    with pytest.raises(ValueError, match="memory overrides"):
+        restricted_runtime(missing, agent_id="csma")
+    with pytest.raises(ValueError, match="memory overrides"):
+        read_state(missing, tmp_path / "data", "producer", {})
+    assert not (tmp_path / "data").exists()
+
+
+def test_unset_memory_overrides_preserve_offline_loading_and_gate_b_denial(
+    tmp_path, monkeypatch
+):
+    for name in (
+        "OPENMINION_IDENTITY_DB",
+        "OPENMINION_IDENTITY_ROOT",
+        "OPENMINION_MEMORY_PROVIDER",
+        "OPENMINION_MEMORY_CAPSULE_STRATEGY",
+        "OPENMINION_MEMORY_DYNAMIC_RETRIEVAL_ENABLED",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("OPENMINION_LIVE_CLI_FOCUS_E2E", raising=False)
+    monkeypatch.delenv("CSMA_APPROVED_MANIFEST_SHA256", raising=False)
+    path, payload = _manifest(tmp_path)
+    assert load_campaign(path, require_approval=False) == payload
+    with pytest.raises(ValueError, match="Gate B"):
+        load_campaign(path)
+
+
 def test_failed_phase_retains_content_free_report_and_cleans_private_roots(
     tmp_path, monkeypatch
 ):
