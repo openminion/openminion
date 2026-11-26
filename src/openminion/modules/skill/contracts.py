@@ -14,6 +14,8 @@ class SkillJITClient(Protocol):
         agent_id: str,
         k: int = 3,
         status_filter: list[str] | str | None = None,
+        *,
+        repository_root: str | None = None,
     ) -> list[SkillMatch]: ...
 
     def render_snippet(
@@ -23,6 +25,9 @@ class SkillJITClient(Protocol):
         purpose: str,
         max_tokens: int,
         mode_name: str | None = None,
+        *,
+        agent_id: str | None = None,
+        repository_root: str | None = None,
     ) -> tuple[str, str]: ...
 
     def get_recipe(
@@ -56,6 +61,8 @@ class ContextCtlSkillAdapter:
         agent_id: str,
         k: int = 3,
         status_filter: list[str] | str | None = None,
+        *,
+        repository_root: str | None = None,
     ) -> list[SkillMatch]:
         return self._skill.match(
             intent_text=intent_text,
@@ -63,6 +70,7 @@ class ContextCtlSkillAdapter:
             agent_id=agent_id,
             k=k,
             status_filter=status_filter,
+            repository_root=repository_root,
         )
 
     def render_snippet(
@@ -72,6 +80,9 @@ class ContextCtlSkillAdapter:
         purpose: str,
         max_tokens: int,
         mode_name: str | None = None,
+        *,
+        agent_id: str | None = None,
+        repository_root: str | None = None,
     ) -> tuple[str, str]:
         return self._skill.render_snippet(
             skill_id=skill_id,
@@ -79,6 +90,8 @@ class ContextCtlSkillAdapter:
             purpose=purpose,
             max_tokens=max_tokens,
             mode_name=mode_name,
+            agent_id=agent_id,
+            repository_root=repository_root,
         )
 
     def get_recipe(

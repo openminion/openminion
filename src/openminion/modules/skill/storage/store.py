@@ -29,20 +29,25 @@ class _SkillStoreMixin(
         scope: str,
         agent_id: str | None,
         ts: str,
+        repository_root: str | None = None,
     ) -> bool:
         return bool(
             self._record_store.execute_count(
                 """
-            INSERT INTO skills(skill_id, name, status, scope, agent_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO skills(skill_id, name, status, scope, agent_id, created_at, updated_at, repository_root)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(skill_id) DO UPDATE SET updated_at=skills.updated_at
             WHERE skills.scope = excluded.scope
               AND (
                 skills.agent_id = excluded.agent_id
                 OR (skills.agent_id IS NULL AND excluded.agent_id IS NULL)
               )
+              AND (
+                skills.repository_root = excluded.repository_root
+                OR (skills.repository_root IS NULL AND excluded.repository_root IS NULL)
+              )
             """,
-                (skill_id, name, status, scope, agent_id, ts, ts),
+                (skill_id, name, status, scope, agent_id, ts, ts, repository_root),
             )
         )
 
@@ -321,6 +326,7 @@ class _SkillStoreMixin(
         status_filter: list[str] | None = None,
         agent_id: str | None = None,
         scopes: list[str] | None = None,
+        repository_root: str | None = None,
     ) -> list[dict[str, Any]]:
         where_clauses: list[str] = []
         params: list[Any] = []
@@ -331,7 +337,7 @@ class _SkillStoreMixin(
             params.extend(status_filter)
 
         scope_clauses, scope_params = skill_scope_clauses(
-            scopes=scopes, agent_id=agent_id
+            scopes=scopes, agent_id=agent_id, repository_root=repository_root
         )
         where_clauses.extend(scope_clauses)
         params.extend(scope_params)
@@ -346,6 +352,7 @@ class _SkillStoreMixin(
                 s.status,
                 s.scope,
                 s.agent_id,
+                s.repository_root,
                 s.active_version_hash,
                 EXISTS(
                     SELECT 1 FROM skill_version_admissions a
@@ -389,6 +396,7 @@ class _SkillStoreMixin(
                 "status": str(row["status"]),
                 "scope": str(row["scope"]),
                 "agent_id": row["agent_id"],
+                "repository_root": row["repository_root"],
                 "version_hash": str(row["version_hash"]),
                 "package": package,
                 "created_at": str(row["created_at"]),
@@ -406,10 +414,14 @@ class _SkillStoreMixin(
         status_filter: list[str] | None = None,
         scope: str | None = None,
         agent_id: str | None = None,
+        repository_root: str | None = None,
     ) -> list[dict[str, Any]]:
         scopes = [scope] if scope else None
         return self.list_latest_skills(
-            status_filter=status_filter, agent_id=agent_id, scopes=scopes
+            status_filter=status_filter,
+            agent_id=agent_id,
+            scopes=scopes,
+            repository_root=repository_root,
         )
 
     def insert_skill_run(
@@ -447,7 +459,7 @@ class _SkillStoreMixin(
 
     def get_skill_lifecycle_facts(self, *, skill_id: str) -> dict[str, Any]:
         skill_rows = self._record_store.query_dicts(
-            "SELECT active_version_hash, scope, agent_id "
+            "SELECT active_version_hash, scope, agent_id, repository_root "
             "FROM skills WHERE skill_id = ? LIMIT 1",
             (skill_id,),
         )
@@ -479,6 +491,7 @@ class _SkillStoreMixin(
             "active_version_hash": str(skill_row.get("active_version_hash") or ""),
             "scope": str(skill_row.get("scope") or ""),
             "agent_id": skill_row.get("agent_id"),
+            "repository_root": skill_row.get("repository_root"),
             "admission_count": sum(admissions.values()),
             "pending_admission_count": admissions.get("pending", 0),
             "use_count": sum(outcomes.values()),
@@ -959,22 +972,6 @@ def _proposal_row(row: dict[str, Any]) -> dict[str, Any]:
     """Project one SQL row into the typed proposal-view shape."""
 
     proposal_payload = _json_loads(str(row.get("proposal_json") or "{}"), {})
-    applied_addition_raw = row.get("applied_addition_json")
-    applied_addition = (
-        _json_loads(str(applied_addition_raw), None)
-        if applied_addition_raw not in {None, ""}
-        else None
-    )
-    review_raw = row.get("review_json")
-    review_payload = (
-        _json_loads(str(review_raw), None) if review_raw not in {None, ""} else None
-    )
-    replay_proof_raw = row.get("replay_proof_json")
-    replay_proof = (
-        _json_loads(str(replay_proof_raw), None)
-        if replay_proof_raw not in {None, ""}
-        else None
-    )
     return {
         "proposal_id": str(row.get("proposal_id") or ""),
         "source_task_shape_ref": str(row.get("source_task_shape_ref") or ""),
@@ -982,11 +979,11 @@ def _proposal_row(row: dict[str, Any]) -> dict[str, Any]:
         "proposed_at": str(row.get("proposed_at") or ""),
         "proposal": proposal_payload,
         "queue_state": str(row.get("queue_state") or ""),
-        "replay_proof": replay_proof,
-        "applied_addition": applied_addition,
+        "replay_proof": _json_loads(row.get("replay_proof_json"), None),
+        "applied_addition": _json_loads(row.get("applied_addition_json"), None),
         "created_at": str(row.get("created_at") or ""),
         "updated_at": str(row.get("updated_at") or ""),
-        "review": review_payload,
+        "review": _json_loads(row.get("review_json"), None),
         "reviewer_id": str(row.get("reviewer_id") or ""),
         "review_status": str(row.get("review_status") or ""),
         "decided_at": str(row.get("decided_at") or ""),

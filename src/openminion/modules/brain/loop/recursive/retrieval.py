@@ -24,6 +24,7 @@ def retrieve(
     purpose: str = "act",
     strategy: RetrievalStrategy = "auto",
     filters: RetrievalFilters | dict[str, Any] | None = None,
+    repository_root: str | None = None,
 ) -> list[RetrievedContext]:
     retrieval_filters = (
         filters
@@ -54,6 +55,7 @@ def retrieve(
         k=k,
         strategy=resolved_strategy,
         retrieval_filters=retrieval_filters,
+        repository_root=repository_root,
     )
     return local
 
@@ -232,6 +234,7 @@ def _retrieve_local(
     k: int,
     strategy: RetrievalStrategy,
     retrieval_filters: RetrievalFilters,
+    repository_root: str | None = None,
 ) -> list[RetrievedContext]:
     target_k = max(1, int(k))
 
@@ -256,7 +259,12 @@ def _retrieve_local(
         )
     if "skill" in retrieval_filters.include_sources:
         collected.extend(
-            self._retrieve_skills(agent_id=agent_id, query=query, strategy=strategy)
+            self._retrieve_skills(
+                agent_id=agent_id,
+                query=query,
+                strategy=strategy,
+                repository_root=repository_root,
+            )
         )
 
     return self._filter_retrieval_items(collected, retrieval_filters, target_k)
@@ -545,13 +553,22 @@ def _retrieve_episodic(
 
 
 def _retrieve_skills(
-    self, *, agent_id: str, query: str, strategy: RetrievalStrategy
+    self,
+    *,
+    agent_id: str,
+    query: str,
+    strategy: RetrievalStrategy,
+    repository_root: str | None = None,
 ) -> list[RetrievedContext]:
     if self._skillctl is None or self.config.retrieval.k_skill <= 0:
         return []
     try:
         matches = self._skillctl.match(
-            query, None, agent_id, k=self.config.retrieval.k_skill
+            query,
+            None,
+            agent_id,
+            k=self.config.retrieval.k_skill,
+            repository_root=repository_root,
         )
     except Exception:  # noqa: BLE001
         return []
@@ -565,7 +582,12 @@ def _retrieve_skills(
         version_hash = row.get("version_hash")
         try:
             snippet, snippet_hash = self._skillctl.render_snippet(
-                skill_id, version_hash, "plan", max_tokens=200
+                skill_id,
+                version_hash,
+                "plan",
+                max_tokens=200,
+                agent_id=agent_id,
+                repository_root=repository_root,
             )
         except Exception:  # noqa: BLE001
             continue

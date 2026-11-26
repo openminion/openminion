@@ -1,4 +1,5 @@
 import json
+from contextlib import closing
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
 
@@ -68,6 +69,8 @@ class RuntimeControlsMixin:
         def session_id(self) -> str: ...
 
         def bind_session(self, session_id: str) -> None: ...
+
+        def _session_metadata_patch(self) -> dict[str, Any]: ...
 
         def create_new_session(self) -> str: ...
 
@@ -682,8 +685,7 @@ class RuntimeControlsMixin:
         agent_id = str(getattr(self, "agent_id", "") or "").strip()
         if agent_id:
             scopes.append(f"agent:{agent_id}")
-        scopes.append("global:system")
-        return scopes
+        return [*scopes, "global:system"]
 
     def _configured_skill_ids(self) -> list[str]:
         config = getattr(self._rt, "config", None)
@@ -706,21 +708,14 @@ class RuntimeControlsMixin:
         return list(dict.fromkeys(configured))
 
     def _catalog_skill_rows(self) -> list[dict[str, Any]]:
-        runtime = self._rt
-        config_path = getattr(runtime, "config_path", None)
-        skill = Skill(
-            config_path or {},
-            home_root=Path(getattr(runtime, "home_root")),
-        )
-        try:
-            summaries = skill.catalog_summaries(agent_id=self.agent_id)
-        finally:
-            skill.close()
-        return [
-            {**summary, "source": "catalog"}
-            for summary in summaries
-            if str(summary.get("id", "")).strip()
-        ]
+        metadata = self._session_metadata_patch()
+        config = getattr(self._rt, "config_path", None) or {}
+        with closing(Skill(config, home_root=Path(self._rt.home_root))) as skill:
+            summaries = skill.catalog_summaries(
+                agent_id=self.agent_id,
+                repository_root=metadata["repository_root"] or None,
+            )
+        return [{**summary, "source": "catalog"} for summary in summaries]
 
     def list_skill_rows(self) -> list[dict[str, Any]]:
         rows = self._catalog_skill_rows()
@@ -735,13 +730,19 @@ class RuntimeControlsMixin:
     def skills_report(self, skill_id: str = "") -> str:
         requested_id = str(skill_id or "").strip()
         if requested_id:
-            runtime = self._rt
-            skill = Skill(
-                getattr(runtime, "config_path", None) or {},
-                home_root=Path(getattr(runtime, "home_root")),
-            )
+            metadata = self._session_metadata_patch()
             try:
-                package = skill.get_skill(requested_id)
+                with closing(
+                    Skill(
+                        getattr(self._rt, "config_path", None) or {},
+                        home_root=Path(self._rt.home_root),
+                    )
+                ) as skill:
+                    package = skill.get_runtime_skill(
+                        requested_id,
+                        agent_id=self.agent_id,
+                        repository_root=metadata["repository_root"] or None,
+                    )
             except SkillError as exc:
                 if (
                     exc.code != "NOT_FOUND"
@@ -749,8 +750,6 @@ class RuntimeControlsMixin:
                 ):
                     raise
                 return f"Skill: {requested_id}\n  status   unavailable\n  source   configured only\n\nThis skill is configured but is not installed in the catalog."
-            finally:
-                skill.close()
             lines = [
                 f"Skill: {package.display_name or package.name}",
                 f"  id       {package.skill_id}",
@@ -770,11 +769,10 @@ class RuntimeControlsMixin:
             return "\n".join(lines)
 
         rows = self.list_skill_rows()
-        runtime = self._rt
         learning_summary = skill_learning_summary(
-            config_path=getattr(runtime, "config_path", None),
-            home_root=Path(getattr(runtime, "home_root")),
-            data_root=Path(runtime.data_root),
+            config_path=getattr(self._rt, "config_path", None),
+            home_root=Path(self._rt.home_root),
+            data_root=Path(self._rt.data_root),
             agent_id=self.agent_id,
         )
         if not rows and not learning_summary:

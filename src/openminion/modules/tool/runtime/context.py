@@ -249,6 +249,7 @@ class RuntimeContext:
     policy_adapter: Optional[PolicyAdapter] = None
     policy_authorization: PolicyAuthorization | None = None
     skill_api: Optional[Any] = None
+    repository_root: str | None = None
     secret_service: Any | None = None
     tool_resources: Mapping[str, Any] = field(default_factory=dict)
     subject_id: str = ""

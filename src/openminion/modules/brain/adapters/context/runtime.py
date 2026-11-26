@@ -1,4 +1,5 @@
 from typing import Any, cast
+from openminion.modules.brain.adapters.tool.runtime import current_repository_root
 
 from openminion.modules.brain.interfaces import (
     ContextAPI,
@@ -130,6 +131,7 @@ class ContextCtlAdapter(ContextAPI):
         req = BuildPackRequest(
             session_id=session_id,
             agent_id=agent_id,
+            repository_root=current_repository_root(),
             purpose=purpose_name,
             mode_name=mode_name,
             query=user_query,

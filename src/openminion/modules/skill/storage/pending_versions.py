@@ -9,7 +9,10 @@ from openminion.modules.storage.record_store import RecordStore
 
 
 def skill_scope_clauses(
-    *, scopes: list[str] | None, agent_id: str | None
+    *,
+    scopes: list[str] | None,
+    agent_id: str | None,
+    repository_root: str | None = None,
 ) -> tuple[list[str], list[Any]]:
     clauses: list[str] = []
     params: list[Any] = []
@@ -18,13 +21,14 @@ def skill_scope_clauses(
         clauses.append(f"s.scope IN ({placeholders})")
         params.extend(scopes)
 
+    visible = ["s.scope = 'global'"]
     if agent_id:
-        clauses.append(
-            "(s.scope = 'global' OR (s.scope = 'agent' AND (s.agent_id IS NULL OR s.agent_id = ?)))"
-        )
+        visible.append("(s.scope = 'agent' AND (s.agent_id IS NULL OR s.agent_id = ?))")
         params.append(agent_id)
-    else:
-        clauses.append("s.scope = 'global'")
+    if repository_root:
+        visible.append("(s.scope = 'project' AND s.repository_root = ?)")
+        params.append(repository_root)
+    clauses.append("(" + " OR ".join(visible) + ")")
     return clauses, params
 
 
@@ -36,13 +40,16 @@ class PendingSkillVersionStoreMixin:
         *,
         scope: str | None = None,
         agent_id: str | None = None,
+        repository_root: str | None = None,
     ) -> list[dict[str, Any]]:
         where_clauses, params = skill_scope_clauses(
-            scopes=[scope] if scope else None, agent_id=agent_id
+            scopes=[scope] if scope else None,
+            agent_id=agent_id,
+            repository_root=repository_root,
         )
         rows = self._record_store.query_dicts(
             f"""
-            SELECT s.skill_id, s.name, s.scope, s.agent_id,
+            SELECT s.skill_id, s.name, s.scope, s.agent_id, s.repository_root,
                    sv.version_hash, sv.package_json, sv.created_at
             FROM skill_version_admissions a
             JOIN skills s ON s.skill_id = a.skill_id
@@ -59,6 +66,7 @@ class PendingSkillVersionStoreMixin:
                 "name": str(row["name"]),
                 "scope": str(row["scope"]),
                 "agent_id": row["agent_id"],
+                "repository_root": row["repository_root"],
                 "version_hash": str(row["version_hash"]),
                 "package": json.loads(str(row["package_json"])),
                 "created_at": str(row["created_at"]),

@@ -7,7 +7,40 @@ import pytest
 from openminion.modules.runtime.project_instructions import (
     read_instruction_target_snapshot,
     resolve_project_instruction_target,
+    resolve_repository_root,
 )
+
+
+@pytest.mark.parametrize("value", [None, "", ".", "relative/path"])
+def test_repository_root_never_falls_back_to_cwd(tmp_path, monkeypatch, value):
+    (tmp_path / ".git").mkdir()
+    monkeypatch.chdir(tmp_path)
+    assert resolve_repository_root(value) is None
+
+
+def test_repository_root_requires_existing_git_directory(tmp_path):
+    assert resolve_repository_root(tmp_path) is None
+    assert resolve_repository_root(tmp_path / "missing") is None
+    file = tmp_path / "file"
+    file.write_text("not a directory")
+    assert resolve_repository_root(file) is None
+
+
+@pytest.mark.parametrize("git_file", [False, True])
+def test_repository_root_keeps_nested_checkouts_distinct(tmp_path, git_file):
+    (tmp_path / ".git").mkdir()
+    child = tmp_path / "child"
+    nested = child / "src"
+    nested.mkdir(parents=True)
+    if git_file:
+        (child / ".git").write_text("gitdir: ../.git/modules/child")
+    else:
+        (child / ".git").mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(child, target_is_directory=True)
+    assert resolve_repository_root(tmp_path) == str(tmp_path)
+    assert resolve_repository_root(nested) == str(child)
+    assert resolve_repository_root(alias) == str(child)
 
 
 def test_resolver_prefers_openminion_inside_project_root(tmp_path: Path) -> None:

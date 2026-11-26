@@ -17,6 +17,7 @@ class SkillStore(ABC):
         scope: str,
         agent_id: str | None,
         ts: str,
+        repository_root: str | None = None,
     ) -> bool:
         raise NotImplementedError
 
@@ -106,6 +107,7 @@ class SkillStore(ABC):
         status_filter: list[str] | None = None,
         agent_id: str | None = None,
         scopes: list[str] | None = None,
+        repository_root: str | None = None,
     ) -> list[dict[str, Any]]:
         raise NotImplementedError
 
@@ -116,6 +118,7 @@ class SkillStore(ABC):
         status_filter: list[str] | None = None,
         scope: str | None = None,
         agent_id: str | None = None,
+        repository_root: str | None = None,
     ) -> list[dict[str, Any]]:
         raise NotImplementedError
 
@@ -125,6 +128,7 @@ class SkillStore(ABC):
         *,
         scope: str | None = None,
         agent_id: str | None = None,
+        repository_root: str | None = None,
     ) -> list[dict[str, Any]]:
         raise NotImplementedError
 

@@ -29,6 +29,7 @@ class _FakeSkill:
         trust: str | None = None,
         promotion_path: str = "operator",
         authority=None,
+        repository_root: str | None = None,
     ) -> tuple[str, str, list[str]]:
         del path, name, agent_id, trust, promotion_path, authority
         if callable(self._event_callback):
@@ -45,11 +46,15 @@ class _FakeSkill:
 
     def get_skill(self, skill_id: str, version: str | None):
         return SimpleNamespace(
+            skill_id=skill_id,
             source_artifact_ref="blob://skill-demo",
             name="skill-demo",
             scope="global",
             agent_id=None,
         )
+
+    def get_skill_owner(self, *, skill_id: str):
+        return {"scope": "global", "agent_id": None, "repository_root": None}
 
     def ingest_artifact(
         self,
@@ -60,6 +65,7 @@ class _FakeSkill:
         agent_id: str | None,
         trust: str | None = None,
         promotion_path: str = "operator",
+        repository_root: str | None = None,
     ) -> tuple[str, str, list[str]]:
         del name, agent_id, trust, promotion_path
         if callable(self._event_callback):

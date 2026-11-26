@@ -166,6 +166,9 @@ class SkillClient(Protocol):
         purpose: str,
         max_tokens: int,
         mode_name: str | None = None,
+        *,
+        agent_id: str = "",
+        repository_root: str | None = None,
     ) -> tuple[str, str]: ...
 
 

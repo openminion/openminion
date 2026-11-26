@@ -34,7 +34,11 @@ from openminion.modules.skill.runtime.parser import (
     purpose_to_section_keys,
 )
 
-from .ingest import _source_ref_from_payload, _source_ref_to_digest
+from .ingest import (
+    _source_ref_from_payload,
+    _source_ref_to_digest,
+    _validated_repository_root,
+)
 from .resources import write_bundle_export
 
 
@@ -73,9 +77,15 @@ class SkillCatalogMixin:
         self,
         agent_id: str,
         status_filter: list[str] | str | None = None,
+        *,
+        repository_root: str | None = None,
     ) -> list[dict[str, str]]:
         statuses = self._resolve_status_filter(status_filter, RISK_CLASS_LOW)
-        rows = self.store.list_latest_skills(status_filter=statuses, agent_id=agent_id)
+        rows = self.store.list_latest_skills(
+            status_filter=statuses,
+            agent_id=agent_id,
+            repository_root=_validated_repository_root(repository_root),
+        )
         return [
             SkillPackage.from_dict(row["package"]).to_catalog_summary() for row in rows
         ]
@@ -101,7 +111,43 @@ class SkillCatalogMixin:
         return {
             "scope": scope,
             "agent_id": str(agent_id) if agent_id else None,
+            "repository_root": facts.get("repository_root"),
         }
+
+    def get_runtime_skill(
+        self,
+        skill_id: str,
+        version_hash: str | None = None,
+        *,
+        agent_id: str,
+        repository_root: str | None = None,
+    ) -> SkillPackage:
+        repository_root = _validated_repository_root(repository_root)
+        owner = self.get_skill_owner(skill_id=skill_id)
+        if not owner:
+            raise SkillError("NOT_FOUND", "Skill not found")
+        visible = (
+            owner["scope"] == "global"
+            or (
+                owner["scope"] == "agent"
+                and bool(agent_id)
+                and owner["agent_id"] == agent_id
+            )
+            or (
+                owner["scope"] == "project"
+                and repository_root is not None
+                and owner["repository_root"] == repository_root
+            )
+        )
+        if not visible:
+            raise SkillError("NOT_FOUND", "Skill not found")
+        package = self.get_skill(skill_id, version_hash)
+        state = self.get_skill_version_state(
+            skill_id=skill_id, version_hash=package.version_hash
+        )
+        if state is None or state["active_version_hash"] != package.version_hash:
+            raise SkillError("NOT_FOUND", "Skill not found")
+        return package
 
     def export_bundle(
         self, skill_id: str, version_hash: str, destination: str | Path
@@ -385,27 +431,36 @@ class SkillCatalogMixin:
         )
 
     def list_skills(
-        self, filters: dict[str, Any] | None = None
+        self,
+        filters: dict[str, Any] | None = None,
+        *,
+        repository_root: str | None = None,
     ) -> list[dict[str, Any]]:
         filters = filters or {}
         rows = self.store.list_skills(
             status_filter=_status_filter_values(filters),
             scope=str(filters.get("scope")) if filters.get("scope") else None,
             agent_id=str(filters.get("agent_id")) if filters.get("agent_id") else None,
+            repository_root=_validated_repository_root(repository_root),
         )
         return _skill_list_entries(rows, filters)
 
     def list_pending_skill_versions(
-        self, filters: dict[str, Any] | None = None
+        self,
+        filters: dict[str, Any] | None = None,
+        *,
+        repository_root: str | None = None,
     ) -> list[dict[str, Any]]:
         """Operator view of staged drafts; matching and catalogs never read it."""
         filters = filters or {}
+        repository_root = _validated_repository_root(repository_root)
         statuses = _status_filter_values(filters)
         if statuses and SKILL_STATUS_DRAFT not in statuses:
             return []
         rows = self.store.list_pending_skill_versions(
             scope=str(filters.get("scope")) if filters.get("scope") else None,
             agent_id=str(filters.get("agent_id")) if filters.get("agent_id") else None,
+            repository_root=repository_root,
         )
         return [
             {**entry, "admission_state": "pending"}
@@ -517,8 +572,20 @@ class SkillCatalogMixin:
         purpose: str,
         max_tokens: int,
         mode_name: str | None = None,
+        *,
+        agent_id: str | None = None,
+        repository_root: str | None = None,
     ) -> tuple[str, str]:
-        package = self.get_skill(skill_id=skill_id, version_hash=version_hash)
+        package = (
+            self.get_runtime_skill(
+                skill_id,
+                version_hash,
+                agent_id=agent_id,
+                repository_root=repository_root,
+            )
+            if agent_id is not None
+            else self.get_skill(skill_id=skill_id, version_hash=version_hash)
+        )
         normalized_purpose = normalize_render_purpose(purpose, mode_name=mode_name)
         if normalized_purpose not in {"plan", "respond", "act", "verify"}:
             raise SkillError(
@@ -600,12 +667,14 @@ class SkillCatalogMixin:
         agent_id: str | None = None,
         status_filter: list[str] | str | None = None,
         scope: str | None = None,
+        repository_root: str | None = None,
     ) -> WorkflowCatalog:
         statuses = self._resolve_status_filter(status_filter, RISK_CLASS_LOW)
         rows = self.store.list_latest_skills(
             status_filter=statuses,
             agent_id=agent_id,
             scopes=[scope] if scope else None,
+            repository_root=_validated_repository_root(repository_root),
         )
         packages = [SkillPackage.from_dict(row["package"]) for row in rows]
         return WorkflowCatalog.from_skill_packages(packages)
@@ -617,11 +686,13 @@ class SkillCatalogMixin:
         agent_id: str | None = None,
         status_filter: list[str] | str | None = None,
         scope: str | None = None,
+        repository_root: str | None = None,
     ) -> WorkflowCatalogEntry:
         entry = self.workflow_catalog(
             agent_id=agent_id,
             status_filter=status_filter,
             scope=scope,
+            repository_root=repository_root,
         ).get(workflow_id)
         if entry is None:
             raise SkillError(
@@ -754,6 +825,7 @@ def _skill_list_entries(
                 "status": package.status,
                 "scope": package.scope,
                 "agent_id": package.agent_id,
+                "repository_root": row.get("repository_root"),
                 "risk_class": package.risk_class,
                 "tags": package.tags,
                 "tools": package.tools,

@@ -33,8 +33,13 @@ class _SkillClient:
         purpose: str,
         max_tokens: int,
         mode_name: str | None = None,
+        *,
+        agent_id: str,
+        repository_root: str | None = None,
     ) -> tuple[str, str]:
         del version_hash, mode_name
+        assert agent_id
+        assert repository_root is None
         self.calls.append(
             {
                 "skill_id": skill_id,
@@ -56,6 +61,9 @@ class _PrioritySkillClient(_SkillClient):
         purpose: str,
         max_tokens: int,
         mode_name: str | None = None,
+        *,
+        agent_id: str,
+        repository_root: str | None = None,
     ) -> tuple[str, str]:
         text, version = super().render_snippet(
             skill_id,
@@ -63,6 +71,8 @@ class _PrioritySkillClient(_SkillClient):
             purpose,
             max_tokens,
             mode_name,
+            agent_id=agent_id,
+            repository_root=repository_root,
         )
         if skill_id == "git-workflow":
             return (f"{text} " + ("overflow " * 80), version)

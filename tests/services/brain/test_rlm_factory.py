@@ -17,7 +17,17 @@ class _Logger:
 
 
 class _Skill:
-    def match(self, intent_text, step_hint, agent_id, k=3, status_filter=None):
+    def match(
+        self,
+        intent_text,
+        step_hint,
+        agent_id,
+        k=3,
+        status_filter=None,
+        *,
+        repository_root=None,
+    ):
+        assert repository_root == "/approved/repository"
         del intent_text, step_hint, agent_id, k, status_filter
         return [
             {
@@ -29,7 +39,18 @@ class _Skill:
             }
         ]
 
-    def render_snippet(self, skill_id, version_hash, purpose, max_tokens):
+    def render_snippet(
+        self,
+        skill_id,
+        version_hash,
+        purpose,
+        max_tokens,
+        *,
+        agent_id,
+        repository_root=None,
+    ):
+        assert agent_id == "agent-skill"
+        assert repository_root == "/approved/repository"
         del version_hash, purpose, max_tokens
         return (f"Skill snippet for {skill_id}", "s" * 64)
 
@@ -56,6 +77,7 @@ def test_init_rlm_adapter_wires_skill_client_into_real_service(monkeypatch) -> N
         agent_id="agent-skill",
         query="triage a linear issue",
         strategy="auto",
+        repository_root="/approved/repository",
     )
 
     assert len(rows) == 1

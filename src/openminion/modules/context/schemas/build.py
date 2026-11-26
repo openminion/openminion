@@ -32,6 +32,7 @@ class BuildPackRequest(BaseModel):
     image_input: ImageInputContext | None = None
     session_id: str
     agent_id: str
+    repository_root: str | None = None
     purpose: Purpose
     mode_name: Optional[str] = None
     query: str

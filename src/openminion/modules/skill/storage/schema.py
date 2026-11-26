@@ -62,6 +62,12 @@ def _upgrade_legacy_catalog_columns(record_store: RecordStore) -> None:
     _ensure_column(
         record_store,
         table_name="skills",
+        column_name="repository_root",
+        ddl_tail="TEXT",
+    )
+    _ensure_column(
+        record_store,
+        table_name="skills",
         column_name="active_version_hash",
         ddl_tail="TEXT",
     )
@@ -110,6 +116,8 @@ def _backfill_legacy_catalog_admission(record_store: RecordStore) -> None:
 
 def _create_catalog_indexes(record_store: RecordStore) -> None:
     statements = (
+        "CREATE INDEX IF NOT EXISTS idx_skill_versions_fingerprint "
+        "ON skill_versions(skill_id, content_fingerprint)",
         "CREATE INDEX IF NOT EXISTS idx_skills_status ON skills(status)",
         "CREATE INDEX IF NOT EXISTS idx_skills_scope ON skills(scope, agent_id)",
         "CREATE INDEX IF NOT EXISTS idx_skills_updated ON skills(updated_at)",
@@ -133,6 +141,7 @@ def _create_catalog_schema(record_store: RecordStore) -> None:
             status TEXT NOT NULL,
             scope TEXT NOT NULL,
             agent_id TEXT,
+            repository_root TEXT,
             active_version_hash TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
@@ -154,10 +163,6 @@ def _create_catalog_schema(record_store: RecordStore) -> None:
     """
     )
     _upgrade_legacy_catalog_columns(record_store)
-    record_store.execute_count(
-        "CREATE INDEX IF NOT EXISTS idx_skill_versions_fingerprint "
-        "ON skill_versions(skill_id, content_fingerprint)"
-    )
     record_store.execute_count(
         """
         CREATE TABLE IF NOT EXISTS skill_version_admissions (

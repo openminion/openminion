@@ -48,9 +48,12 @@ def _add_ingest_metadata_args(parser: argparse.ArgumentParser) -> None:
         default="global",
         choices=["global", "agent", "project"],
         help=(
-            "Skill scope. 'project' is currently stored as a label only and "
-            "does not affect runtime catalog visibility."
+            "Skill scope. 'project' requires --repository-root and is visible "
+            "only in that repository after admission."
         ),
+    )
+    parser.add_argument(
+        "--repository-root", help="Repository workspace for project scope"
     )
     parser.add_argument("--agent-id", default=None)
     parser.add_argument(
@@ -129,8 +132,6 @@ def _add_skill_cli_subcommands(sub: Any) -> None:
     _add_ingest_metadata_args(ingest_text)
 
     show = sub.add_parser("show", help="Show a skill package")
-    show.add_argument("skill_id")
-    show.add_argument("--version", default=None)
 
     export = sub.add_parser(
         "export", help="Export retained content of an admitted version"
@@ -143,12 +144,18 @@ def _add_skill_cli_subcommands(sub: Any) -> None:
     list_cmd.add_argument("--status", default=None, help="Comma-separated statuses")
     list_cmd.add_argument("--scope", default=None)
     list_cmd.add_argument("--agent-id", default=None)
+    list_cmd.add_argument(
+        "--repository-root", help="Include skills bound to this repository"
+    )
     list_cmd.add_argument("--tag", default=None)
     list_cmd.add_argument("--tool", default=None)
 
     match = sub.add_parser("match", help="Match skills for an intent")
     match.add_argument("--intent", required=True)
     match.add_argument("--agent-id", required=True)
+    match.add_argument(
+        "--repository-root", help="Include skills bound to this repository"
+    )
     match.add_argument("--tool-id", default=None)
     match.add_argument(
         "--risk", default=RISK_CLASS_CHOICES[0], choices=list(RISK_CLASS_CHOICES)
@@ -164,8 +171,6 @@ def _add_skill_cli_subcommands(sub: Any) -> None:
     snippet.add_argument("--max-tokens", type=int, default=180)
 
     lint = sub.add_parser("lint", help="Lint a skill")
-    lint.add_argument("skill_id")
-    lint.add_argument("--version", default=None)
 
     validate = sub.add_parser(
         "validate",
@@ -174,8 +179,6 @@ def _add_skill_cli_subcommands(sub: Any) -> None:
             "use 'openminion skill validate' for harness-backed composition)."
         ),
     )
-    validate.add_argument("skill_id")
-    validate.add_argument("--version", default=None)
 
     test_cmd = sub.add_parser(
         "test",
@@ -195,12 +198,11 @@ def _add_skill_cli_subcommands(sub: Any) -> None:
         "debug",
         help="Emit typed SkillAuthoringDebugView for a skill",
     )
-    debug_cmd.add_argument("skill_id")
-    debug_cmd.add_argument("--version", default=None)
 
     inspect_cmd = sub.add_parser("inspect", help="Inspect a skill (alias for show)")
-    inspect_cmd.add_argument("skill_id")
-    inspect_cmd.add_argument("--version", default=None)
+    for command in (show, lint, validate, debug_cmd, inspect_cmd):
+        command.add_argument("skill_id")
+        command.add_argument("--version", default=None)
 
     disable_cmd = sub.add_parser(
         "disable",
@@ -376,34 +378,30 @@ def _dispatch_skill_command(ctl: Skill, args: argparse.Namespace) -> None:
                 f"--reason is required for {args.cmd}",
             )
 
-    if args.cmd == "ingest":
-        skill_id, version_hash, warnings = ctl.ingest_file(
-            args.file,
-            name=args.name,
-            scope=args.scope,
-            agent_id=args.agent_id,
-            trust=getattr(args, "trust", None),
-            authority=SkillIngestAuthority.local_operator(
-                surface="module_cli.skill.ingest",
+    if args.cmd in {"ingest", "ingest-text"}:
+        metadata = {
+            "name": args.name,
+            "scope": args.scope,
+            "agent_id": args.agent_id,
+            "repository_root": args.repository_root,
+            "trust": getattr(args, "trust", None),
+            "authority": SkillIngestAuthority.local_operator(
+                surface=(
+                    "module_cli.skill.ingest"
+                    if args.cmd == "ingest"
+                    else "module_cli.skill.ingest_text"
+                ),
                 principal_id=local_operator_id(),
             ),
+        }
+        if args.cmd == "ingest":
+            result = ctl.ingest_file(args.file, **metadata)
+        else:
+            result = ctl.ingest_text(markdown=args.markdown, **metadata)
+        skill_id, version_hash, warnings = result
+        _print_ingest_result(
+            skill_id, version_hash, warnings, ctl.get_skill_owner(skill_id=skill_id)
         )
-        _print_ingest_result(skill_id, version_hash, warnings)
-        return
-
-    if args.cmd == "ingest-text":
-        skill_id, version_hash, warnings = ctl.ingest_text(
-            name=args.name,
-            markdown=args.markdown,
-            scope=args.scope,
-            agent_id=args.agent_id,
-            trust=getattr(args, "trust", None),
-            authority=SkillIngestAuthority.local_operator(
-                surface="module_cli.skill.ingest_text",
-                principal_id=local_operator_id(),
-            ),
-        )
-        _print_ingest_result(skill_id, version_hash, warnings)
         return
 
     if args.cmd in {"admit", "rollback"}:
@@ -429,7 +427,7 @@ def _dispatch_skill_command(ctl: Skill, args: argparse.Namespace) -> None:
         if args.status:
             filters["status"] = split_comma_tokens(args.status)
 
-        skills = ctl.list_skills(filters)
+        skills = ctl.list_skills(filters, repository_root=args.repository_root)
         _print_json({"ok": True, "skills": skills})
         return
 
@@ -449,6 +447,7 @@ def _dispatch_skill_command(ctl: Skill, args: argparse.Namespace) -> None:
             intent_text=args.intent,
             step_hint=step_hint,
             agent_id=args.agent_id,
+            repository_root=args.repository_root,
             k=args.k,
             status_filter=status_filter,
         )
@@ -784,6 +783,7 @@ def _print_ingest_result(
     skill_id: str,
     version_hash: str,
     warnings: list[str],
+    owner: dict[str, str | None] | None,
 ) -> None:
     _print_json(
         {
@@ -791,6 +791,7 @@ def _print_ingest_result(
             "skill_id": skill_id,
             "version_hash": version_hash,
             "warnings": warnings,
+            "repository_root": owner["repository_root"] if owner else None,
         }
     )
 

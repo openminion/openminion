@@ -22,7 +22,7 @@ def test_workflow_observation_migration_round_trip(tmp_path: Path) -> None:
                 "PRAGMA table_info(skill_workflow_observations)"
             ).fetchall()
         }
-    assert head == ("0007_workflow_observations",)
+    assert head == ("0008_repository_scope",)
     assert columns == {
         "agent_id",
         "source_run_ref",
@@ -68,5 +68,5 @@ def test_workflow_observation_migration_round_trip(tmp_path: Path) -> None:
             "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
             ("skill_workflow_observations",),
         ).fetchone()
-    assert upgraded_head == ("0007_workflow_observations",)
+    assert upgraded_head == ("0008_repository_scope",)
     assert restored_table == ("skill_workflow_observations",)

@@ -683,7 +683,9 @@ LAYOUTS = {
     "store-on-a-history-behind-head": (
         _skill_behind_head,
         ["skill-store"],
-        ["records alembic 0003_audit, behind this code's alembic 0007_workflow"],
+        [
+            "records alembic 0003_audit, behind this code's alembic 0008_repository_scope"
+        ],
         [],
     ),
 }
@@ -762,13 +764,13 @@ def test_a_store_behind_head_opens_after_storage_migrate(
     from openminion.modules.storage.migrations import postgres_schema
 
     _skill_behind_head(database, tmp_path)
-    with pytest.raises(Exception, match="behind this code's alembic 0007"):
+    with pytest.raises(Exception, match="behind this code's alembic 0008"):
         _skill_store(database, tmp_path / "s1")
 
     assert _migrate(database, tmp_path, capsys, "skill")["skill"]["status"] == "ok"
     store = _skill_store(database, tmp_path / "s2")
     getattr(store, "close", lambda: None)()
-    assert _ledger(database, "public") == (["0007_workflow_observations"], "skill")
+    assert _ledger(database, "public") == (["0008_repository_scope"], "skill")
     history = postgres_schema.complete_history("skill", _read(database, "public"))
     assert history is not None and "current" in history.measured
 

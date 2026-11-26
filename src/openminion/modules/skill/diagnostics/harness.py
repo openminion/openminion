@@ -98,7 +98,7 @@ def run_skill_harness(root: str | Path = ".") -> SkillHarnessReport:
             error_count=1,
             results=(),
             global_errors=(
-                "no skills discovered under examples/, agents/, or skills/",
+                "no skills discovered under .agents/skills/, examples/, agents/, or skills/",
             ),
         )
 
@@ -121,13 +121,18 @@ def discover_skill_roots(root: Path) -> tuple[Path, ...]:
     if (root / "SKILL.md").is_file():
         return (root.resolve(),)
 
-    candidates = (root / "examples", root / "agents", root / "skills")
+    candidates = (
+        root / ".agents" / "skills",
+        root / "examples",
+        root / "agents",
+        root / "skills",
+    )
     found: dict[str, Path] = {}
     for base in candidates:
-        if not base.exists() or not base.is_dir():
+        if base.is_symlink() or base.parent.is_symlink() or not base.is_dir():
             continue
         for skill_file in sorted(base.rglob("SKILL.md")):
-            if not skill_file.is_file():
+            if skill_file.is_symlink() or not skill_file.is_file():
                 continue
             if _has_skill_ancestor(skill_file.parent, base):
                 continue

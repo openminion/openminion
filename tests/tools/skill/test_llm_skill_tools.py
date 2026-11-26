@@ -39,7 +39,7 @@ class _SkillError(Exception):
 
 def test_skill_list_success_applies_limit() -> None:
     api = SimpleNamespace(
-        list_skills=lambda filters=None: [
+        list_skills=lambda filters=None, repository_root=None: [
             {"skill_id": "one", "scope": "global", "agent_id": None},
             {"skill_id": "two", "scope": "agent", "agent_id": "agent-a"},
             {"skill_id": "three", "scope": "agent", "agent_id": None},
@@ -60,7 +60,9 @@ def test_skill_list_unavailable_error() -> None:
 
 def test_skill_get_success_from_to_dict_object() -> None:
     api = SimpleNamespace(
-        get_skill=lambda skill_id, version_hash=None: _Pkg(skill_id, "v1"),
+        get_runtime_skill=lambda skill_id, version_hash=None, **kwargs: _Pkg(
+            skill_id, "v1"
+        ),
         get_skill_version_state=lambda **kwargs: {
             "admission_state": "admitted",
             "active_version_hash": "v1",
@@ -84,7 +86,7 @@ def test_skill_get_not_found_error() -> None:
     def _raise(*args, **kwargs):
         raise _SkillError("NOT_FOUND", "Skill not found")
 
-    api = SimpleNamespace(get_skill=_raise)
+    api = SimpleNamespace(get_runtime_skill=_raise)
     ctx = SimpleNamespace(skill_api=api, agent_id="agent-a")
     result = _h_skill_get({"skill_id": "missing"}, ctx)
     assert result["ok"] is False
@@ -134,7 +136,9 @@ def test_skill_get_reads_requested_resource_with_pinned_version() -> None:
 
     ctx = SimpleNamespace(
         skill_api=SimpleNamespace(
-            get_skill=lambda skill_id, version_hash=None: _Pkg(skill_id, "v1"),
+            get_runtime_skill=lambda skill_id, version_hash=None, **kwargs: _Pkg(
+                skill_id, "v1"
+            ),
             get_skill_version_state=lambda **kwargs: {
                 "admission_state": "admitted",
                 "active_version_hash": "v1",
@@ -237,7 +241,11 @@ def test_skill_ingest_pending_version_does_not_render_snippet(caplog) -> None:
 
 
 def test_skill_get_hides_pending_and_foreign_versions() -> None:
+    from openminion.modules.skill.runtime.skill.catalog import SkillCatalogMixin
+    from types import MethodType
+
     pending_api = SimpleNamespace(
+        get_skill_owner=lambda **kwargs: {"scope": "agent", "agent_id": "agent-a"},
         get_skill=lambda skill_id, version_hash=None: _Pkg(
             skill_id, "pending", scope="agent", agent_id="agent-a"
         ),
@@ -246,6 +254,9 @@ def test_skill_get_hides_pending_and_foreign_versions() -> None:
             "active_version_hash": "active",
         },
     )
+    pending_api.get_runtime_skill = MethodType(
+        SkillCatalogMixin.get_runtime_skill, pending_api
+    )
     pending = _h_skill_get(
         {"skill_id": "deploy", "version_hash": "pending"},
         SimpleNamespace(skill_api=pending_api, agent_id="agent-a"),
@@ -253,6 +264,7 @@ def test_skill_get_hides_pending_and_foreign_versions() -> None:
     assert pending["error"]["code"] == "NOT_FOUND"
 
     foreign_api = SimpleNamespace(
+        get_skill_owner=lambda **kwargs: {"scope": "agent", "agent_id": "agent-b"},
         get_skill=lambda skill_id, version_hash=None: _Pkg(
             skill_id, "v1", scope="agent", agent_id="agent-b"
         ),
@@ -260,6 +272,9 @@ def test_skill_get_hides_pending_and_foreign_versions() -> None:
             "admission_state": "admitted",
             "active_version_hash": "v1",
         },
+    )
+    foreign_api.get_runtime_skill = MethodType(
+        SkillCatalogMixin.get_runtime_skill, foreign_api
     )
     foreign = _h_skill_get(
         {"skill_id": "deploy"},

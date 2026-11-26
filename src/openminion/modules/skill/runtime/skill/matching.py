@@ -24,6 +24,7 @@ from openminion.modules.skill.models import (
     normalize_risk,
     normalize_status,
 )
+from .ingest import _validated_repository_root
 
 
 @dataclass(frozen=True)
@@ -49,12 +50,18 @@ class SkillMatchingMixin:
         agent_id: str,
         k: int = 3,
         status_filter: list[str] | str | None = None,
+        *,
+        repository_root: str | None = None,
     ) -> list[SkillMatch]:
         normalized_step = step_hint or {}
         risk_hint = normalize_risk(str(normalized_step.get("risk", RISK_CLASS_LOW)))
 
         statuses = self._resolve_status_filter(status_filter, risk_hint)
-        rows = self.store.list_latest_skills(status_filter=statuses, agent_id=agent_id)
+        rows = self.store.list_latest_skills(
+            status_filter=statuses,
+            agent_id=agent_id,
+            repository_root=_validated_repository_root(repository_root),
+        )
 
         narrow_threshold = int(self.config.selection_rag_threshold)
         narrow_topk = int(self.config.selection_rag_topk)

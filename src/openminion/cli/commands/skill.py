@@ -174,12 +174,10 @@ def _run_skill_ingest(args, app: Any | None = None) -> int:
         print_json_payload(
             {
                 "ok": False,
-                "error": {
-                    **_error_payload(
-                        code="SKILL_NOT_AVAILABLE",
-                        message=_get_skill_error(),
-                    )
-                },
+                "error": _error_payload(
+                    code="SKILL_NOT_AVAILABLE",
+                    message=_get_skill_error(),
+                ),
             },
             sort_keys=False,
         )
@@ -196,6 +194,7 @@ def _run_skill_ingest(args, app: Any | None = None) -> int:
                 name=args.name,
                 scope=args.scope,
                 agent_id=args.agent_id,
+                repository_root=getattr(args, "repository_root", None),
                 trust=getattr(args, "trust", None),
                 authority=SkillIngestAuthority.local_operator(
                     surface="cli.skill.ingest",
@@ -208,6 +207,8 @@ def _run_skill_ingest(args, app: Any | None = None) -> int:
                 "version_hash": version_hash,
                 "warnings": warnings,
             }
+            owner = ctl.get_skill_owner(skill_id=skill_id)
+            result["repository_root"] = owner["repository_root"] if owner else None
             print_json_payload(result, sort_keys=False)
             return 0
         finally:
@@ -292,12 +293,10 @@ def _run_skill_list(args, app: Any | None = None) -> int:
         print_json_payload(
             {
                 "ok": False,
-                "error": {
-                    **_error_payload(
-                        code="SKILL_NOT_AVAILABLE",
-                        message=_get_skill_error(),
-                    )
-                },
+                "error": _error_payload(
+                    code="SKILL_NOT_AVAILABLE",
+                    message=_get_skill_error(),
+                ),
             },
             sort_keys=False,
         )
@@ -319,8 +318,11 @@ def _run_skill_list(args, app: Any | None = None) -> int:
             if args.tool:
                 filters["tool"] = args.tool
 
-            skills = ctl.list_skills(filters)
-            pending = ctl.list_pending_skill_versions(filters)
+            repository_root = getattr(args, "repository_root", None)
+            skills = ctl.list_skills(filters, repository_root=repository_root)
+            pending = ctl.list_pending_skill_versions(
+                filters, repository_root=repository_root
+            )
             if args.json:
                 payload = {"ok": True, "skills": skills, "pending_versions": pending}
                 print_json_payload(payload, sort_keys=False)
@@ -366,12 +368,10 @@ def _run_skill_refresh(args, app: Any | None = None) -> int:
         print_json_payload(
             {
                 "ok": False,
-                "error": {
-                    **_error_payload(
-                        code="SKILL_NOT_AVAILABLE",
-                        message=_get_skill_error(),
-                    )
-                },
+                "error": _error_payload(
+                    code="SKILL_NOT_AVAILABLE",
+                    message=_get_skill_error(),
+                ),
             },
             sort_keys=False,
         )
@@ -388,12 +388,10 @@ def _run_skill_refresh(args, app: Any | None = None) -> int:
                 print_json_payload(
                     {
                         "ok": False,
-                        "error": {
-                            **_error_payload(
-                                code="NO_SOURCE",
-                                message="Skill has no source artifact reference",
-                            )
-                        },
+                        "error": _error_payload(
+                            code="NO_SOURCE",
+                            message="Skill has no source artifact reference",
+                        ),
                     },
                     sort_keys=False,
                 )
@@ -404,6 +402,9 @@ def _run_skill_refresh(args, app: Any | None = None) -> int:
                 name=pkg.name,
                 scope=pkg.scope,
                 agent_id=pkg.agent_id,
+                repository_root=(ctl.get_skill_owner(skill_id=pkg.skill_id) or {}).get(
+                    "repository_root"
+                ),
             )
             result = {
                 "ok": True,
@@ -527,12 +528,10 @@ def _run_skill_reingest_all(args, app: Any | None = None) -> int:
         print_json_payload(
             {
                 "ok": False,
-                "error": {
-                    **_error_payload(
-                        code="SKILL_NOT_AVAILABLE",
-                        message=_get_skill_error(),
-                    )
-                },
+                "error": _error_payload(
+                    code="SKILL_NOT_AVAILABLE",
+                    message=_get_skill_error(),
+                ),
             },
             sort_keys=False,
         )
@@ -543,12 +542,10 @@ def _run_skill_reingest_all(args, app: Any | None = None) -> int:
         print_json_payload(
             {
                 "ok": False,
-                "error": {
-                    **_error_payload(
-                        code="RETRIEVE_NOT_AVAILABLE",
-                        message="RetrieveCtl is not available for re-ingest-all",
-                    )
-                },
+                "error": _error_payload(
+                    code="RETRIEVE_NOT_AVAILABLE",
+                    message="RetrieveCtl is not available for re-ingest-all",
+                ),
             },
             sort_keys=False,
         )
@@ -606,12 +603,10 @@ def _run_skill_show(args, app: Any | None = None) -> int:
         print_json_payload(
             {
                 "ok": False,
-                "error": {
-                    **_error_payload(
-                        code="SKILL_NOT_AVAILABLE",
-                        message=_get_skill_error(),
-                    )
-                },
+                "error": _error_payload(
+                    code="SKILL_NOT_AVAILABLE",
+                    message=_get_skill_error(),
+                ),
             },
             sort_keys=False,
         )
@@ -653,12 +648,10 @@ def _run_skill_remove(args, app: Any | None = None) -> int:
         print_json_payload(
             {
                 "ok": False,
-                "error": {
-                    **_error_payload(
-                        code="SKILL_NOT_AVAILABLE",
-                        message=_get_skill_error(),
-                    )
-                },
+                "error": _error_payload(
+                    code="SKILL_NOT_AVAILABLE",
+                    message=_get_skill_error(),
+                ),
             },
             sort_keys=False,
         )
@@ -899,9 +892,12 @@ def _register_skill_ingest_subcommand(skill_subcommands) -> None:
         default="global",
         choices=["global", "agent", "project"],
         help=(
-            "Skill scope. 'project' is currently stored as a label only and "
-            "does not affect runtime catalog visibility."
+            "Skill scope. 'project' requires --repository-root and is visible "
+            "only in that repository after admission."
         ),
+    )
+    parser.add_argument(
+        "--repository-root", help="Repository workspace for project scope"
     )
     parser.add_argument(
         "--agent-id", default=None, help="Agent ID for agent-scoped skills"
@@ -928,6 +924,9 @@ def _register_skill_list_subcommand(skill_subcommands) -> None:
     )
     parser.add_argument("--scope", default=None, help="Scope filter")
     parser.add_argument("--agent-id", default=None, help="Agent ID filter")
+    parser.add_argument(
+        "--repository-root", help="Include skills bound to this repository"
+    )
     parser.add_argument("--tag", default=None, help="Tag filter")
     parser.add_argument("--tool", default=None, help="Tool filter")
     _add_skill_config_arg(parser)

@@ -28,6 +28,7 @@ from openminion.modules.telemetry.events.catalog import (
 from openminion.base.config.settings import SettingsResolver
 from openminion.modules.brain.tools.lifecycle import register_settings_lifecycle_hooks
 from openminion.modules.storage import is_room_session_key
+from openminion.modules.runtime.project_instructions import resolve_repository_root
 from .agent_sidebar import build_agent_sidebar_items, build_session_sidebar_item
 from .controls import RuntimeControlsMixin
 from .delegation import RuntimeDelegationMixin
@@ -140,19 +141,15 @@ class OpenMinionRuntime(
                 target=self._target,
                 session_id=normalized_session_id,
             )
-            self._session_id = session.id
-            self._sync_conversation_id()
-            self.restore_session_model_selection(session)
-            self.restore_session_permission_posture(session)
-            self._restore_token_usage_accounting()
+            self.bind_session(session.id)
         elif self._prompt_on_resume:
             self._ensure_agent_resolved()
             if normalized_session_id:
-                self._resolve_startup_session(normalized_session_id)
+                self.bind_session(normalized_session_id)
             else:
                 self._refresh_pending_candidate()
         elif normalized_session_id:
-            self._resolve_startup_session(normalized_session_id)
+            self.bind_session(normalized_session_id)
 
     def _select_channel_profile(self) -> object | None:
         config = getattr(self._rt, "config", None)
@@ -477,34 +474,12 @@ class OpenMinionRuntime(
                 channel=self._channel,
                 target=self._target,
             )
-            self._session_id = session.id
-            self._sync_conversation_id()
-            self.restore_session_model_selection(session)
-            self.restore_session_permission_posture(session)
-            self._restore_token_usage_accounting()
+            self.bind_session(session.id)
 
     def new_session(self) -> str:
         return self.create_new_session()
 
     def bind_session(self, session_id: str) -> None:
-        self._ensure_agent_resolved()
-        normalized_session_id = str(session_id or "").strip()
-        if not normalized_session_id:
-            raise ValueError("session_id is required")
-        record = self._rt.sessions.resolve_session(
-            agent_id=self.agent_id,
-            channel=self._channel,
-            target=self._target,
-            session_id=normalized_session_id,
-        )
-        self._session_id = record.id
-        self._sync_conversation_id()
-        self.restore_session_model_selection(record)
-        self.restore_session_permission_posture(record)
-        self._project_context_pending = False
-        self._restore_token_usage_accounting()
-
-    def _resolve_startup_session(self, session_id: str) -> None:
         self._ensure_agent_resolved()
         normalized_session_id = str(session_id or "").strip()
         if not normalized_session_id:
@@ -974,7 +949,7 @@ class OpenMinionRuntime(
         self._gateway = self._rt.resolve_gateway(self._agent_id)
 
     def _session_metadata_patch(self) -> dict[str, Any]:
-        patch: dict[str, Any] = {}
+        patch: dict[str, Any] = {"repository_root": ""}
         if self.security_lab_required:
             patch.update(
                 lab_required="true",
@@ -982,6 +957,7 @@ class OpenMinionRuntime(
                 cwd="/workspace",
             )
         elif self._working_dir:
+            patch["repository_root"] = resolve_repository_root(self._working_dir) or ""
             patch["working_dir"] = self._working_dir
             patch["workspace_root"] = self._working_dir
             patch["cwd"] = self._working_dir

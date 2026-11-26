@@ -13,6 +13,18 @@ DEFAULT_PROJECT_INSTRUCTION_FILENAME = "OPENMINION.md"
 PROJECT_INSTRUCTION_MAX_BYTES = 64 * 1024
 
 
+def resolve_repository_root(working_dir: str | Path | None) -> str | None:
+    """Resolve an explicit local checkout without granting scope from cwd."""
+    if not working_dir:
+        return None
+    workspace = Path(working_dir).expanduser()
+    if not workspace.is_absolute() or not workspace.is_dir():
+        return None
+    root = _project_root_for(workspace.resolve())
+    marker = root / ".git"
+    return str(root) if marker.is_dir() or marker.is_file() else None
+
+
 @dataclass(frozen=True)
 class ProjectInstructionTarget:
     project_root: Path
@@ -190,4 +202,5 @@ __all__ = [
     "compute_instruction_content_hash",
     "read_instruction_target_snapshot",
     "resolve_project_instruction_target",
+    "resolve_repository_root",
 ]

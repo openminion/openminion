@@ -140,6 +140,8 @@ class SkillContract(Protocol):
         scope: str = ...,
         agent_id: str | None = ...,
         authority: SkillIngestAuthority | None = ...,
+        *,
+        repository_root: str | None = None,
     ) -> tuple[str, str, list[str]]: ...
 
     def ingest_file(
@@ -150,6 +152,7 @@ class SkillContract(Protocol):
         scope: str = ...,
         agent_id: str | None = ...,
         authority: SkillIngestAuthority | None = ...,
+        repository_root: str | None = None,
     ) -> tuple[str, str, list[str]]: ...
 
     def ingest_artifact(
@@ -160,6 +163,7 @@ class SkillContract(Protocol):
         scope: str = ...,
         agent_id: str | None = ...,
         authority: SkillIngestAuthority | None = ...,
+        repository_root: str | None = None,
     ) -> tuple[str, str, list[str]]: ...
 
     def ingest_url(
@@ -170,6 +174,7 @@ class SkillContract(Protocol):
         scope: str = ...,
         agent_id: str | None = ...,
         authority: SkillIngestAuthority | None = ...,
+        repository_root: str | None = None,
     ) -> tuple[str, str, list[str]]: ...
 
     def admit_skill_version(
@@ -208,20 +213,45 @@ class SkillContract(Protocol):
         agent_id: str,
         k: int = ...,
         status_filter: StatusFilter = ...,
+        *,
+        repository_root: str | None = None,
     ) -> list[SkillMatch]: ...
 
     def catalog_summaries(
         self,
         agent_id: str,
         status_filter: StatusFilter = ...,
+        *,
+        repository_root: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
     def get_skill(
         self, skill_id: str, version_hash: str | None = ...
     ) -> SkillPackage: ...
 
+    def get_skill_owner(self, *, skill_id: str) -> dict[str, str | None] | None: ...
+
+    def get_runtime_skill(
+        self,
+        skill_id: str,
+        version_hash: str | None = None,
+        *,
+        agent_id: str,
+        repository_root: str | None = None,
+    ) -> SkillPackage: ...
+
     def list_skills(
-        self, filters: dict[str, Any] | None = ...
+        self,
+        filters: dict[str, Any] | None = ...,
+        *,
+        repository_root: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def list_pending_skill_versions(
+        self,
+        filters: dict[str, Any] | None = None,
+        *,
+        repository_root: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
     def render_snippet(
@@ -231,6 +261,9 @@ class SkillContract(Protocol):
         purpose: str,
         max_tokens: int,
         mode_name: str | None = None,
+        *,
+        agent_id: str | None = None,
+        repository_root: str | None = None,
     ) -> tuple[str, str]: ...
 
     def get_recipe(
@@ -243,6 +276,7 @@ class SkillContract(Protocol):
         agent_id: str | None = ...,
         status_filter: StatusFilter = ...,
         scope: str | None = ...,
+        repository_root: str | None = None,
     ) -> WorkflowCatalog: ...
 
     def get_workflow(
@@ -252,6 +286,7 @@ class SkillContract(Protocol):
         agent_id: str | None = ...,
         status_filter: StatusFilter = ...,
         scope: str | None = ...,
+        repository_root: str | None = None,
     ) -> WorkflowCatalogEntry: ...
 
     def lint(

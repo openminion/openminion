@@ -180,6 +180,8 @@ class SkillClient(Protocol):
         agent_id: str,
         k: int = 3,
         status_filter: list[str] | str | None = None,
+        *,
+        repository_root: str | None = None,
     ) -> list[Any]: ...
 
     def render_snippet(
@@ -188,6 +190,9 @@ class SkillClient(Protocol):
         version_hash: str | None,
         purpose: str,
         max_tokens: int,
+        *,
+        agent_id: str = "",
+        repository_root: str | None = None,
     ) -> tuple[str, str]: ...
 
 
@@ -220,6 +225,7 @@ class RLMServiceInterface(Protocol):
         constraints: "RLMConstraints | dict[str, Any] | None" = None,
         meta_directive: "MetaDirective | dict[str, Any] | None" = None,
         agent_policy: dict[str, Any] | None = None,
+        repository_root: str | None = None,
     ) -> "RLMResponse": ...
 
     def refresh_working_memory(
@@ -236,6 +242,7 @@ class RLMServiceInterface(Protocol):
         purpose: str = "act",
         strategy: Any = "auto",  # RetrievalStrategy
         filters: "RetrievalFilters | dict[str, Any] | None" = None,
+        repository_root: str | None = None,
     ) -> list["RetrievedContext"]: ...
 
     def expand(self, ref: str, mode: str, k: int) -> list["RetrievedContext"]: ...

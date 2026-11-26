@@ -21,6 +21,7 @@ from openminion.base.config.action_policy import (
 )
 from openminion.base.types import AgentResponse, Message
 from openminion.modules.brain.runner import BrainRunner
+from openminion.modules.runtime.project_instructions import resolve_repository_root
 from openminion.modules.brain.loop.services import turn_tool_scope
 from openminion.modules.brain.loop.tools.transcript import (
     persist_interrupted_tool_calls,
@@ -49,7 +50,7 @@ from openminion.services.security.tool_execution import (
     build_execution_boundary_policy_adapter,
 )
 from openminion.services.agent.execution.composition import AgentServiceTurnFlowAdapter
-from openminion.services.agent.identity_binding import issue_execution_identity
+from openminion.services.agent.identity_binding import apply_execution_identity
 from openminion.modules.telemetry.execution_lifecycle import AgentExecutionTelemetry
 
 
@@ -78,6 +79,9 @@ def _bind_tool_workspace_root(
     tool_api: Any | None,
     metadata_source: Mapping[str, Any],
     added_roots: tuple[Path, ...],
+    *,
+    runtime: Any | None = None,
+    runtime_session_id: str = "",
 ) -> Any:
     if tool_api is None:
         return nullcontext()
@@ -87,10 +91,14 @@ def _bind_tool_workspace_root(
     workspace_path = (
         Path(workspace_root).expanduser() if workspace_root else tool_api.workspace_root
     )
+    session = runtime.sessions.get_session(runtime_session_id) if runtime else None
     return tool_api.workspace_override(
         workspace_path,
         added_roots=added_roots,
         security_scan_context=metadata_source.get("security_scan_context"),
+        repository_root=resolve_repository_root(
+            session.metadata.get("repository_root") if session else None
+        ),
     )
 
 
@@ -467,42 +475,10 @@ class BrainBridgeTurnMixin:
             str(metadata_source.get("pae_idle_tick", "")).strip().lower() == "true"
         )
         if is_pae_idle_tick:
-            from openminion.modules.brain.loop.continuation import (
-                run_with_autonomous_continuation,
-            )
-
-            options = getattr(runner, "options", None)
-            return run_with_autonomous_continuation(
-                runner,
-                session_id=session_id,
-                user_input=None,
-                trace_id=request_id,
-                forced_tools=forced_tools,
-                capability_category=capability_category,
-                max_per_plan=int(
-                    getattr(
-                        options,
-                        "autonomous_continuation_max_per_plan",
-                        10,
-                    )
-                    or 10
-                ),
-                max_per_session=int(
-                    getattr(
-                        options,
-                        "autonomous_continuation_max_per_session",
-                        20,
-                    )
-                    or 20
-                ),
-                progress_callback=progress_callback,
-                approval_callback=approval_callback,
-                initial_trigger="idle_tick",
-                **turn_kwargs,
-            )
+            turn_kwargs["initial_trigger"] = "idle_tick"
         options = getattr(runner, "options", None)
         ctgp_enabled = bool(getattr(options, "autonomous_continuation_enabled", True))
-        if ctgp_enabled:
+        if is_pae_idle_tick or ctgp_enabled:
             from openminion.modules.brain.loop.continuation import (
                 run_with_autonomous_continuation,
             )
@@ -510,7 +486,7 @@ class BrainBridgeTurnMixin:
             return run_with_autonomous_continuation(
                 runner,
                 session_id=session_id,
-                user_input=message.body,
+                user_input=None if is_pae_idle_tick else message.body,
                 trace_id=request_id,
                 forced_tools=forced_tools,
                 capability_category=capability_category,
@@ -558,10 +534,7 @@ class BrainBridgeTurnMixin:
         runtime_session_id, brain_session_id = self._resolve_turn_session_ids(
             message=message
         )
-        invocation_id, execution_id, invocation_scope = issue_execution_identity(
-            message.metadata
-        )
-        message.metadata.update(invocation_id=invocation_id, execution_id=execution_id)
+        apply_execution_identity(message.metadata)
         resolved_capability_category = str(capability_category or "").strip() or None
         self._logger.info(
             "BrainBridgeService handling turn for runtime_session=%s brain_session=%s forced_tools=%s capability_category=%s",
@@ -580,7 +553,11 @@ class BrainBridgeTurnMixin:
         )
         runner, session_id, request_id, turn_id, turn_start_time = prepared
         workspace_scope = _bind_tool_workspace_root(
-            getattr(runner, "tool_api", None), message.metadata, added_roots
+            getattr(runner, "tool_api", None),
+            message.metadata,
+            added_roots,
+            runtime=self._runtime_handle,
+            runtime_session_id=runtime_session_id,
         )
         message.metadata.update(session_id=session_id, turn_id=turn_id)
         telemetry = AgentExecutionTelemetry(self, inbound=message)
@@ -641,9 +618,8 @@ class BrainBridgeTurnMixin:
                     active_exception=exc,
                 )
             raise
-        response.metadata.setdefault("invocation_id", invocation_id)
-        response.metadata.setdefault("execution_id", execution_id)
-        response.metadata.setdefault("invocation_scope", invocation_scope)
+        for key in ("invocation_id", "execution_id", "invocation_scope"):
+            response.metadata.setdefault(key, message.metadata[key])
         return await telemetry.finish(response)
 
 

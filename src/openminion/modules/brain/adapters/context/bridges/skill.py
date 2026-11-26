@@ -48,6 +48,8 @@ class BridgeSkillClient:
         agent_id: str | None = None,
         k: int = 3,
         status_filter: list[str] | str | None = None,
+        *,
+        repository_root: str | None = None,
     ) -> list[dict[str, Any]]:
         skill_svc = self._resolve_skillctl()
         if skill_svc is None:
@@ -59,6 +61,7 @@ class BridgeSkillClient:
                 agent_id=agent_id,
                 k=k,
                 status_filter=status_filter,
+                repository_root=repository_root,
             )
             return [
                 {
@@ -76,6 +79,8 @@ class BridgeSkillClient:
         self,
         agent_id: str,
         status_filter: list[str] | str | None = None,
+        *,
+        repository_root: str | None = None,
     ) -> list[dict[str, Any]]:
         skill_svc = self._resolve_skillctl()
         if skill_svc is None:
@@ -84,6 +89,7 @@ class BridgeSkillClient:
             summaries = skill_svc.catalog_summaries(
                 agent_id=agent_id,
                 status_filter=status_filter,
+                repository_root=repository_root,
             )
             return [
                 {
@@ -113,6 +119,9 @@ class BridgeSkillClient:
         purpose: str = "act",
         max_tokens: int = 500,
         mode_name: str | None = None,
+        *,
+        agent_id: str = "",
+        repository_root: str | None = None,
     ) -> tuple[str, str]:
         skill_svc = self._resolve_skillctl()
         if skill_svc is None:
@@ -124,6 +133,8 @@ class BridgeSkillClient:
                 purpose=purpose,
                 max_tokens=max_tokens,
                 mode_name=mode_name,
+                agent_id=agent_id,
+                repository_root=repository_root,
             )
             return str(text), str(hash_val)
         except Exception:

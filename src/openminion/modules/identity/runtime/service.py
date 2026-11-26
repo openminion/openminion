@@ -86,7 +86,7 @@ class IdentityCtl:
             "render_version": self.render_version,
             "bullet_prefix": self.bullet_prefix,
             "section_headers": self.section_headers,
-            "algorithm": "identityctl-render-v1",
+            "algorithm": "identityctl-render-v2",
             "section_order": [
                 "role.mission",
                 "role.hard_constraints",

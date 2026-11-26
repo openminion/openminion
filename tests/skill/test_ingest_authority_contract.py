@@ -118,6 +118,7 @@ def test_ingest_rejects_cross_agent_skill_id_takeover_without_fallback(
         assert ctl.get_skill_owner(skill_id=skill_id) == {
             "scope": "agent",
             "agent_id": "agent-a",
+            "repository_root": None,
         }
         assert ctl.get_skill(skill_id).version_hash == version
         assert (

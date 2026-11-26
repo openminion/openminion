@@ -15,6 +15,10 @@ from openminion.modules.brain.loop.context.pending_turn import (
     PENDING_TURN_CONTEXT_MAX_STALE_TURNS,
 )
 from openminion.modules.brain.schemas import BudgetCounters, ToolCommand, WorkingState
+from openminion.modules.brain.adapters.tool.runtime import (
+    ToolAdapter,
+    current_repository_root,
+)
 from openminion.modules.tool import ToolRegistry, ToolSpec
 from openminion.modules.tool.diagnostics.events import structural_tool_result
 from openminion.modules.storage.runtime.migrations import migrate_database
@@ -37,7 +41,7 @@ from tests._csc_fixtures import _csc_install_default_agent
 
 
 class DummyBridge(BrainBridgeTurnMixin):
-    pass
+    _runtime_handle = None
 
 
 class _NoArgs(BaseModel):
@@ -370,11 +374,40 @@ def test_resolve_turn_session_ids_defaults_to_runtime_session() -> None:
     assert brain_session_id == "s1"
 
 
-def test_run_turn_accepts_and_forwards_approval_callback() -> None:
+@pytest.mark.parametrize("binding", ["repository", "non_git", "missing"])
+def test_run_turn_accepts_and_forwards_approval_callback(tmp_path, binding) -> None:
     bridge = DummyBridge()
     bridge._logger = SimpleNamespace(info=lambda *args, **kwargs: None)  # type: ignore[attr-defined]
-    message = Message(channel="console", target="focus", body="hello")
-    runner = SimpleNamespace()
+    trusted = tmp_path / "trusted"
+    trusted.mkdir()
+    if binding == "repository":
+        (trusted / ".git").mkdir()
+    forged = tmp_path / "forged"
+    forged.mkdir()
+    (forged / ".git").mkdir()
+    message = Message(
+        channel="console",
+        target="focus",
+        body="hello",
+        metadata={
+            "session_id": "runtime-session",
+            "workspace_root": str(forged),
+        },
+    )
+
+    def get_session(session_id):
+        assert session_id == "runtime-session"
+        return (
+            SimpleNamespace(metadata={"repository_root": str(trusted)})
+            if binding != "missing"
+            else None
+        )
+
+    bridge._runtime_handle = SimpleNamespace(
+        sessions=SimpleNamespace(get_session=get_session)
+    )
+    adapter = ToolAdapter(workspace_root=forged, artifactctl=SimpleNamespace())
+    runner = SimpleNamespace(tool_api=adapter)
     approval_callback = object()
     captured: dict[str, object] = {}
 
@@ -383,6 +416,7 @@ def test_run_turn_accepts_and_forwards_approval_callback() -> None:
 
     def _execute_turn(**kwargs):
         captured["approval_callback"] = kwargs.get("approval_callback")
+        captured["repository_root"] = current_repository_root()
         return SimpleNamespace(message="done")
 
     async def _postprocess_turn(**_kwargs):
@@ -400,7 +434,12 @@ def test_run_turn_accepts_and_forwards_approval_callback() -> None:
     )
 
     assert captured["approval_callback"] is approval_callback
+    assert captured["repository_root"] == (
+        str(trusted) if binding == "repository" else None
+    )
+    assert current_repository_root() is None
     assert response.text == "done"
+    adapter.close()
 
 
 def test_execute_turn_forwards_explicit_runtime_conversation_id() -> None:

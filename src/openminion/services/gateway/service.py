@@ -559,6 +559,7 @@ class GatewayService:
         try:
             session_metadata = dict(inbound_metadata or {})
             session_metadata.pop("openminion_ephemeral_workspace_roots", None)
+            session_metadata.pop("repository_root", None)
             if session_metadata:
                 resolved_session = self._sessions.update_session_metadata(
                     session_id=session_value,
