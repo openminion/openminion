@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `docs/telemetry-export-quickstarts.md` now states the local trace-artifact contract:
+  opt-in recording under `<data_root>/traces`, the `0700`/`0600` protected layout, the
+  raw `json_body` next to a parsed `json` with redaction limited to URL and headers, the
+  absence of an artifact export path in the current source, and invocation-scoped
+  deletion that is not an operator command and has no time-to-live. (Refs #642)
+
 - `import_omx` and `export_omx` now confine table payload paths inside `omx_dir`
   (normalizing Windows separators while rejecting `..` escapes, absolute paths, and
   external symlinks), prepare quoted table/column SQL identifiers (`_quote_ident`),
