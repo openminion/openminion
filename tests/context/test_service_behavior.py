@@ -21,6 +21,7 @@ from openminion.modules.context.constants import JUDGE_ACTION_OUTPUTS_MAX_CHARS
 from openminion.modules.context.pack.finalize import selected_memory_record_ids
 from openminion.modules.context.contracts import PluginRegistry
 from openminion.modules.context.service import ContextCtlService
+from openminion.modules.memory.surfacing.evidence import MemoryContextSpan
 
 
 class _IdentityClient:
@@ -1639,6 +1640,46 @@ class CacheBehaviorTests(unittest.TestCase):
         self.assertIs(first, same)
         self.assertIs(first, padded)
         self.assertEqual(len(service._cache), 1)
+
+    def test_gateway_record_provenance_is_post_budget_and_does_not_change_text(self):
+        text = "record one\n" + "long record two " * 100
+        request = _make_request().model_copy(update={"gateway_system_context": text})
+        without_spans = _make_service().build_pack(request)
+        request.gateway_memory_spans = [
+            MemoryContextSpan(record_id="retained", start=0, end=10),
+            MemoryContextSpan(record_id="clipped", start=11, end=len(text)),
+        ]
+        with_spans = _make_service().build_pack(request)
+        self.assertEqual(
+            [(message.role, message.content) for message in without_spans.messages],
+            [(message.role, message.content) for message in with_spans.messages],
+        )
+        self.assertIn("retained", with_spans.context_manifest.memory)
+        self.assertNotIn("clipped", with_spans.context_manifest.memory)
+        self.assertIn(
+            "retained", selected_memory_record_ids(with_spans.context_manifest)
+        )
+
+    def test_gateway_provenance_change_invalidates_cache_without_changing_prompt(self):
+        service = _make_service()
+        request = _make_request().model_copy(
+            update={"gateway_system_context": "same text"}
+        )
+        request.gateway_memory_spans = [
+            MemoryContextSpan(record_id="first", start=0, end=9)
+        ]
+        first = service.build_pack(request)
+        request.gateway_memory_spans = [
+            MemoryContextSpan(record_id="second", start=0, end=9)
+        ]
+        second = service.build_pack(request)
+        self.assertEqual(
+            [(message.role, message.content) for message in first.messages],
+            [(message.role, message.content) for message in second.messages],
+        )
+        self.assertNotEqual(first.pack_version, second.pack_version)
+        self.assertIn("second", second.context_manifest.memory)
+        self.assertNotIn("first", second.context_manifest.memory)
 
     def test_gateway_context_identity_keeps_unrelated_cache_misses(self) -> None:
         service = _make_service()

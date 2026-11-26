@@ -85,6 +85,7 @@ def _inject_memory_context(
     target: str,
     session_id: str,
     memory_context: str,
+    memory_context_spans: str = "[]",
 ) -> list[Message]:
     context_text = str(memory_context or "").strip()
     if not context_text:
@@ -96,6 +97,7 @@ def _inject_memory_context(
             merged_metadata = dict(first.metadata)
             merged_metadata["memory_scope"] = "agent_canonical"
             merged_metadata["context_memory_merged"] = "true"
+            merged_metadata["memory_context_spans"] = memory_context_spans
             history[0] = Message(
                 channel=first.channel,
                 target=first.target,
@@ -116,6 +118,7 @@ def _inject_memory_context(
                 "role": "system",
                 "session_id": session_id,
                 "memory_scope": "agent_canonical",
+                "memory_context_spans": memory_context_spans,
             },
         ),
     )

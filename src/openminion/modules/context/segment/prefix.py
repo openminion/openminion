@@ -142,15 +142,26 @@ def _mode_context_lines(
     return lines
 
 
-def _gateway_block(runtime: _SegmentAssemblyRuntime, request: BuildPackRequest) -> str:
+def _gateway_block(
+    runtime: _SegmentAssemblyRuntime, request: BuildPackRequest
+) -> tuple[str, list[str]]:
     gateway_ctx = request.gateway_system_context.strip()
     if not gateway_ctx:
-        return ""
-    return runtime.fit_section(
+        return "", []
+    fitted = runtime.fit_section(
         "gateway_context",
         gateway_ctx,
         max(8, runtime.budgets.instructions_tokens),
     )
+    refs = list(
+        dict.fromkeys(
+            span.record_id
+            for span in request.gateway_memory_spans
+            if span.end <= len(gateway_ctx)
+            and fitted.startswith(gateway_ctx[: span.end])
+        )
+    )
+    return fitted, refs
 
 
 def _mission_content(
@@ -162,7 +173,7 @@ def _mission_content(
     session_slice: SessionSlice,
     state_lines: list[str],
     build_clarify_digest: Callable[[dict[str, Any] | None], str],
-) -> str:
+) -> tuple[str, list[str]]:
     clarify_digest = build_clarify_digest(session_slice.active_state)
     clarify_block = (
         runtime.fit_section(
@@ -183,7 +194,7 @@ def _mission_content(
         constraints=constraints,
         prompt_tool_schemas=prompt_tool_schemas,
     )
-    gateway_block = _gateway_block(runtime, request)
+    gateway_block, gateway_refs = _gateway_block(runtime, request)
     return "\n\n".join(
         filter(
             None,
@@ -204,7 +215,7 @@ def _mission_content(
                 else "",
             ],
         )
-    )
+    ), gateway_refs
 
 
 def _append_mission_snapshot(
@@ -217,7 +228,7 @@ def _append_mission_snapshot(
     state_lines: list[str],
     build_clarify_digest: Callable[[dict[str, Any] | None], str],
 ) -> None:
-    mission_content = _mission_content(
+    mission_content, gateway_refs = _mission_content(
         runtime,
         request=request,
         constraints=constraints,
@@ -231,7 +242,11 @@ def _append_mission_snapshot(
     runtime.bucket_stats["mission_snapshot"] = {"total_available": 1, "dropped": 0}
     runtime.segments.append(
         runtime.make(
-            "mission_snapshot", "mission_snapshot", mission_content, pinned=True
+            "mission_snapshot",
+            "mission_snapshot",
+            mission_content,
+            pinned=True,
+            refs=gateway_refs,
         )
     )
 

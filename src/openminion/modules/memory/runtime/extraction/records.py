@@ -1,8 +1,11 @@
+"""Extract explicit memory facts and render record context."""
+
 from dataclasses import dataclass
 import re
 from typing import Any
 
 from openminion.modules.memory.models import MemoryType
+from openminion.modules.memory.surfacing.evidence import MemoryContextSpan
 from openminion.modules.memory.runtime.extraction.text import (
     _FACT_INLINE_RE,
     _FACT_PREFIX_RE,
@@ -87,6 +90,7 @@ def _format_records_as_context(
     *,
     header: str,
     max_chars: int,
+    spans: list[MemoryContextSpan] | None = None,
 ) -> str:
     if not records:
         return ""
@@ -113,6 +117,15 @@ def _format_records_as_context(
         if len("\n".join([*lines, line])) > max_chars:
             omitted = True
             continue
+        if spans is not None and text:
+            record_id = str(getattr(rec, "id", "") or "").strip()
+            if record_id:
+                start = len("\n".join(lines)) + 1
+                spans.append(
+                    MemoryContextSpan(
+                        record_id=record_id, start=start, end=start + len(line)
+                    )
+                )
         lines.append(line)
     marker = "  [additional records omitted by context budget]"
     if omitted and len("\n".join([*lines, marker])) <= max_chars:

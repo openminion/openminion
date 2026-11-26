@@ -1,5 +1,9 @@
 from openminion.modules.artifact.models import ImageInputContext
 from openminion.modules.llm.schemas import LLMRequest, LLMResponse
+from openminion.modules.memory.surfacing.evidence import (
+    MemoryContextSpan,
+    parse_memory_context_spans,
+)
 import asyncio
 import concurrent.futures
 import inspect
@@ -254,7 +258,10 @@ class BrainBridgeTurnMixin:
         history: list[Message],
     ) -> tuple[str, str]:
         runtime_system_prompt = self._runtime_system_prompt(user_message=message.body)
-        gateway_system_context = self._collect_system_history_context(history=history)
+        spans: list[MemoryContextSpan] = []
+        gateway_system_context = self._collect_system_history_context(
+            history=history, spans=spans
+        )
         runtime_memory_context = self._build_runtime_memory_context(
             runner=runner,
             session_id=session_id,
@@ -262,16 +269,21 @@ class BrainBridgeTurnMixin:
             history=history,
         )
         if runtime_memory_context:
+            offset = len(gateway_system_context) + 2 if gateway_system_context else 0
+            spans.extend(
+                parse_memory_context_spans(
+                    runner._pending_memory_context_meta,
+                    context_length=len(runtime_memory_context),
+                    offset=offset,
+                )
+            )
             gateway_system_context = "\n\n".join(
                 item
                 for item in (gateway_system_context, runtime_memory_context)
                 if item
             )
-        if gateway_system_context:
-            try:
-                runner._pending_gateway_system_context = gateway_system_context
-            except Exception:  # noqa: BLE001
-                pass
+        runner._pending_gateway_system_context = gateway_system_context
+        runner._pending_gateway_memory_spans = [span.model_dump() for span in spans]
         return self._prepare_runtime_system_prompt(
             runner=runner,
             session_id=session_id,

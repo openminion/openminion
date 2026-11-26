@@ -1297,6 +1297,39 @@ def test_prepare_turn_injects_runtime_memory_context_for_in_process_bridge() -> 
     assert "scoped-agent@example.com" in runner._pending_gateway_system_context
 
 
+def test_runtime_memory_spans_follow_gateway_prefix_and_clear_with_empty_memory():
+    bridge = DummyBridge()
+    bridge._runtime_system_prompt = lambda **_: "system"
+    bridge._prepare_runtime_system_prompt = lambda **_: "system"
+    bridge._collect_system_history_context = lambda **_: "prefix"
+    runner = SimpleNamespace(
+        memory_api=_DummyMemoryApi(
+            "record text",
+            meta={
+                "memory_context_spans": json.dumps(
+                    [{"record_id": "record-id", "start": 0, "end": 11}]
+                )
+            },
+        )
+    )
+    args = dict(
+        runner=runner,
+        session_id="session",
+        history=[],
+        message=Message(channel="console", target="user", body="recall"),
+    )
+    _, context = bridge._prepare_runtime_contexts(**args)
+    assert context == "prefix\n\nrecord text"
+    assert runner._pending_gateway_memory_spans == [
+        {"record_id": "record-id", "start": 8, "end": 19}
+    ]
+    runner.memory_api = None
+    bridge._collect_system_history_context = lambda **_: ""
+    _, context = bridge._prepare_runtime_contexts(**args)
+    assert context == runner._pending_gateway_system_context == ""
+    assert runner._pending_gateway_memory_spans == []
+
+
 def test_prepare_turn_adds_descriptive_prior_context_grounding_when_flagged() -> None:
     bridge = DummyBridge()
     runner = SimpleNamespace(

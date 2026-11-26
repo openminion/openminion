@@ -48,6 +48,8 @@ def _adaptive_loop_metadata(ctx: ExecutionContext, *, purpose: str) -> dict[str,
     metadata = build_loop_thinking_metadata(ctx, purpose=purpose)
     metadata["session_id"] = str(ctx.state.session_id or "")
     if purpose == "act":
+        if ctx.context_llm_call_id:
+            metadata["context_llm_call_id"] = ctx.context_llm_call_id
         metadata[EXPECTED_TRAILERS_METADATA_KEY] = [
             TRAILER_LANE_MACC,
             TRAILER_LANE_SWSC,

@@ -143,6 +143,7 @@ class ContextCtlAdapter(ContextAPI):
             live_state_overlay=live_state_overlay,
             phase_hints=phase_hints,
             gateway_system_context=gateway_system_context,
+            gateway_memory_spans=hints.get("gateway_memory_spans", []),
             self_awareness=_dict_hint(hints, "self_awareness"),
         )
         pack = self.service.build_pack(req)

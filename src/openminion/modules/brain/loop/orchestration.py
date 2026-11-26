@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from openminion.modules.brain.adapters.llm.request import (
+    _context_manifest,
     _insert_retry_system_message,
 )
 from openminion.modules.brain.bootstrap.context import _inject_decide_prompt_contract
@@ -624,6 +625,7 @@ def decide(
     has_real_tools = any(spec.name != "clarify" for spec in tool_specs)
     entry_metadata: dict[str, Any] = {
         "purpose": "entry",
+        "context_llm_call_id": _context_manifest(context).get("llm_call_id"),
         "mode_name": "act",
         "agent_id": state.agent_id,
         "trace_id": state.trace_id,
@@ -664,7 +666,7 @@ def decide(
                     model=model,
                     tool_choice="auto" if tool_specs else "none",
                     max_output_tokens=budget_max_tokens,
-                    metadata=entry_metadata,
+                    metadata={**entry_metadata, "llm_call_id": call_id},
                 )
             except Exception as exc:  # noqa: BLE001
                 if isinstance(exc, TaskContextBudgetError):
@@ -891,13 +893,12 @@ def decide(
         return task_error
 
     if last_detection.path == "clarify":
-        decision = RespondDecision(
+        return RespondDecision(
             confidence=0.5,
             reason_code="entry_clarify",
             respond_kind="clarify",
             question=last_detection.clarify_question,
         )
-        return decision
     if last_detection.path == "respond":
         decision = _respond_decision(
             confidence=0.5,

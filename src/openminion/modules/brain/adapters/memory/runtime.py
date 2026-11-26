@@ -1,4 +1,7 @@
+"""Memory runtime adapter for brain and gateway callers."""
+
 import hashlib
+import json
 import re
 import uuid
 from datetime import datetime, timezone
@@ -16,6 +19,7 @@ from openminion.modules.memory.storage.base import (
     ListQueryOptions,
     SearchQueryOptions,
 )
+from openminion.modules.memory.surfacing.evidence import MemoryContextSpan
 from openminion.modules.tool import (
     MemoryAccessContext,
     MemoryToolRuntimeService,
@@ -486,6 +490,7 @@ class MemctlAdapter:
         session_id: str,
         user_message: str,
         limit: int,
+        spans: list[MemoryContextSpan] | None = None,
     ) -> str:
         facts = self.query_facts(
             session_id=session_id,
@@ -520,7 +525,16 @@ class MemctlAdapter:
         for item in facts:
             text = str(item.get("text", "")).strip()
             if text:
-                lines.append(f"- {text}")
+                line = f"- {text}"
+                record_id = str(item.get("record_id", "") or "").strip()
+                if spans is not None and record_id:
+                    start = len("\n".join(lines)) + 1
+                    spans.append(
+                        MemoryContextSpan(
+                            record_id=record_id, start=start, end=start + len(line)
+                        )
+                    )
+                lines.append(line)
         return "\n".join(lines).strip()
 
     def build_context(self, *, session_id: str, user_message: str) -> str:
@@ -556,12 +570,21 @@ class MemctlAdapter:
         session_id: str,
         user_message: str,
     ) -> tuple[str, dict[str, str]]:
-        text = self.build_context(session_id=session_id, user_message=user_message)
-        return text, self._context_metadata(
+        spans: list[MemoryContextSpan] = []
+        text = self._build_capsule_text(
+            lane="capsule",
+            session_id=session_id,
+            user_message=user_message,
+            limit=6,
+            spans=spans,
+        )
+        meta = self._context_metadata(
             lane="capsule",
             limit_chars="1600",
             text=text,
         )
+        meta["memory_context_spans"] = json.dumps([span.model_dump() for span in spans])
+        return text, meta
 
     def build_retrieval_context(
         self,

@@ -1,3 +1,6 @@
+"""Build agent memory capsules and retrieval evidence."""
+
+import json
 import logging
 from typing import Any, Callable, Mapping
 
@@ -24,6 +27,7 @@ from openminion.modules.memory.runtime.retrieval_eligibility import (
     retrieval_eligibility,
 )
 from openminion.modules.memory.surfacing.evidence import (
+    MemoryContextSpan,
     MemoryEvidenceOmission,
     MemoryRetrievalEvidenceSelection,
     build_memory_retrieval_items,
@@ -314,38 +318,48 @@ class ContextBuildersMixin:
         agent_summary_records: list[Any],
         current_session_summary_records: list[Any],
         session_records: list[Any],
+        spans: list[MemoryContextSpan] | None = None,
     ) -> tuple[str, str, str, str]:
-        parts: list[str] = []
+        parts: list[tuple[str, list[MemoryContextSpan]]] = []
+        recent_spans: list[MemoryContextSpan] = []
         recent_section = self._format_session_summaries(
             recent_summaries,
             max_chars=limit // 4,
+            spans=recent_spans,
         )
         if recent_section:
-            parts.append(recent_section)
+            parts.append((recent_section, recent_spans))
+        agent_spans: list[MemoryContextSpan] = []
         agent_section = _format_records_as_context(
             agent_records,
             header="## Agent Memory",
             max_chars=limit // 2,
+            spans=agent_spans,
         )
         if agent_section:
-            parts.append(agent_section)
+            parts.append((agent_section, agent_spans))
+        session_spans: list[MemoryContextSpan] = []
         session_section = _format_records_as_context(
             session_records,
             header="## Session Memory",
             max_chars=limit // 2,
+            spans=session_spans,
         )
         if session_section:
-            parts.append(session_section)
+            parts.append((session_section, session_spans))
         current_section = ""
+        current_spans: list[MemoryContextSpan] = []
         if current_session_summary_records:
             current_section = self._format_session_summaries(
                 current_session_summary_records,
                 max_chars=limit // 4,
                 current_session=True,
+                spans=current_spans,
             )
         if current_section:
-            parts.append(current_section)
+            parts.append((current_section, current_spans))
         recalled_section = ""
+        recalled_spans: list[MemoryContextSpan] = []
         if (
             session_id not in self._preamble_shown
             and not recent_section
@@ -355,10 +369,28 @@ class ContextBuildersMixin:
             recalled_section = self._format_session_summaries(
                 agent_summary_records,
                 max_chars=limit // 4,
+                spans=recalled_spans,
             )
         if recalled_section:
-            parts.append(recalled_section)
-        return "\n\n".join(parts), recent_section, current_section, recalled_section
+            parts.append((recalled_section, recalled_spans))
+        if spans is not None:
+            offset = 0
+            for section, section_spans in parts:
+                spans.extend(
+                    MemoryContextSpan(
+                        record_id=span.record_id,
+                        start=offset + span.start,
+                        end=offset + span.end,
+                    )
+                    for span in section_spans
+                )
+                offset += len(section) + 2
+        return (
+            "\n\n".join(section for section, _section_spans in parts),
+            recent_section,
+            current_section,
+            recalled_section,
+        )
 
     def _memory_hits_from_records(self, records: list[Any]) -> list[dict[str, Any]]:
         memory_hits: list[dict[str, Any]] = []
@@ -657,6 +689,7 @@ class ContextBuildersMixin:
         meta = build_empty_meta("capsule", limit)
         meta["memory_context_status"] = "healthy"
         meta["memory_context_reason"] = "built"
+        meta["memory_context_spans"] = "[]"
 
         try:
             self._maybe_run_session_lifecycle(session_id=session_id)
@@ -675,6 +708,7 @@ class ContextBuildersMixin:
                 query_text=query_text,
                 first_turn=first_turn,
             )
+            spans: list[MemoryContextSpan] = []
             (
                 content,
                 recent_section,
@@ -688,6 +722,7 @@ class ContextBuildersMixin:
                 agent_summary_records=agent_summary_records,
                 current_session_summary_records=current_session_summary_records,
                 session_records=session_records,
+                spans=spans,
             )
             if len(content) > limit:
                 content = content[:limit]
@@ -730,6 +765,9 @@ class ContextBuildersMixin:
                 },
             )
 
+            meta["memory_context_spans"] = json.dumps(
+                [span.model_dump() for span in spans if span.end <= len(content)]
+            )
             return content, meta
 
         except Exception as exc:

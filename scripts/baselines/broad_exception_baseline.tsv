@@ -44,6 +44,7 @@ src/openminion/cli/interactive/runtime/controls.py	1	1	current broad-handler bas
 src/openminion/cli/interactive/terminal/composer.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/interactive/terminal/shell/__init__.py	5	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/interactive/terminal/shell/actions.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/cli/interactive/terminal/shell/progress.py	1	0	moved existing terminal status rendering boundary; no additional exception recovery
 src/openminion/cli/interactive/terminal/shell/renderers.py	5	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/interactive/terminal/shell/sessions.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/interactive/terminal/streaming.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
@@ -320,9 +321,9 @@ src/openminion/services/brain/client.py	1	0	current broad-handler baseline; ratc
 src/openminion/services/brain/factory/retrieve.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/brain/factory/rlm.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/brain/metadata.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/services/brain/post_execution/context.py	11	5	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/services/brain/post_execution/context.py	6	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/brain/post_execution/followup.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/services/brain/post_execution/mixin.py	2	1	AOBS/TCPL brain-bridge failure telemetry boundary; ratchet by narrowing in post-execution cleanup
+src/openminion/services/brain/post_execution/mixin.py	1	0	AOBS/TCPL brain-bridge failure telemetry boundary; ratchet by narrowing in post-execution cleanup
 src/openminion/services/brain/post_execution/reset.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/brain/post_execution/usage.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/brain/service.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
@@ -408,4 +409,3 @@ src/openminion/tools/weather/plugin.py	2	0	current broad-handler baseline; ratch
 src/openminion/tools/weather/providers/openmeteo/plugin.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/weather/providers/openmeteo/runtime.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/weather/providers/weatherapi/provider.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/cli/interactive/terminal/shell/progress.py	1	0	moved existing terminal status rendering boundary; no additional exception recovery
