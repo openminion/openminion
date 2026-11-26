@@ -256,6 +256,7 @@ def repair_runtime(tmp_path):
         ("code.patch", {"path": "verify.py", "patch": "@@ -1 +1 @@\n-x\n+y\n"}),
         ("exec.run", {"command": "touch forbidden"}),
         ("git.commit", {"message": "unapproved"}),
+        ("task.delegate", {"mode": "list", "agent_id": "child", "limit": 20}),
         (
             "task.delegate",
             {"mode": "async", "agent_id": "child", "instruction": "escape"},
@@ -535,3 +536,480 @@ def test_security_repair_child_transport_enforces_canonical_lease(
         )
     finally:
         a2a.close()
+
+
+@pytest.mark.parametrize(
+    "task_id,agent_id,restricted",
+    [
+        ("repair-task", "parent", True),
+        ("repair-task", "foreign", False),
+        ("missing-task", "parent", False),
+        ("generic-task", "parent", False),
+        (None, "parent", False),
+    ],
+)
+def test_security_repair_delegate_schema_uses_canonical_owner(
+    repair_runtime, task_id, agent_id, restricted
+):
+    from openminion.modules.brain.loop.tools.runtime import build_runtime_tool_specs
+
+    if task_id == "generic-task":
+        repair_runtime.manager.create_task(
+            session_id="parent-session",
+            mode_name="project",
+            goal="Generic project",
+            agent_id="parent",
+            task_id=task_id,
+            metadata={"security_repair": {"operator_approved": True}},
+        )
+    adapter = repair_runtime.adapter
+    adapter.agent_id = agent_id
+    runner = SimpleNamespace(tool_api=adapter)
+    metadata = {
+        "project_task_id": task_id,
+        "security_repair": {"operator_approved": True},
+    }
+    specs = build_runtime_tool_specs(
+        runner, allowed_tools=frozenset({"task.delegate"}), metadata=metadata
+    )
+    mode = specs[0].input_schema["properties"]["mode"]
+    if restricted:
+        assert mode["enum"] == ["sync", "review", "accept", "reject"]
+        assert "list" not in mode["description"]
+    else:
+        assert "enum" not in mode
+        assert "list" in mode["description"]
+    generic = build_runtime_tool_specs(
+        runner, allowed_tools=frozenset({"task.delegate"})
+    )
+    assert "enum" not in generic[0].input_schema["properties"]["mode"]
+
+
+@pytest.mark.parametrize("replay", [False, True])
+@pytest.mark.parametrize("mode", ["list", "async", "status", "result", "cancel"])
+def test_security_repair_delegate_denied_before_confirmation(
+    repair_runtime, mode, replay
+):
+    from unittest.mock import Mock
+    from openminion.modules.brain.runner.delegates import _approve_delegate
+    from openminion.modules.brain.schemas import (
+        BudgetCounters,
+        PolicyDecision,
+        ToolCommand,
+        WorkingState,
+    )
+
+    runner = SimpleNamespace(
+        task_manager=repair_runtime.manager,
+        policy_api=Mock(),
+        _approval_callback=Mock(side_effect=AssertionError("unsupported approval")),
+    )
+    runner.policy_api.evaluate.return_value = PolicyDecision(
+        outcome="REQUIRE_CONFIRMATION", approval_id="unreachable"
+    )
+    state = WorkingState(
+        budgets_remaining=BudgetCounters(
+            ticks=5, tool_calls=5, a2a_calls=2, tokens=5000, time_ms=60000
+        ),
+        session_id="parent-session",
+        agent_id="parent",
+        resume_task_id_hint="repair-task",
+    )
+    command = ToolCommand(
+        title="delegate", tool_name="task.delegate", args={"mode": mode}
+    )
+    if replay:
+        command.inputs.update(
+            confirmation_source="policy_replay",
+            confirmation_grant_id="local-confirmation-test",
+        )
+        state.local_confirmation_command_ids.append(command.command_id)
+    result = _approve_delegate(runner, state=state, command=command, logger=Mock())
+    assert result.title == "Policy denied"
+    assert state.pending_policy_approval_id is None
+    assert state.pending_confirmation_command is None
+    assert state.local_confirmation_command_ids == []
+    runner.policy_api.evaluate.assert_not_called()
+    runner._approval_callback.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "task_id,agent_id,mode",
+    [("repair-task", "parent", mode) for mode in ("sync", "review", "accept", "reject")]
+    + [(None, "parent", "list"), ("repair-task", "foreign", "list")],
+)
+def test_security_repair_supported_and_generic_delegation_keep_confirmation(
+    repair_runtime, task_id, agent_id, mode
+):
+    from unittest.mock import Mock
+    from openminion.modules.brain.runner.delegates import _approve_delegate
+    from openminion.modules.brain.schemas import (
+        BudgetCounters,
+        PolicyDecision,
+        ToolCommand,
+        WorkingState,
+    )
+
+    runner = SimpleNamespace(task_manager=repair_runtime.manager, policy_api=Mock())
+    runner.policy_api.evaluate.return_value = PolicyDecision(
+        outcome="REQUIRE_CONFIRMATION", approval_id="approval"
+    )
+    state = WorkingState(
+        budgets_remaining=BudgetCounters(
+            ticks=5, tool_calls=5, a2a_calls=2, tokens=5000, time_ms=60000
+        ),
+        session_id="parent-session",
+        agent_id=agent_id,
+        resume_task_id_hint=task_id,
+    )
+    result = _approve_delegate(
+        runner,
+        state=state,
+        command=ToolCommand(
+            title="delegate", tool_name="task.delegate", args={"mode": mode}
+        ),
+        logger=Mock(),
+    )
+    assert result.title == "Policy confirmation required"
+    assert state.pending_policy_approval_id == "approval"
+    runner.policy_api.evaluate.assert_called_once()
+
+
+def test_security_repair_entry_native_schema(repair_runtime, tmp_path):
+    from tests.brain.test_unified_turn_entry import (
+        _build_runner,
+        _RecordingEntryLLM,
+        _text_response,
+        _state,
+    )
+    from tests.brain.runner_test_support import fake_logger
+
+    llm = _RecordingEntryLLM(_text_response("Ready"))
+    runner = _build_runner(tmp_path, llm_api=llm)
+    runner.tool_api = repair_runtime.adapter
+    state = _state("parent-session")
+    state.agent_id = "parent"
+    state.resume_task_id_hint = "repair-task"
+    runner._decide(
+        state=state,
+        user_input="Review the repair",
+        logger=fake_logger(),
+        forced_tools=["task.delegate"],
+    )
+    spec = next(tool for tool in llm.requests[0].tools if tool.name == "task.delegate")
+    assert spec.input_schema["properties"]["mode"]["enum"] == [
+        "sync",
+        "review",
+        "accept",
+        "reject",
+    ]
+
+
+@pytest.mark.parametrize("replay", [False, True])
+def test_security_repair_adaptive_native_schema(repair_runtime, monkeypatch, replay):
+    from tests.brain.modes.test_act_adaptive import (
+        _ctx,
+        _FakeLLMClient,
+        _FakeCommandExecutor,
+    )
+    from openminion.modules.brain.loop.adaptive import ActLoopMode
+    from openminion.modules.brain.loop.tools import (
+        AdaptiveToolLoopOutcome,
+        AdaptiveToolLoopState,
+    )
+    from openminion.modules.brain.schemas import ToolCommand
+
+    ctx, services = _ctx(_FakeLLMClient(), _FakeCommandExecutor())
+    services.runner = SimpleNamespace(
+        tool_api=repair_runtime.adapter,
+        options=SimpleNamespace(failure_strategy="halt"),
+    )
+    ctx.state.agent_id = "parent"
+    ctx.state.resume_task_id_hint = "repair-task"
+    if replay:
+        ctx.decision.reason_code = "confirmation_replay_validation"
+        ctx.decision._seeded_commands = [
+            ToolCommand(
+                title="review", tool_name="task.delegate", args={"mode": "review"}
+            )
+        ]
+    captured = []
+
+    def run_loop(*args, **kwargs):
+        captured.extend(kwargs["tool_specs"])
+        profile = kwargs["profile"]
+        return AdaptiveToolLoopOutcome(
+            profile_name=profile.profile_name,
+            mode_name=profile.mode_name,
+            termination_reason="final_text",
+            state=AdaptiveToolLoopState(),
+            allowed_tools=profile.allowed_tools,
+            mode_result=SimpleNamespace(
+                status="done", working_state=ctx.state, message="ok"
+            ),
+        )
+
+    monkeypatch.setattr(
+        "openminion.modules.brain.loop.adaptive.run_adaptive_tool_loop", run_loop
+    )
+    with repair_runtime.adapter.restrict_tools(("task.delegate",)):
+        ActLoopMode().execute(ctx)
+    spec = next(tool for tool in captured if tool.name == "task.delegate")
+    assert spec.input_schema["properties"]["mode"]["enum"] == [
+        "sync",
+        "review",
+        "accept",
+        "reject",
+    ]
+
+
+@pytest.mark.parametrize("adapter_kind", ["adaptive", "coding"])
+@pytest.mark.parametrize("prepared", [False, True])
+@pytest.mark.parametrize(
+    "case", ["security_deny", "generic_deny", "stale_deny", "confirm"]
+)
+def test_policy_denial_is_not_project_confirmation(
+    repair_runtime, tmp_path, adapter_kind, prepared, case
+):
+    from unittest.mock import Mock
+    from tests.brain.test_unified_turn_entry import _build_runner, _state
+    from tests.brain.modes.test_act_adaptive import _ctx, _FakeLLMClient
+    from openminion.modules.brain.loop.adaptive.context import (
+        _AdaptiveLoopContextAdapter,
+    )
+    from openminion.modules.brain.loop.strategies.coding.context_adapter import (
+        _CodingLoopContextAdapter,
+    )
+    from openminion.modules.brain.tools.executor import RunnerCommandExecutor
+    from openminion.modules.brain.schemas import PolicyDecision, ToolCommand
+    from openminion.modules.task import save_project_run_checkpoint
+    from openminion.modules.task.project.models import ProjectCycleDecision
+    from openminion.modules.task.project.turn import (
+        project_turn_result_from_response,
+        project_cycle_checkpoint_payload,
+    )
+    from openminion.services.brain.post_execution.postprocess_response import (
+        _attach_postprocess_action_metadata,
+    )
+
+    runner = _build_runner(tmp_path, llm_api=SimpleNamespace())
+    runner.tool_api = repair_runtime.adapter
+    runner.task_manager = repair_runtime.manager
+    runner.policy_api = Mock()
+    runner.policy_api.evaluate.return_value = PolicyDecision(
+        outcome="REQUIRE_CONFIRMATION" if case == "confirm" else "DENY",
+        explanation="Operator review required"
+        if case == "confirm"
+        else "Denied by policy",
+        approval_id="approval" if case == "confirm" else None,
+    )
+    state = _state("parent-session")
+    state.agent_id = "parent"
+    state.resume_task_id_hint = None if case == "generic_deny" else "repair-task"
+    command = ToolCommand(
+        title="Delegate",
+        tool_name="task.delegate",
+        args={"mode": "review" if case == "confirm" else "list"},
+    )
+    if case == "stale_deny":
+        state.pending_confirmation_command = command.model_copy(deep=True)
+        state.pending_policy_approval_id = "stale-approval"
+        state.pending_confirmation_goal = "stale goal"
+    executor = RunnerCommandExecutor(runner)
+    ctx, services = _ctx(_FakeLLMClient(), executor, state=state)
+    services.runner = runner
+    adapter_type = (
+        _AdaptiveLoopContextAdapter
+        if adapter_kind == "adaptive"
+        else _CodingLoopContextAdapter
+    )
+    adapter = adapter_type(ctx)
+    if prepared:
+        dispatch = adapter.prepare_tool_dispatch(command=command)
+        outcome = adapter.finalize_prepare_outcome(prepare_outcome=dispatch)
+    else:
+        outcome = adapter.execute_command(command=command)
+    assert outcome.action_result.status == "needs_user"
+    assert state.post_action_user_message
+    metadata = {"brain_status": "waiting_user"}
+    _attach_postprocess_action_metadata(
+        SimpleNamespace(_attach_tool_result_metadata=Mock()),
+        runner=runner,
+        metadata=metadata,
+        step_out=SimpleNamespace(
+            working_state=state, action_result=outcome.action_result
+        ),
+        tool_results_payload=[],
+        termination_reason="needs_user",
+        finalization_payload=None,
+    )
+    turn = project_turn_result_from_response(
+        response={"metadata": metadata, "summary": state.post_action_user_message}
+    )
+    payload = project_cycle_checkpoint_payload(
+        repair_runtime.checkpoint,
+        turn,
+        effect_payload={},
+        plan_payload={},
+        repository_payload={},
+        decision=ProjectCycleDecision.NEEDS_INPUT,
+        verification=(),
+        verification_closure={},
+        decision_reason="needs_user",
+        replan_count=0,
+        waiting_for_checks=False,
+        operator_guidance_consumed_revision=0,
+    )
+    saved = save_project_run_checkpoint(
+        repair_runtime.manager,
+        repair_runtime.checkpoint.project_run,
+        checkpoint_id="post-policy",
+        payload=payload,
+    )
+    checkpoint = repair_runtime.manager.get_checkpoint(
+        saved.project_run.task_id, saved.checkpoint_id
+    )
+    expected = command.command_id if case == "confirm" else ""
+    assert checkpoint["payload"]["pending_confirmation_command_id"] == expected
+    if case == "confirm":
+        assert state.pending_confirmation_command.command_id == command.command_id
+        assert state.pending_policy_approval_id == "approval"
+    else:
+        assert outcome.approved_command.disposition == "policy_denied"
+        assert state.pending_confirmation_command is None
+        assert state.pending_policy_approval_id is None
+        assert state.pending_confirmation_goal is None
+        assert state.post_action_user_message == outcome.approved_command.question
+        assert "pending_confirmation_command_id" not in metadata
+
+
+@pytest.mark.parametrize("task_id", ["repair-task", None])
+def test_coding_schema_preserves_security_scope(repair_runtime, task_id):
+    from tests.brain.modes.test_act_adaptive import (
+        _ctx,
+        _FakeLLMClient,
+        _FakeCommandExecutor,
+    )
+    from openminion.modules.brain.loop.strategies.coding.runtime import (
+        _build_tool_specs,
+    )
+
+    ctx, services = _ctx(_FakeLLMClient(), _FakeCommandExecutor())
+    services.runner = SimpleNamespace(tool_api=repair_runtime.adapter)
+    ctx.state.resume_task_id_hint = task_id
+    specs = _build_tool_specs(frozenset({"task.delegate"}), ctx=ctx)
+    mode = specs[0].input_schema["properties"]["mode"]
+    assert mode.get("enum") == (
+        ["sync", "review", "accept", "reject"] if task_id else None
+    )
+
+
+@pytest.mark.parametrize("task_id", ["repair-task", None])
+def test_budget_shortlisting_preserves_security_scope(
+    repair_runtime, tmp_path, monkeypatch, task_id
+):
+    from unittest.mock import Mock
+    from tests.brain.test_unified_turn_entry import _build_runner, _state
+    from openminion.modules.brain.bootstrap.budget import trim_decide_context_to_budget
+    from openminion.modules.brain.tools.schema import (
+        collect_runtime_tool_schemas,
+        runtime_tool_scope,
+    )
+
+    runner = _build_runner(tmp_path, llm_api=SimpleNamespace())
+    runner.tool_api = repair_runtime.adapter
+    state = _state("parent-session")
+    state.resume_task_id_hint = task_id
+    state.budgets_remaining.tokens = 100
+    rebuilt = Mock(side_effect=[({}, 200), ({}, 1)])
+    monkeypatch.setattr(
+        "openminion.modules.brain.bootstrap.budget._rebuild_decide_context_with_hints",
+        rebuilt,
+    )
+    with repair_runtime.adapter.restrict_tools(("task.delegate",)):
+        hints = {
+            "runtime_tool_schemas": collect_runtime_tool_schemas(
+                runner, metadata=runtime_tool_scope(state)
+            )
+        }
+        _, estimate, decision = trim_decide_context_to_budget(
+            runner=runner,
+            state=state,
+            logger=Mock(),
+            model="test",
+            budget_max_tokens=100,
+            hints=hints,
+            context={},
+            estimate=300,
+            user_input="task.delegate",
+        )
+    assert estimate == 1 and decision is None
+    assert rebuilt.call_count == 2
+    mode = hints["runtime_tool_schemas"][0]["parameters"]["properties"]["mode"]
+    assert mode.get("enum") == (
+        ["sync", "review", "accept", "reject"] if task_id else None
+    )
+
+
+@pytest.mark.parametrize("task_id", ["repair-task", None])
+def test_feasibility_prompt_preserves_security_scope(
+    repair_runtime, tmp_path, monkeypatch, task_id
+):
+    from unittest.mock import Mock
+    from tests.brain.test_unified_turn_entry import _build_runner, _state
+    from openminion.modules.brain.schemas import Plan, SubIntent, ToolCommand
+    from openminion.modules.brain.execution.runtime.turn.feasibility import (
+        assess_plan_feasibility,
+    )
+
+    runner = _build_runner(tmp_path, llm_api=SimpleNamespace())
+    runner.tool_api = repair_runtime.adapter
+    runner._build_context = Mock(
+        side_effect=lambda **kwargs: {"hints": kwargs["hints"]}
+    )
+    state = _state("parent-session")
+    state.resume_task_id_hint = task_id
+    state.plan = Plan(
+        objective="Review and accept repair",
+        stop_conditions=["done"],
+        assumptions=[],
+        risk_summary="low",
+        success_criteria={},
+        sub_intents=[SubIntent(id="repair", description="Review and accept")],
+        steps=[
+            ToolCommand(
+                title=mode,
+                tool_name="task.delegate",
+                args={"mode": mode},
+                sub_intent_ids=["repair"],
+            )
+            for mode in ("review", "accept")
+        ],
+    )
+    structured = Mock(
+        return_value={
+            "plan_viable": True,
+            "assessments": [
+                {
+                    "intent_id": "repair",
+                    "status": "covered",
+                    "covering_tools": ["task.delegate"],
+                }
+            ],
+        }
+    )
+    monkeypatch.setattr(
+        "openminion.modules.brain.execution.runtime.turn.feasibility.call_structured_with_retry",
+        structured,
+    )
+    report = assess_plan_feasibility(
+        runner, state=state, user_input="Review repair", logger=Mock()
+    )
+    assert report.plan_viable
+    schemas = structured.call_args.kwargs["context"]["hints"]["runtime_tool_schemas"]
+    mode = next(item for item in schemas if item["name"] == "task.delegate")[
+        "parameters"
+    ]["properties"]["mode"]
+    assert mode.get("enum") == (
+        ["sync", "review", "accept", "reject"] if task_id else None
+    )

@@ -8,7 +8,10 @@ from openminion.modules.brain.constants import (
 )
 from openminion.modules.brain.execution.loop_contracts import ExecutionContext
 from openminion.modules.brain.loop.tools.plan_control import PLAN_TOOL_NAME
-from openminion.modules.brain.tools.schema import collect_runtime_tool_schemas
+from openminion.modules.brain.tools.schema import (
+    collect_runtime_tool_schemas,
+    runtime_tool_scope,
+)
 from openminion.modules.brain.schemas import ActionError, ActionResult, new_uuid
 from openminion.modules.llm.schemas import ToolSpec
 
@@ -89,7 +92,9 @@ def _runtime_tool_schemas_by_name(
         return {}
     return {
         str(item.get("name", "") or "").strip(): item
-        for item in collect_runtime_tool_schemas(runner)
+        for item in collect_runtime_tool_schemas(
+            runner, metadata=runtime_tool_scope(ctx.state)
+        )
         if str(item.get("name", "") or "").strip()
     }
 

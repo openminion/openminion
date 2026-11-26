@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 from ....diagnostics.events import CanonicalEventLogger
 from ....retry import call_structured_with_retry
+from ....tools.schema import runtime_tool_scope
 from ....schemas import FeasibilityReport, WorkingState, new_uuid
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -27,7 +28,9 @@ def assess_plan_feasibility(
         or not structured_sub_intents
     ):
         return None
-    runtime_tool_schemas = runner._collect_runtime_tool_schemas()
+    runtime_tool_schemas = runner._collect_runtime_tool_schemas(
+        metadata=runtime_tool_scope(state)
+    )
     runtime_facts = feasibility_module.build_runtime_supplement(
         tool_schemas=runtime_tool_schemas
     )

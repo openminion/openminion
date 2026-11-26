@@ -1,11 +1,16 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-11-23
+Last updated: 2026-11-26
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
+
+- Security repair projects expose only their admitted delegation modes and reject
+  unsupported delegation modes before requesting approval. Generic delegation and
+  execution-time permission checks remain unchanged. Denied calls retain their
+  acknowledgement message without becoming pending approvals or replay commands.
 
 - `import_omx` and `export_omx` now confine table payload paths inside `omx_dir`
   (normalizing Windows separators while rejecting `..` escapes, absolute paths, and
