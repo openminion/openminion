@@ -152,15 +152,17 @@ def _resolve_session_storage_roots(
 _MODULE_ID = module_id_from_package(__package__)
 
 
-def _remove_temp_root(temp_root: Path, *, suppress_os_error: bool = False) -> None:
+def _remove_temp_root(temp_root: Path, *, suppress_os_error: bool = False) -> bool:
     try:
         shutil.rmtree(temp_root)
     except FileNotFoundError:
-        return
+        return True
     except OSError:
         if not suppress_os_error:
             raise
         _LOG.warning("Failed to remove session temp root %s", temp_root, exc_info=True)
+        return not temp_root.exists()
+    return True
 
 
 def _build_default_hybrid_store(
@@ -490,16 +492,15 @@ class SQLiteSessionStore(SessionStore):
                             artifact_failed = False
                 finally:
                     owned_root = getattr(self, "_owned_temp_root", None)
-                    if owned_root is not None:
+                    if owned_root is not None and _remove_temp_root(
+                        owned_root,
+                        suppress_os_error=suppress_errors
+                        or record_failed
+                        or artifact_failed,
+                    ):
                         self._owned_temp_root = None
                         if getattr(self, "_temp_root", None) == owned_root:
                             self._temp_root = None
-                        _remove_temp_root(
-                            owned_root,
-                            suppress_os_error=suppress_errors
-                            or record_failed
-                            or artifact_failed,
-                        )
 
     def close(self) -> None:
         self._close_owned_resources(close_record_store=True, suppress_errors=False)

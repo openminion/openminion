@@ -278,18 +278,96 @@ def test_close_failure_still_cleans_temp_root_and_is_not_masked(monkeypatch) -> 
     monkeypatch.setattr(store._record_store, "close", fail_close)
     monkeypatch.setattr(store_module.shutil, "rmtree", fail_rmtree)
 
-    with pytest.raises(RuntimeError, match="close boom"):
+    try:
+        with pytest.raises(RuntimeError, match="close boom"):
+            store.close()
+        assert temp_root.exists()
+        assert store._owned_temp_root == temp_root
+    finally:
+        monkeypatch.undo()
         store.close()
-    assert temp_root.exists()
+    assert not temp_root.exists()
+    assert store._owned_temp_root is None
 
-    monkeypatch.undo()
     store2 = SQLiteSessionStore(":memory:")
     temp_root2 = store2._temp_root
     assert temp_root2 is not None
     monkeypatch.setattr(store2._record_store, "close", fail_close)
-    with pytest.raises(RuntimeError, match="close boom"):
+    try:
+        with pytest.raises(RuntimeError, match="close boom"):
+            store2.close()
+        assert not temp_root2.exists()
+        assert store2._owned_temp_root is None
+    finally:
+        monkeypatch.undo()
         store2.close()
-    assert not temp_root2.exists()
+
+
+def test_close_deletion_failure_preserves_ownership_for_later_close(
+    monkeypatch,
+) -> None:
+    store = SQLiteSessionStore(":memory:")
+    temp_root = store._temp_root
+    assert temp_root is not None
+    assert temp_root.exists()
+
+    calls: list[Path] = []
+    real_rmtree = store_module.shutil.rmtree
+    should_fail = True
+
+    def controlled_rmtree(path: Path, *args, **kwargs) -> None:
+        calls.append(Path(path))
+        if should_fail:
+            raise PermissionError("locked")
+        real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(store_module.shutil, "rmtree", controlled_rmtree)
+    try:
+        with pytest.raises(PermissionError, match="locked"):
+            store.close()
+        assert calls == [temp_root]
+        assert temp_root.exists()
+        assert store._owned_temp_root == temp_root
+        assert store._temp_root == temp_root
+
+        should_fail = False
+        store.close()
+        assert calls == [temp_root, temp_root]
+        assert not temp_root.exists()
+        assert store._owned_temp_root is None
+        assert store._temp_root is None
+
+        store.close()
+        assert calls == [temp_root, temp_root]
+    finally:
+        should_fail = False
+        monkeypatch.undo()
+        store.close()
+
+    store_absent = SQLiteSessionStore(":memory:")
+    absent_root = store_absent._temp_root
+    assert absent_root is not None
+    real_rmtree(absent_root)
+    assert not absent_root.exists()
+
+    absent_calls: list[Path] = []
+
+    def tracking_rmtree(path: Path, *args, **kwargs) -> None:
+        absent_calls.append(Path(path))
+        real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(store_module.shutil, "rmtree", tracking_rmtree)
+    try:
+        store_absent.close()
+        assert absent_calls == [absent_root]
+        assert store_absent._owned_temp_root is None
+        assert store_absent._temp_root is None
+
+        store_absent.close()
+        assert absent_calls == [absent_root]
+    finally:
+        monkeypatch.undo()
+        store_absent.close()
 
 
 def test_postgres_session_store_init_failure_cleans_owned_temp_root_without_closing_injected_store(
