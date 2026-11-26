@@ -196,6 +196,7 @@ def _run_runtime_bootstrap_probe(
             home_root=getattr(args, "home_root", None),
             data_root=getattr(args, "data_root", None),
             run_profile_overrides=run_profile_overrides,
+            logging_mode="interactive" if getattr(args, "json", False) else "default",
         )
         app.resolve_agent_service(selected_agent.name)
         loaded_plugin_manifest_ids = app.plugins.manifest_ids()
