@@ -9,10 +9,16 @@ from pathlib import Path
 import pytest
 
 from openminion.base.config import OpenMinionConfig
-from openminion.services.runtime.plugins import build_default_plugin_registry
+from openminion.services.runtime.plugins import (
+    PLUGIN_MANIFEST_CONTRACT_VERSION,
+    PluginManifestError,
+    build_default_plugin_registry,
+)
 from openminion.services.runtime.plugins.discovery import (
+    PluginDiscoveryError,
     discover_plugin_manifests,
     load_plugin_instance,
+    load_plugin_module,
     plugin_bundle_digest,
 )
 from openminion.services.runtime.errors import PluginActivationError
@@ -215,6 +221,61 @@ def test_verified_custom_plugin_rejects_malformed_checksum(tmp_path: Path) -> No
     assert exc_info.value.reason_code == "checksum_malformed"
 
 
+@pytest.mark.parametrize("explicit_version", [None, PLUGIN_MANIFEST_CONTRACT_VERSION])
+def test_discovery_admits_omitted_and_supported_contract_version(
+    tmp_path: Path, explicit_version: str | None
+) -> None:
+    custom_root = tmp_path / "plugins"
+    marker = tmp_path / "module_loaded.txt"
+    _write_custom_plugin(
+        custom_root,
+        module_alias="hello",
+        manifest_id="example.hello",
+        import_marker=marker,
+    )
+    if explicit_version is not None:
+        manifest_path = custom_root / "hello.manifest.json"
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        payload["contract_version"] = explicit_version
+        manifest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    discovered = discover_plugin_manifests([custom_root])
+    assert len(discovered) == 1
+    assert discovered[0].manifest.contract_version == PLUGIN_MANIFEST_CONTRACT_VERSION
+    assert not marker.exists()
+
+    load_plugin_module(discovered[0])
+    assert marker.exists()
+
+
+@pytest.mark.parametrize(
+    "invalid_version",
+    ["2", "", "   ", 1, 2, None, False, True, {}, []],
+)
+def test_discovery_rejects_malformed_contract_version_before_loading(
+    tmp_path: Path, invalid_version: object
+) -> None:
+    custom_root = tmp_path / "plugins"
+    marker = tmp_path / "module_loaded.txt"
+    _write_custom_plugin(
+        custom_root,
+        module_alias="hello",
+        manifest_id="example.hello",
+        import_marker=marker,
+    )
+    manifest_path = custom_root / "hello.manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["contract_version"] = invalid_version
+    manifest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    with pytest.raises(
+        PluginDiscoveryError, match="contract_version must be '1'"
+    ) as exc:
+        discover_plugin_manifests([custom_root])
+    assert isinstance(exc.value.__cause__, PluginManifestError)
+    assert not marker.exists()
+
+
 def _write_custom_plugin(
     root: Path,
     *,
@@ -222,11 +283,18 @@ def _write_custom_plugin(
     manifest_id: str,
     class_name: str = "HelloPlugin",
     plugin_name: str | None = None,
+    import_marker: Path | None = None,
 ) -> None:
     root.mkdir(parents=True, exist_ok=True)
     resolved_plugin_name = plugin_name or module_alias
+    marker_block = (
+        "from pathlib import Path\n"
+        f"Path({str(import_marker)!r}).write_text('loaded', encoding='utf-8')\n"
+        if import_marker is not None
+        else ""
+    )
     (root / f"{module_alias}.py").write_text(
-        "from openminion.services.runtime.plugins import Plugin\n\n"
+        marker_block + "from openminion.services.runtime.plugins import Plugin\n\n"
         f"class {class_name}(Plugin):\n"
         f"    name = {resolved_plugin_name!r}\n",
         encoding="utf-8",

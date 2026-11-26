@@ -47,9 +47,8 @@ def validate_plugin_manifest(payload: Mapping[str, Any]) -> PluginManifest:
     plugin_id = _required_non_empty_string(payload.get("id"), "id", errors)
     name = _optional_string(payload.get("name")) or plugin_id or "plugin"
     version = _optional_string(payload.get("version")) or OPENMINION_VERSION
-    contract_version = (
-        _optional_string(payload.get("contract_version"))
-        or PLUGIN_MANIFEST_CONTRACT_VERSION
+    contract_version = _optional_string(
+        payload.get("contract_version", PLUGIN_MANIFEST_CONTRACT_VERSION)
     )
     if contract_version != PLUGIN_MANIFEST_CONTRACT_VERSION:
         errors.append(f"contract_version must be '{PLUGIN_MANIFEST_CONTRACT_VERSION}'.")

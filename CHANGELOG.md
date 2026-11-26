@@ -7,6 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `validate_plugin_manifest` now distinguishes an omitted `contract_version` key from an
+  explicitly supplied value: omission continues to default to version `"1"`, while
+  supplied non-string, null, blank, or unsupported values (`2`, `1`, `null`, `false`,
+  `true`, `{}`, `[]`, `""`, `"   "`, `"2"`) fail manifest validation with
+  `PluginManifestError` (`PluginDiscoveryError` during discovery) before plugin module
+  code is loaded (Refs #859).
 - `import_omx` and `export_omx` now confine table payload paths inside `omx_dir`
   (normalizing Windows separators while rejecting `..` escapes, absolute paths, and
   external symlinks), prepare quoted table/column SQL identifiers (`_quote_ident`),
