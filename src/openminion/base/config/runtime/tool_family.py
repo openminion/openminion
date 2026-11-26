@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 import re
 from typing import Any, Mapping
 
@@ -108,19 +108,6 @@ def coerce_tool_family_runtime_config(
     )
 
 
-_BLOCKCHAIN_CONFIG_KEYS = frozenset(
-    {
-        "enabled",
-        "rpc_url",
-        "chain_id",
-        "signer_secret_key",
-        "signer_secret_namespace",
-        "writes_enabled",
-        "max_total_fee_wei",
-        "receipt_timeout_seconds",
-        "confirmation_depth",
-    }
-)
 _CANONICAL_UNSIGNED_DECIMAL_RE = re.compile(r"^(?:0|[1-9][0-9]*)$")
 
 
@@ -133,8 +120,14 @@ class BlockchainToolRuntimeConfig:
     signer_secret_namespace: str = "blockchain"
     writes_enabled: bool = False
     max_total_fee_wei: str = "10000000000000000"
+    max_value_wei: str = ""
     receipt_timeout_seconds: int = 60
     confirmation_depth: int = 1
+
+
+_BLOCKCHAIN_CONFIG_KEYS = frozenset(
+    item.name for item in fields(BlockchainToolRuntimeConfig)
+)
 
 
 def _validate_blockchain_config(
@@ -163,6 +156,13 @@ def _validate_blockchain_config(
         raise ConfigError(
             "runtime.tools.blockchain.max_total_fee_wei must be a canonical "
             "positive decimal string."
+        )
+    if config.max_value_wei and not _CANONICAL_UNSIGNED_DECIMAL_RE.fullmatch(
+        config.max_value_wei
+    ):
+        raise ConfigError(
+            "runtime.tools.blockchain.max_value_wei must be empty or a canonical "
+            "unsigned decimal string."
         )
     if not config.signer_secret_namespace:
         raise ConfigError(
@@ -214,6 +214,7 @@ def coerce_blockchain_tool_runtime_config(
             ).strip(),
             writes_enabled=value.get("writes_enabled", False),
             max_total_fee_wei=str(value.get("max_total_fee_wei", "10000000000000000")),
+            max_value_wei=str(value.get("max_value_wei", "")).strip(),
             receipt_timeout_seconds=value.get("receipt_timeout_seconds", 60),
             confirmation_depth=value.get("confirmation_depth", 1),
         )
@@ -224,13 +225,6 @@ def blockchain_tool_runtime_config_to_dict(
     config: BlockchainToolRuntimeConfig,
 ) -> dict[str, Any]:
     return {
-        "enabled": config.enabled,
-        "rpc_url": config.rpc_url,
-        "chain_id": config.chain_id,
-        "signer_secret_key": config.signer_secret_key,
-        "signer_secret_namespace": config.signer_secret_namespace,
-        "writes_enabled": config.writes_enabled,
-        "max_total_fee_wei": config.max_total_fee_wei,
-        "receipt_timeout_seconds": config.receipt_timeout_seconds,
-        "confirmation_depth": config.confirmation_depth,
+        item.name: getattr(config, item.name)
+        for item in fields(BlockchainToolRuntimeConfig)
     }

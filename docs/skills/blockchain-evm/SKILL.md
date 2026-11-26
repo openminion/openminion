@@ -119,6 +119,7 @@ the same run.
 | --- | --- | --- |
 | stale fields, `nonce` | another transaction moved the account | prepare again from the new nonce |
 | stale fields, `fees` | fee estimate now exceeds the configured `max_total_fee_wei` | report the cap; do not raise it |
+| stale fields, `value` or `VALUE_CAP_EXCEEDED` | native value exceeds the configured `max_value_wei` | report the cap; do not raise it |
 | stale fields, `chain_id` | the endpoint no longer matches the pinned or configured chain | stop; the chain anchor is invalid |
 | `broadcast_unknown` | submission was marked but the RPC never confirmed acceptance | resolved: inspect `operation_status`; configured: inspect `receipt` by the returned hash; never re-send |
 | `pending` | accepted, no receipt yet | resolved: poll `operation_status`; configured: poll `receipt`; never re-send |
@@ -154,11 +155,13 @@ was slow.
   `blockchain.send_transaction` refuses at runtime with `FEATURE_DISABLED`; the
   tool stays registered.
 - Use one signer per agent or per task, funded with what that task may spend. The
-  wallet balance is the real budget. `max_total_fee_wei` bounds the estimated fee;
-  there is no per-transaction native-value cap and no cumulative spend budget.
+  wallet balance is the real budget. `max_total_fee_wei` bounds the estimated fee
+  and `max_value_wei` bounds the native value one transaction may carry; there is
+  no cumulative spend budget.
 - Configure `rpc_url` and `chain_id` together, or use resolution alone. The pair
   is never a fallback for a researched resolution.
 - Raise `confirmation_depth` above 1 on any network where a reorg would matter.
   It applies to the resolved operation status.
-- Keep `max_total_fee_wei` tight; it bounds fees only, not value or a budget.
+- Keep `max_total_fee_wei` and `max_value_wei` tight; they bound one transaction,
+  not a session.
 - Prefer a disposable local chain (Anvil) or a testnet for anything new.

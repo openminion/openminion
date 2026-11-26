@@ -7,6 +7,14 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Bound the native value one blockchain write may carry. `max_value_wei` refuses an
+  over-cap preparation before any RPC call and rechecks the prepared payload at send on
+  both the configured and the resolved path, sharing one cap owner with `max_total_fee_wei`.
+  Empty means unbounded, which keeps existing behaviour, and `"0"` permits only
+  zero-value calls. A value equal to the cap is allowed. The bound covers one
+  transaction's native value, not an ERC-20 allowance or a cumulative spend budget
+  (Refs #854).
+
 - `import_omx` and `export_omx` now confine table payload paths inside `omx_dir`
   (normalizing Windows separators while rejecting `..` escapes, absolute paths, and
   external symlinks), prepare quoted table/column SQL identifiers (`_quote_ident`),

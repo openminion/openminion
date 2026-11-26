@@ -20,6 +20,7 @@ from openminion.tools.blockchain.preparations import (
 )
 from openminion.tools.blockchain.resolution import ResolutionFailure
 from openminion.tools.blockchain.transaction_schemas import (
+    RESOLVED_PREPARATION_ADAPTER,
     resolved_preparation_digest,
     validate_resolved_preparation_record,
 )
@@ -261,6 +262,295 @@ def _context(tmp_path, *, authorized: bool = True):
     )
 
 
+def _resolved_prepared(
+    value_wei: str,
+    *,
+    max_total_fee_wei: str = "483000",
+    postconditions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    resolution_digest = "sha256:" + "12" * 32
+    block_hash = "0x" + "42" * 32
+    setter = FunctionAbi.model_validate(
+        {
+            "type": "function",
+            "name": "setApr",
+            "inputs": [{"name": "value", "type": "uint256"}],
+            "outputs": [],
+            "stateMutability": "nonpayable",
+        }
+    )
+    prepared = {
+        "schema_version": 2,
+        "kind": "resolved_contract_call",
+        "resolution_digest": resolution_digest,
+        "resolved_context": {
+            "resolution_digest": resolution_digest,
+            "rpc_origin": "https://rpc.example",
+            "sourcify_target_origin": "https://sourcify.dev",
+            "sourcify_implementation_origin": None,
+            "expected_chain_id": 31337,
+            "observed_chain_id": 31337,
+            "expected_genesis_hash": "0x" + "01" * 32,
+            "observed_genesis_hash": "0x" + "01" * 32,
+            "expected_checkpoint": None,
+            "observed_checkpoint": None,
+            "resolution_block_number": "40",
+            "resolution_block_hash": "0x" + "40" * 32,
+            "preparation_block_number": "42",
+            "preparation_block_hash": block_hash,
+            "contract_address": RECIPIENT,
+            "proxy_kind": "direct",
+            "implementation_address": None,
+            "abi_address": RECIPIENT,
+            "target_code_hash": "0x" + "03" * 32,
+            "implementation_code_hash": None,
+            "function_abi": setter.model_dump(mode="json"),
+        },
+        "transaction": {
+            "schema_version": "evm-transaction-v1",
+            "transaction_type": "eip1559",
+            "chain_id": 31337,
+            "from_address": SENDER,
+            "to_address": RECIPIENT,
+            "value_wei": value_wei,
+            "nonce": "9",
+            "gas_limit": "21000",
+            "data": encode_function_call(Web3(), setter, [5]),
+            "max_fee_per_gas_wei": "23",
+            "max_priority_fee_per_gas_wei": "3",
+            "max_total_fee_wei": max_total_fee_wei,
+        },
+        "call_context": {
+            "function_abi": setter.model_dump(mode="json"),
+            "function_args": [5],
+            "function_signature": "setApr(uint256)",
+        },
+        "simulation": {
+            "state": "succeeded",
+            "chain_id": "31337",
+            "block_identifier": "0x2a",
+            "resolved_block_number": "42",
+            "resolved_block_hash": block_hash,
+            "return_data": "0x",
+            "gas_estimate": "21000",
+            "decoded_returns": None,
+        },
+        "signer_address": SENDER,
+        "postconditions": postconditions or [],
+        "preparation_digest": "sha256:" + "0" * 64,
+    }
+    normalized = RESOLVED_PREPARATION_ADAPTER.validate_python(prepared).model_dump(
+        mode="json"
+    )
+    normalized["preparation_digest"] = resolved_preparation_digest(normalized)
+    return normalized
+
+
+def _resolution_record(prepared: dict[str, Any]) -> dict[str, Any]:
+    resolved = prepared["resolved_context"]
+    return {
+        "resolution_digest": resolved["resolution_digest"],
+        "rpc_url": "https://rpc.example/",
+        "sourcify_target_url": "https://sourcify.dev/target",
+        "sourcify_target_match": "exact_match",
+        "sourcify_implementation_url": None,
+        "sourcify_implementation_match": None,
+        "expected_chain_id": resolved["expected_chain_id"],
+        "observed_chain_id": resolved["observed_chain_id"],
+        "expected_genesis_hash": resolved["expected_genesis_hash"],
+        "observed_genesis_hash": resolved["observed_genesis_hash"],
+        "expected_checkpoint": None,
+        "observed_checkpoint": None,
+        "verification_block_number": resolved["resolution_block_number"],
+        "verification_block_hash": resolved["resolution_block_hash"],
+        "contract_address": RECIPIENT,
+        "proxy_kind": "direct",
+        "implementation_address": None,
+        "abi_address": RECIPIENT,
+        "target_code_hash": resolved["target_code_hash"],
+        "implementation_code_hash": None,
+    }
+
+
+def _patch_resolved_operations(
+    monkeypatch: pytest.MonkeyPatch, prepared: dict[str, Any]
+) -> None:
+    from openminion.tools.blockchain import resolved_operations
+
+    resolved = prepared["resolved_context"]
+    record = _resolution_record(prepared)
+    setter = FunctionAbi.model_validate(resolved["function_abi"])
+
+    def refuse_rpc(*_args: Any, **_kwargs: Any) -> Any:
+        raise ResolutionFailure(
+            "RPC_UNAVAILABLE", "A refused send must not reach the RPC transport."
+        )
+
+    monkeypatch.setattr(
+        resolved_operations, "load_resolution", lambda digest, ctx: record
+    )
+    monkeypatch.setattr(
+        resolved_operations,
+        "revalidate_resolution",
+        lambda value: {
+            "block_number": resolved["preparation_block_number"],
+            "block_hash": resolved["preparation_block_hash"],
+        },
+    )
+    monkeypatch.setattr(
+        resolved_operations,
+        "function_by_signature",
+        lambda value, signature: setter,
+    )
+    monkeypatch.setattr(resolved_operations, "rpc_call", refuse_rpc)
+
+
+def test_configured_send_refuses_value_over_the_cap_before_broadcast(tmp_path) -> None:
+    context = _context(tmp_path)
+    blockchain = context.policy.raw["context_metadata"]["runtime_tools"]["blockchain"]
+    blockchain["max_value_wei"] = "1000"
+    client = _Web3()
+    transaction = {**_transaction(), "value_wei": "1001"}
+
+    result = send_transaction(
+        {
+            "transaction": transaction,
+            "call_context": None,
+            "preparation_digest": preparation_digest(transaction, None),
+        },
+        context,
+        web3=client,
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "STALE_PREPARATION"
+    assert result["error"]["details"] == {"fields": ["value"]}
+    assert result["data"]["broadcast_attempts"] == 0
+    assert client.eth.broadcasts == 0
+
+
+def test_configured_send_reports_both_stale_caps(tmp_path) -> None:
+    context = _context(tmp_path)
+    blockchain = context.policy.raw["context_metadata"]["runtime_tools"]["blockchain"]
+    blockchain["max_value_wei"] = "1000"
+    blockchain["max_total_fee_wei"] = "100"
+    client = _Web3()
+    transaction = {**_transaction(), "value_wei": "1001"}
+
+    result = send_transaction(
+        {
+            "transaction": transaction,
+            "call_context": None,
+            "preparation_digest": preparation_digest(transaction, None),
+        },
+        context,
+        web3=client,
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "STALE_PREPARATION"
+    assert result["error"]["details"] == {"fields": ["fees", "value"]}
+    assert client.eth.broadcasts == 0
+
+
+def test_resolved_send_refuses_value_over_the_cap_before_signing(
+    tmp_path, monkeypatch
+) -> None:
+    context = _context(tmp_path)
+    context.session_id = "value-cap-session"
+    context.env = {"OPENMINION_DATA_ROOT": str(tmp_path)}
+    blockchain = context.policy.raw["context_metadata"]["runtime_tools"]["blockchain"]
+    blockchain.pop("rpc_url")
+    blockchain.pop("chain_id")
+    blockchain["max_value_wei"] = "1000"
+    prepared = _resolved_prepared("1001")
+    save_resolved_preparation_record(
+        prepared,
+        context,
+        validator=validate_resolved_preparation_record,
+        digester=resolved_preparation_digest,
+    )
+    _patch_resolved_operations(monkeypatch, prepared)
+
+    result = send_transaction(prepared, context)
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "VALUE_CAP_EXCEEDED"
+    assert result["error"]["details"] == {
+        "value_wei": "1001",
+        "configured_max_value_wei": "1000",
+    }
+    assert result["state"] == "failed"
+    assert result["data"]["transaction_hash"] == ""
+    assert result["data"]["broadcast_attempts"] == 0
+
+
+def test_resolved_send_requires_permission_before_admission(tmp_path) -> None:
+    result = send_transaction(
+        _resolved_prepared("0"),
+        _context(tmp_path, authorized=False),
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "POLICY_MODE_UNSUPPORTED"
+
+
+def test_resolved_send_binds_the_digest_to_the_stored_preparation(
+    tmp_path, monkeypatch
+) -> None:
+    context = _context(tmp_path)
+    context.session_id = "digest-session"
+    context.env = {"OPENMINION_DATA_ROOT": str(tmp_path)}
+    blockchain = context.policy.raw["context_metadata"]["runtime_tools"]["blockchain"]
+    blockchain.pop("rpc_url")
+    blockchain.pop("chain_id")
+    prepared = _resolved_prepared("0")
+    save_resolved_preparation_record(
+        prepared,
+        context,
+        validator=validate_resolved_preparation_record,
+        digester=resolved_preparation_digest,
+    )
+    _patch_resolved_operations(monkeypatch, prepared)
+
+    result = send_transaction(
+        {**prepared, "preparation_digest": "sha256:" + "f" * 64}, context
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "STALE_PREPARATION"
+    assert result["error"]["details"] == {"fields": ["preparation"]}
+    assert result["data"]["broadcast_attempts"] == 0
+
+
+def test_resolved_send_still_refuses_a_fee_over_the_cap(tmp_path, monkeypatch) -> None:
+    context = _context(tmp_path)
+    context.session_id = "fee-cap-session"
+    context.env = {"OPENMINION_DATA_ROOT": str(tmp_path)}
+    blockchain = context.policy.raw["context_metadata"]["runtime_tools"]["blockchain"]
+    blockchain.pop("rpc_url")
+    blockchain.pop("chain_id")
+    blockchain["max_total_fee_wei"] = "100"
+    prepared = _resolved_prepared("0")
+    save_resolved_preparation_record(
+        prepared,
+        context,
+        validator=validate_resolved_preparation_record,
+        digester=resolved_preparation_digest,
+    )
+    _patch_resolved_operations(monkeypatch, prepared)
+
+    result = send_transaction(prepared, context)
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "FEE_CAP_EXCEEDED"
+    assert result["error"]["details"] == {
+        "max_total_fee_wei": "483000",
+        "configured_max_total_fee_wei": "100",
+    }
+    assert result["data"]["broadcast_attempts"] == 0
+
+
 def test_configured_send_requires_the_optional_network_pair(tmp_path) -> None:
     context = _context(tmp_path)
     blockchain = context.policy.raw["context_metadata"]["runtime_tools"]["blockchain"]
@@ -294,6 +584,7 @@ def test_send_requires_trusted_authorization_before_signing(tmp_path) -> None:
         web3=client,
     )
 
+    assert result["ok"] is False
     assert result["error"]["code"] == "POLICY_MODE_UNSUPPORTED"
     assert client.eth.broadcasts == 0
     assert context.events == []
@@ -599,7 +890,6 @@ def test_resolved_send_claims_once_and_status_survives_restart(
     blockchain.pop("rpc_url")
     blockchain.pop("chain_id")
     blockchain["confirmation_depth"] = 2
-    resolution_digest = "sha256:" + "12" * 32
     head_hashes = {
         10: "0x" + "10" * 32,
         11: "0x" + "11" * 32,
@@ -624,104 +914,23 @@ def test_resolved_send_claims_once_and_status_survives_restart(
             "stateMutability": "view",
         }
     )
-    data = encode_function_call(Web3(), setter, [5])
-    transaction = {
-        "schema_version": "evm-transaction-v1",
-        "transaction_type": "eip1559",
-        "chain_id": 31337,
-        "from_address": SENDER,
-        "to_address": RECIPIENT,
-        "value_wei": "0",
-        "nonce": "9",
-        "gas_limit": "21000",
-        "data": data,
-        "max_fee_per_gas_wei": "23",
-        "max_priority_fee_per_gas_wei": "3",
-        "max_total_fee_wei": "483000",
-    }
-    prepared = {
-        "schema_version": 2,
-        "kind": "resolved_contract_call",
-        "resolution_digest": resolution_digest,
-        "resolved_context": {
-            "resolution_digest": resolution_digest,
-            "rpc_origin": "https://rpc.example",
-            "sourcify_target_origin": "https://sourcify.dev",
-            "sourcify_implementation_origin": None,
-            "expected_chain_id": 31337,
-            "observed_chain_id": 31337,
-            "expected_genesis_hash": "0x" + "01" * 32,
-            "observed_genesis_hash": "0x" + "01" * 32,
-            "expected_checkpoint": None,
-            "observed_checkpoint": None,
-            "resolution_block_number": "40",
-            "resolution_block_hash": "0x" + "40" * 32,
-            "preparation_block_number": "42",
-            "preparation_block_hash": head_hashes[42],
-            "contract_address": RECIPIENT,
-            "proxy_kind": "direct",
-            "implementation_address": None,
-            "abi_address": RECIPIENT,
-            "target_code_hash": "0x" + "03" * 32,
-            "implementation_code_hash": None,
-            "function_abi": setter.model_dump(mode="json"),
-        },
-        "transaction": transaction,
-        "call_context": {
-            "function_abi": setter.model_dump(mode="json"),
-            "function_args": [5],
-            "function_signature": "setApr(uint256)",
-        },
-        "simulation": {
-            "state": "succeeded",
-            "chain_id": "31337",
-            "block_identifier": "0x2a",
-            "resolved_block_number": "42",
-            "resolved_block_hash": head_hashes[42],
-            "return_data": "0x",
-            "gas_estimate": "21000",
-            "decoded_returns": None,
-        },
-        "signer_address": SENDER,
-        "postconditions": [
+    prepared = _resolved_prepared(
+        "0",
+        postconditions=[
             {
                 "function_signature": "apr()",
                 "arguments": [],
                 "expected_result": ["5"],
             }
         ],
-        "preparation_digest": "sha256:" + "0" * 64,
-    }
-    prepared["preparation_digest"] = resolved_preparation_digest(prepared)
+    )
     save_resolved_preparation_record(
         prepared,
         context,
         validator=validate_resolved_preparation_record,
         digester=resolved_preparation_digest,
     )
-    resolved_context = prepared["resolved_context"]
-    record = {
-        "resolution_digest": resolution_digest,
-        "rpc_url": "https://rpc.example/",
-        "sourcify_target_url": "https://sourcify.dev/target",
-        "sourcify_target_match": "exact_match",
-        "sourcify_implementation_url": None,
-        "sourcify_implementation_match": None,
-        "expected_chain_id": resolved_context["expected_chain_id"],
-        "observed_chain_id": resolved_context["observed_chain_id"],
-        "expected_genesis_hash": resolved_context["expected_genesis_hash"],
-        "observed_genesis_hash": resolved_context["observed_genesis_hash"],
-        "expected_checkpoint": None,
-        "observed_checkpoint": None,
-        "verification_block_number": resolved_context["resolution_block_number"],
-        "verification_block_hash": resolved_context["resolution_block_hash"],
-        "contract_address": RECIPIENT,
-        "proxy_kind": "direct",
-        "implementation_address": None,
-        "abi_address": RECIPIENT,
-        "target_code_hash": resolved_context["target_code_hash"],
-        "implementation_code_hash": None,
-    }
+    record = _resolution_record(prepared)
     receipt = {"present": True}
     rpc_state = {
         "balance": "0xde0b6b3a7640000",

@@ -42,6 +42,7 @@ def _context(
     *,
     secret_service: Any | None = None,
     max_total_fee_wei: str = "10000000000000000",
+    max_value_wei: str = "",
 ) -> SimpleNamespace:
     return SimpleNamespace(
         secret_service=secret_service,
@@ -57,6 +58,7 @@ def _context(
                             "signer_secret_namespace": "chain-reference-sentinel",
                             "writes_enabled": False,
                             "max_total_fee_wei": max_total_fee_wei,
+                            "max_value_wei": max_value_wei,
                             "receipt_timeout_seconds": 60,
                         }
                     }
@@ -272,6 +274,110 @@ def test_prepare_enforces_fee_cap_before_simulation() -> None:
         },
     }
     assert client.eth.simulated == []
+
+
+def test_prepare_allows_value_at_the_cap() -> None:
+    result = prepare_transaction(
+        {"kind": "native_transfer", "to_address": RECIPIENT, "value_wei": "1000"},
+        _context(secret_service=_SecretService(), max_value_wei="1000"),
+        web3=_Web3(),
+    )
+
+    assert result["ok"] is True
+    assert result["transaction"]["value_wei"] == "1000"
+
+
+def test_prepare_zero_cap_allows_zero_value() -> None:
+    result = prepare_transaction(
+        {"kind": "native_transfer", "to_address": RECIPIENT, "value_wei": "0"},
+        _context(secret_service=_SecretService(), max_value_wei="0"),
+        web3=_Web3(),
+    )
+
+    assert result["ok"] is True
+
+
+def test_prepare_zero_cap_refuses_nonzero_value_before_signer_or_rpc() -> None:
+    secret = _SecretService()
+    client = _Web3()
+
+    result = prepare_transaction(
+        {"kind": "native_transfer", "to_address": RECIPIENT, "value_wei": "1"},
+        _context(secret_service=secret, max_value_wei="0"),
+        web3=client,
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == {
+        "code": "VALUE_CAP_EXCEEDED",
+        "message": "Native value exceeds the configured cap.",
+        "retryable": False,
+        "details": {"value_wei": "1", "configured_max_value_wei": "0"},
+    }
+    assert secret.reads == []
+    assert client.eth.simulated == []
+
+
+@pytest.mark.parametrize(
+    "value_wei", ("999999999999999999999", "1000000000000000000000")
+)
+def test_prepare_large_value_cap_allows_values_at_or_below_it(value_wei: str) -> None:
+    result = prepare_transaction(
+        {"kind": "native_transfer", "to_address": RECIPIENT, "value_wei": value_wei},
+        _context(
+            secret_service=_SecretService(),
+            max_value_wei="1000000000000000000000",
+        ),
+        web3=_Web3(),
+    )
+
+    assert result["ok"] is True
+
+
+def test_prepare_large_value_cap_refuses_one_wei_over() -> None:
+    result = prepare_transaction(
+        {
+            "kind": "native_transfer",
+            "to_address": RECIPIENT,
+            "value_wei": "1000000000000000000001",
+        },
+        _context(
+            secret_service=_SecretService(),
+            max_value_wei="1000000000000000000000",
+        ),
+        web3=_Web3(),
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "VALUE_CAP_EXCEEDED"
+    assert result["error"]["details"] == {
+        "value_wei": "1000000000000000000001",
+        "configured_max_value_wei": "1000000000000000000000",
+    }
+
+
+def test_prepare_refuses_resolved_value_over_cap_before_storage_or_rpc() -> None:
+    secret = _SecretService()
+    context = _context(secret_service=secret, max_value_wei="1000")
+
+    result = prepare_transaction(
+        {
+            "kind": "resolved_contract_call",
+            "resolution_digest": "sha256:" + "12" * 32,
+            "function_signature": "setApr(uint256)",
+            "arguments": [5],
+            "value_wei": "1001",
+        },
+        context,
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "VALUE_CAP_EXCEEDED"
+    assert result["error"]["details"] == {
+        "value_wei": "1001",
+        "configured_max_value_wei": "1000",
+    }
+    assert secret.reads == []
 
 
 def test_prepare_separates_rpc_failure_without_provider_text() -> None:
