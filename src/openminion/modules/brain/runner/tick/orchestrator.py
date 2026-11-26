@@ -54,10 +54,14 @@ def _stamp_pending_run_context(runner: "BrainRunner", state) -> str | None:
         state.run_trigger = pending_trigger
         runner._pending_run_trigger = None
 
-    pending_gateway_context = str(runner._pending_gateway_system_context or "").strip()
-    if pending_gateway_context:
-        state.gateway_system_context = pending_gateway_context
+    pending_gateway_context = runner._pending_gateway_system_context
+    if pending_gateway_context is not None:
+        state.gateway_system_context = pending_gateway_context.strip()
+        state.module_state["gateway_memory"] = {
+            "spans": runner._pending_gateway_memory_spans
+        }
         runner._pending_gateway_system_context = None
+        runner._pending_gateway_memory_spans = []
     return pending_trigger
 
 

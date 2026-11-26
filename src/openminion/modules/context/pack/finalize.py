@@ -151,6 +151,7 @@ def build_runtime_cache_lookup_key(
         budget_telemetry_hash,
         continuity_query_hash,
         gateway_context_hash,
+        _stable_hash([span.model_dump() for span in request.gateway_memory_spans]),
     )
 
 
@@ -375,6 +376,7 @@ class _IncludedPackItems:
     dropped_segment_ids: list[str]
     facts: list[Any]
     memory: list[Any]
+    gateway_memory_ids: list[str]
     session_start_recalled_memory: list[Any]
     mid_session_recalled_memory: list[Any]
     recent_session_artifacts: list[Any]
@@ -435,6 +437,7 @@ def _included_pack_items(
             if record.ttl_valid and record.record_id in fact_refs
         ],
         memory=[card for card in memory_cards if card.record_id in memory_refs],
+        gateway_memory_ids=_refs_for_bucket(segments, "mission_snapshot"),
         session_start_recalled_memory=[
             card
             for card in session_start_recalled_memory_cards
@@ -492,7 +495,14 @@ def _build_context_manifest(
             turn_ids_included=[turn.turn_id for turn in session_slice.recent_turns],
         ),
         facts=[record.record_id for record in included.facts],
-        memory=[card.record_id for card in included.memory],
+        memory=list(
+            dict.fromkeys(
+                [
+                    *[card.record_id for card in included.memory],
+                    *included.gateway_memory_ids,
+                ]
+            )
+        ),
         recalled_memory=[
             *[card.record_id for card in included.session_start_recalled_memory],
             *[card.record_id for card in included.mid_session_recalled_memory],

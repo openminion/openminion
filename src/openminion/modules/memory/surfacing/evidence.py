@@ -1,8 +1,42 @@
 """Typed memory evidence selected for prompt context."""
 
 import hashlib
+import json
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Self
+
+from pydantic import BaseModel, Field, model_validator
+
+
+class MemoryContextSpan(BaseModel):
+    """Half-open character offsets into rendered memory context."""
+
+    record_id: str
+    start: int = Field(ge=0)
+    end: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_bounds(self) -> Self:
+        if self.end <= self.start:
+            raise ValueError(  # allow-bare-raise: Pydantic span validation
+                "end must be greater than start"
+            )
+        return self
+
+
+def parse_memory_context_spans(
+    metadata: Mapping[str, str], *, context_length: int, offset: int = 0
+) -> list[MemoryContextSpan]:
+    spans = []
+    for item in json.loads(metadata.get("memory_context_spans", "[]")):
+        span = MemoryContextSpan.model_validate(item)
+        if span.end <= context_length:
+            spans.append(
+                span.model_copy(
+                    update={"start": span.start + offset, "end": span.end + offset}
+                )
+            )
+    return spans
 
 
 @dataclass(frozen=True)
@@ -77,6 +111,8 @@ def build_memory_retrieval_items(
 
 
 __all__ = [
+    "MemoryContextSpan",
+    "parse_memory_context_spans",
     "MemoryEvidenceOmission",
     "MemoryRetrievalEvidenceItem",
     "MemoryRetrievalEvidenceSelection",

@@ -283,6 +283,9 @@ test-e2e-ci: $(DEV_STAMP)
 		"$(REPO_ROOT)/tests/e2e/project_worker/test_security_remediation.py" \
 		"$(REPO_ROOT)/tests/e2e/security_lab/test_fixture.py" \
 		"$(REPO_ROOT)/tests/e2e/test_memory_capture_recall_reliability.py" \
+		"$(REPO_ROOT)/tests/e2e/cli/focus/test_memory_observation.py" \
+		"$(REPO_ROOT)/tests/e2e/cli/focus/test_memory_campaign_preflight.py" \
+		"$(REPO_ROOT)/tests/e2e/cli/focus/test_memory_continuity_acceptance.py" \
 		"$(REPO_ROOT)/tests/e2e/test_tool_transcript_continuity.py" \
 		"$(REPO_ROOT)/tests/e2e/test_project_learning_instruction_loop.py" \
 		"$(REPO_ROOT)/tests/e2e/test_cli_focus_e2e_runner.py" \

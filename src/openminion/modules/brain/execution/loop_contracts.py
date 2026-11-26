@@ -79,6 +79,7 @@ class ExecutionContext:
     llm_adapter: Any
     command_executor: CommandExecutor
     _services: ModeServices = field(repr=False)
+    context_llm_call_id: str | None = None
 
     @property
     def mode_name(self) -> str:

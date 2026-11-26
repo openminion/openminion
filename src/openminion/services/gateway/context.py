@@ -271,6 +271,7 @@ def _build_cached_memory_context(
 
 def _emit_memory_build_events(
     *,
+    turn_context: TurnContext,
     emit_memory_event: MemoryEventEmitter,
     session_id: str,
     conversation_id: str,
@@ -280,11 +281,6 @@ def _emit_memory_build_events(
     request_id: str,
     memory_strategy: str,
     memory_dynamic_retrieval_enabled: bool,
-    capsule_cache_hit: bool,
-    memory_context: str,
-    memory_context_meta: dict[str, str],
-    memory_retrieval_context: str,
-    memory_retrieval_meta: dict[str, str],
 ) -> None:
     emit_memory_event(
         session_id=session_id,
@@ -296,10 +292,10 @@ def _emit_memory_build_events(
             "run_id": run_id,
             "request_id": request_id,
             "strategy": memory_strategy,
-            "cache_hit": str(capsule_cache_hit).lower(),
-            "capsule_chars": str(len(memory_context)),
-            "capsule_fingerprint": _text_fingerprint(memory_context),
-            **recall_observation_payload(memory_context_meta),
+            "cache_hit": str(turn_context.capsule_cache_hit).lower(),
+            "capsule_chars": str(len(turn_context.memory_context)),
+            "capsule_fingerprint": _text_fingerprint(turn_context.memory_context),
+            **recall_observation_payload(turn_context.memory_context_meta),
         },
     )
     if not memory_dynamic_retrieval_enabled:
@@ -315,9 +311,11 @@ def _emit_memory_build_events(
             "request_id": request_id,
             "strategy": memory_strategy,
             "enabled": str(memory_dynamic_retrieval_enabled).lower(),
-            "retrieval_chars": str(len(memory_retrieval_context)),
-            "retrieval_fingerprint": _text_fingerprint(memory_retrieval_context),
-            **recall_observation_payload(memory_retrieval_meta),
+            "retrieval_chars": str(len(turn_context.memory_retrieval_context)),
+            "retrieval_fingerprint": _text_fingerprint(
+                turn_context.memory_retrieval_context
+            ),
+            **recall_observation_payload(turn_context.memory_retrieval_meta),
         },
     )
 
@@ -487,7 +485,7 @@ def _select_and_populate_memory_context(
                 memory_capsule_cache=memory_capsule_cache,
                 memory_dynamic_retrieval_enabled=memory_dynamic_retrieval_enabled,
             )
-            _emit_memory_build_events_for_turn(
+            _emit_memory_build_events(
                 turn_context=turn_context,
                 emit_memory_event=emit_memory_event,
                 session_id=session_id,
@@ -553,6 +551,9 @@ def _finalize_turn_context(
             target=target,
             session_id=session_id,
             memory_context=turn_context.memory_context,
+            memory_context_spans=turn_context.memory_context_meta.get(
+                "memory_context_spans", "[]"
+            ),
         )
     memory_evidence_enabled = bool(turn_context.memory_retrieval_context) or (
         memory_evidence_enabled
@@ -711,37 +712,6 @@ def _populate_knowledge_graph_context(
         thread_id=thread_id,
         attach_id=attach_id,
         payload={**payload_base, **turn_context.knowledge_graph_meta},
-    )
-
-
-def _emit_memory_build_events_for_turn(
-    *,
-    turn_context: TurnContext,
-    emit_memory_event: MemoryEventEmitter,
-    session_id: str,
-    conversation_id: str,
-    thread_id: str,
-    attach_id: str,
-    run_id: str,
-    request_id: str,
-    memory_strategy: str,
-    memory_dynamic_retrieval_enabled: bool,
-) -> None:
-    _emit_memory_build_events(
-        emit_memory_event=emit_memory_event,
-        session_id=session_id,
-        conversation_id=conversation_id,
-        thread_id=thread_id,
-        attach_id=attach_id,
-        run_id=run_id,
-        request_id=request_id,
-        memory_strategy=memory_strategy,
-        memory_dynamic_retrieval_enabled=memory_dynamic_retrieval_enabled,
-        capsule_cache_hit=turn_context.capsule_cache_hit,
-        memory_context=turn_context.memory_context,
-        memory_context_meta=turn_context.memory_context_meta,
-        memory_retrieval_context=turn_context.memory_retrieval_context,
-        memory_retrieval_meta=turn_context.memory_retrieval_meta,
     )
 
 

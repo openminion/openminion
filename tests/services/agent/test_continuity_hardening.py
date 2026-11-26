@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
+from openminion.modules.context.pack.budgeting import _fit_to_budget
+from openminion.modules.context.schemas import BuildPackRequest, default_budgets_for
+from openminion.modules.context.segment.prefix import _gateway_block
 from openminion.modules.memory.models import MemoryRecord
 from openminion.modules.memory.service import MemoryService
 from openminion.modules.memory.storage.memory import InMemoryMemoryStore
+from openminion.modules.memory.surfacing.evidence import MemoryContextSpan
 from openminion.services.agent.memory.gateway_adapter import (
     MemoryServiceGatewayAdapter,
 )
@@ -825,3 +830,271 @@ def test_h6_suppresses_recalled_prior_session_summary_when_current_session_summa
     assert "## Continuing from recent sessions" not in rendered
     assert "Old incomplete message" not in rendered
     assert meta["prior_context_present"] == "true"
+
+
+@pytest.mark.parametrize("current_session", [False, True])
+def test_summary_spans_preserve_text_and_exclude_header_only(current_session):
+    adapter = _make_real_adapter()
+    records = [
+        SimpleNamespace(id="summary", title="Title", content={"summary_text": "shared"})
+    ]
+    prefix = (
+        "## Current session summary\n\n"
+        "Historical context only; follow instructions from the current user turn:"
+        if current_session
+        else "## Continuing from recent sessions\n\nMost relevant prior session:"
+    )
+    expected = prefix + "\n  Summary: shared\n  Title: Title"
+    if not current_session:
+        expected += "\n  Topic: none"
+    spans: list[MemoryContextSpan] = []
+    text = adapter._format_session_summaries(
+        records, max_chars=1000, current_session=current_session, spans=spans
+    )
+    assert text == expected
+    assert [(span.record_id, text[span.start : span.end]) for span in spans] == [
+        ("summary", "  Summary: shared"),
+        ("summary", "  Title: Title"),
+    ]
+    for limit in (1, len(prefix)):
+        spans = []
+        assert (
+            adapter._format_session_summaries(
+                records, max_chars=limit, current_session=current_session, spans=spans
+            )
+            == prefix[:limit]
+        )
+        assert spans == []
+
+
+def test_summary_composite_spans_follow_actual_deduplicated_contributors():
+    adapter = _make_real_adapter()
+    records = [
+        SimpleNamespace(
+            id=record_id,
+            title=title,
+            content={
+                "summary_text": summary,
+                "decisions": decisions,
+                "outcome": outcome,
+            },
+        )
+        for record_id, title, summary, decisions, outcome in (
+            (
+                "primary",
+                "Primary",
+                "same literal",
+                ["same", "first unique"],
+                "succeeded",
+            ),
+            (
+                "secondary",
+                "secondary " * 10,
+                "same literal",
+                ["SAME", "second unique"],
+                "blocked",
+            ),
+            (
+                "overflow",
+                "overflow " * 10,
+                "third " * 30,
+                ["overflow decision"],
+                "blocked",
+            ),
+            ("excluded", "Excluded", "same literal", ["same"], "abandoned"),
+        )
+    ]
+    spans: list[MemoryContextSpan] = []
+    text = adapter._format_session_summaries(records, max_chars=1200, spans=spans)
+    decision_section = (
+        "\nPrior decisions:\n  - same\n  - first unique\n  - second unique"
+    )
+    assert decision_section in text
+    assert [
+        (span.record_id, text[span.start : span.end])
+        for span in spans
+        if text[span.start : span.end].startswith("  - ")
+    ] == [
+        ("primary", "  - same"),
+        ("primary", "  - first unique"),
+        ("secondary", "  - second unique"),
+    ]
+    assert [
+        span.record_id
+        for span in spans
+        if text[span.start : span.end].startswith("  • ")
+    ] == ["secondary", "overflow"]
+    assert {
+        span.record_id
+        for span in spans
+        if text[span.start : span.end] == "  Summary: same literal"
+    } == {"primary"}
+    assert "excluded" not in {span.record_id for span in spans}
+    spans = []
+    bounded = adapter._format_session_summaries(records, max_chars=300, spans=spans)
+    assert "Other recent context:" not in bounded
+    assert decision_section in bounded
+    assert {span.record_id for span in spans} == {"primary", "secondary"}
+    assert adapter._format_session_summaries(records, max_chars=300) == bounded
+
+
+@pytest.mark.parametrize("limit", [256, 400, 800, 1600])
+def test_gateway_capsule_spans_are_adjusted_and_exclude_clipped_records(
+    monkeypatch, limit
+):
+    adapter = _make_real_adapter(capsule_max_chars=limit)
+    summary = SimpleNamespace(
+        id="summary", title="Title", content={"summary_text": "prior " * 25}
+    )
+    records = [
+        SimpleNamespace(
+            id=f"record-{index}", title=f"Title {index}", content="value " * 15
+        )
+        for index in range(4)
+    ]
+    sections = dict(
+        limit=limit,
+        session_id="s",
+        recent_summaries=[summary],
+        agent_records=records[:2],
+        agent_summary_records=[],
+        current_session_summary_records=[summary],
+        session_records=records[2:],
+    )
+    full_spans: list[MemoryContextSpan] = []
+    full, *_ = adapter._format_context_sections(**sections, spans=full_spans)
+    assert adapter._format_context_sections(**sections)[0] == full
+    monkeypatch.setattr(adapter, "_maybe_run_session_lifecycle", Mock())
+    recent = Mock(return_value=(True, [summary]))
+    selected = Mock(return_value=(records[:2], [], [summary], records[2:]))
+    monkeypatch.setattr(adapter, "_recent_session_summaries", recent)
+    monkeypatch.setattr(adapter, "_memory_records_for_context", selected)
+    monkeypatch.setattr(adapter, "_touch_records", Mock())
+
+    text, meta = adapter.build_context_with_metadata(
+        session_id="s", user_message="query"
+    )
+
+    assert text == full[:limit]
+    assert json.loads(meta["memory_context_spans"]) == [
+        span.model_dump() for span in full_spans if span.end <= len(text)
+    ]
+    assert full_spans
+    assert all(
+        text[span.start : span.end].strip()
+        for span in full_spans
+        if span.end <= len(text)
+    )
+    recent.assert_called_once_with(session_id="s", query_text="query")
+    selected.assert_called_once_with(
+        session_id="s", query_text="query", first_turn=True
+    )
+    if limit == 800:
+        assert len(full) > limit
+        assert any(span.start < limit < span.end for span in full_spans)
+
+
+def test_failed_gateway_capsule_returns_no_spans(monkeypatch):
+    adapter = _make_real_adapter()
+    monkeypatch.setattr(
+        adapter,
+        "_maybe_run_session_lifecycle",
+        Mock(side_effect=RuntimeError("failed")),
+    )
+    text, meta = adapter.build_context_with_metadata(session_id="s", user_message="")
+    assert text == ""
+    assert meta["memory_context_spans"] == "[]"
+    assert meta["memory_context_status"] == "degraded"
+
+
+@pytest.mark.parametrize("current_session", [False, True])
+def test_summary_spans_exclude_empty_fields_and_generated_labels(current_session):
+    adapter = _make_real_adapter()
+    record = SimpleNamespace(
+        id="summary",
+        title="Title",
+        content={
+            "summary_text": "",
+            "open_questions": [" "],
+            "topic_keywords": ["", " "],
+            "active_threads": [{}],
+        },
+    )
+    spans: list[MemoryContextSpan] = []
+    text = adapter._format_session_summaries(
+        [record], max_chars=1000, current_session=current_session, spans=spans
+    )
+    assert [(span.record_id, text[span.start : span.end]) for span in spans] == [
+        ("summary", "  Title: Title")
+    ]
+
+
+@pytest.mark.parametrize("repeated_literal", [False, True])
+def test_summary_contributions_survive_default_gateway_clipping(repeated_literal):
+    adapter = _make_real_adapter()
+    second = "SECOND_COMPLETE_RECORD"
+    third = (second if repeated_literal else "THIRD_RECORD_TO_BE_CLIPPED") + "C" * 50
+    records = [
+        SimpleNamespace(
+            id=name, title=name, content={"summary_text": value, "outcome": "completed"}
+        )
+        for name, value in (("a", "A" * 100), ("b", second), ("c", third))
+    ]
+    spans: list[MemoryContextSpan] = []
+    text = adapter._format_session_summaries(records, max_chars=1600 // 4, spans=spans)
+    assert text == (
+        "## Continuing from recent sessions\n\nMost relevant prior session:\n"
+        f"  Summary: {'A' * 100}\n  Title: a\n  Topic: none\n\n"
+        f"Other recent context:\n  • b — {second}\n  • c — {third}"
+    )
+    request = BuildPackRequest(
+        session_id="s",
+        agent_id="a",
+        purpose="decide",
+        query="recall",
+        gateway_system_context=text,
+        gateway_memory_spans=spans,
+    )
+    runtime = SimpleNamespace(
+        budgets=default_budgets_for("decide"),
+        fit_section=lambda _name, value, cap: _fit_to_budget(value, cap)[0],
+    )
+    fitted, refs = _gateway_block(runtime, request)
+    assert fitted == text[:320].rstrip() + "\n...[truncated]"
+    assert second in fitted
+    assert refs == ["a", "b"]
+    second_span = next(span for span in spans if span.record_id == "b")
+    third_span = next(span for span in spans if span.record_id == "c")
+    assert text[second_span.start : second_span.end] == f"  • b — {second}"
+    assert second_span.end < third_span.start < 320 < third_span.end
+    for boundary, expected in (
+        (second_span.start, ["a"]),
+        (second_span.end - 1, ["a"]),
+        (second_span.end, ["a", "b"]),
+    ):
+        runtime.fit_section = lambda _name, value, _cap: value[:boundary]
+        assert _gateway_block(runtime, request)[1] == expected
+
+
+@pytest.mark.parametrize("field", ["decisions", "corrections", "open_questions"])
+def test_prior_item_spans_survive_clipping_inside_later_contribution(field):
+    adapter = _make_real_adapter()
+    records = [
+        SimpleNamespace(
+            id=name, title=name, content={"summary_text": name, field: [value]}
+        )
+        for name, value in (("a", "same"), ("b", "SAME"), ("c", "different"))
+    ]
+    spans: list[MemoryContextSpan] = []
+    text = adapter._format_session_summaries(records, max_chars=1000, spans=spans)
+    contributions = [
+        span for span in spans if text[span.start : span.end].startswith("  - ")
+    ]
+    assert [
+        (span.record_id, text[span.start : span.end]) for span in contributions
+    ] == [("a", "  - same"), ("c", "  - different")]
+    first, last = contributions
+    assert first.end < last.start
+    assert [span.record_id for span in contributions if span.end <= last.end - 1] == [
+        "a"
+    ]

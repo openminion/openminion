@@ -20,7 +20,10 @@ from openminion.modules.brain.runner.tick.context import (
 from openminion.modules.brain.schemas import WorkingState
 
 from .contracts import _MissionResetPreview, _TurnResetPreservation
-from openminion.modules.brain.constants import STATE_KEY_TASK_BACKED_RESUME
+from openminion.modules.brain.constants import (
+    STATE_KEY_MODULE_STATE,
+    STATE_KEY_TASK_BACKED_RESUME,
+)
 
 BRAIN_BRIDGE_CONFIRMATION_RESET_PRESERVED_EVENT = (
     "brain.bridge.confirmation_reset_preserved"
@@ -317,6 +320,7 @@ def _base_turn_reset_state(
     updated["recent_artifacts"] = []
     updated["reflection_backlog"] = []
     updated["gateway_system_context"] = ""
+    updated.setdefault(STATE_KEY_MODULE_STATE, {}).pop("gateway_memory", None)
     updated["resume_task_id_hint"] = None
     updated["resume_cron_job_id_hint"] = None
     updated["memory_candidates"] = []

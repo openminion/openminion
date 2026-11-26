@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from openminion.modules.brain.diagnostics.usage import record_llm_response
+from openminion.modules.brain.schemas.base import new_uuid
 import platform
 import re
 from collections.abc import Mapping
@@ -581,6 +582,7 @@ class DefaultAdaptiveToolLoopLLMRuntime:
         self._client = llm_client
         self._task_state = task_state
         self._budget_adapter = adapter
+        self._used_context_call_ids: set[str] = set()
         self._use_call_path = not callable(
             getattr(llm_client, "complete", None)
         ) and callable(getattr(llm_client, "call", None))
@@ -616,6 +618,15 @@ class DefaultAdaptiveToolLoopLLMRuntime:
             model=model,
             requested_output=max_output_tokens,
         )
+        if metadata and (context_call_id := metadata.get("context_llm_call_id")):
+            metadata = dict(metadata)
+            if not metadata.get("llm_call_id"):
+                metadata["llm_call_id"] = (
+                    new_uuid()
+                    if context_call_id in self._used_context_call_ids
+                    else context_call_id
+                )
+            self._used_context_call_ids.add(context_call_id)
         if self._use_call_path:
             request = _build_llm_request(
                 messages=messages,

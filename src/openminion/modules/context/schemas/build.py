@@ -1,4 +1,7 @@
+from pydantic import Field
+
 from openminion.modules.artifact.models import ImageInputContext
+from openminion.modules.memory.surfacing.evidence import MemoryContextSpan
 
 # ruff: noqa: F403,F405
 from .common import *
@@ -43,5 +46,6 @@ class BuildPackRequest(BaseModel):
     live_state_overlay: Dict[str, Any] = Field(default_factory=dict)
     phase_hints: Dict[str, Any] = Field(default_factory=dict)
     gateway_system_context: str = ""
+    gateway_memory_spans: list[MemoryContextSpan] = Field(default_factory=list)
     include_identity: bool = True
     self_awareness: Dict[str, Any] = Field(default_factory=dict)

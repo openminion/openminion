@@ -52,6 +52,7 @@ _COMMON_HINT_KEYS = {
     "pending_conversational_clarification",
     "clarification_responses",
     "gateway_system_context",
+    "gateway_memory_spans",
     "model_capability_overrides",
     "self_awareness",
 }
@@ -755,12 +756,14 @@ def build_context(
     gateway_ctx = str(getattr(state, "gateway_system_context", "") or "").strip()
     if gateway_ctx:
         hints["gateway_system_context"] = gateway_ctx
+        hints["gateway_memory_spans"] = state.module_state.get(
+            "gateway_memory", {}
+        ).get("spans", [])
     profile = getattr(runner, "profile", None)
     if getattr(profile, "model_capability_overrides", None):
         hints["model_capability_overrides"] = profile.model_capability_overrides
     thinking_hints = _build_thinking_hints(runner, purpose=purpose, hints=hints)
-    for key, value in thinking_hints.items():
-        hints.setdefault(key, value)
+    hints = thinking_hints | hints
     live_state_overlay = dict(hints.get("live_state_overlay") or {})
     live_state_overlay.update(_improvement_note_overlay(runner, state=state))
     live_state_overlay.update(
@@ -773,13 +776,11 @@ def build_context(
         hints["live_state_overlay"] = live_state_overlay
     hints.update(_budget_telemetry_overlay(runner, state=state))
 
-    sanitized_hints = {
-        key: value
-        for key, value in hints.items()
-        if _is_phase_hint_allowed(purpose=purpose, key=key)
-    }
-    dropped_keys = sorted(hints.keys() - sanitized_hints.keys())
-    hints = sanitized_hints
+    dropped_keys = sorted(
+        key for key in hints if not _is_phase_hint_allowed(purpose=purpose, key=key)
+    )
+    for key in dropped_keys:
+        del hints[key]
     if dropped_keys:
         logger.emit(
             "context.phase_hints.filtered",

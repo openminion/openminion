@@ -14,6 +14,10 @@ from openminion.modules.brain.act_profiles import fixed_act_profile_from_profile
 from openminion.modules.memory.runtime.consolidation import (
     collect_memory_consolidation_candidates,
 )
+from openminion.modules.memory.surfacing.evidence import (
+    MemoryContextSpan,
+    parse_memory_context_spans,
+)
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.services.agent import _history_role, _resolve_system_prompt
 from openminion.services.agent.constants import PRIOR_TURN_CONTEXT_CHAR_LIMIT
@@ -73,7 +77,6 @@ def _inject_gateway_system_context(
     ctx = str(gateway_system_context or "").strip()
     if not ctx:
         return
-    # PIDF: route gateway_system_context through the typed boundary owner.
     _pidf_emit_boundary_event(
         "gateway_system_context",
         ctx,
@@ -86,6 +89,9 @@ def _inject_gateway_system_context(
     if state_inline is None:
         return
     state_inline["gateway_system_context"] = ctx
+    state_inline.setdefault(STATE_KEY_MODULE_STATE, {})["gateway_memory"] = {
+        "spans": runner._pending_gateway_memory_spans
+    }
     self._write_working_state_inline(
         runner=runner,
         session_id=session_id,
@@ -94,15 +100,12 @@ def _inject_gateway_system_context(
 
 
 def _history_has_memory_context(*, history: list[Message]) -> bool:
-    for item in history:
-        metadata = getattr(item, "metadata", {}) or {}
-        if _metadata_text(metadata, "memory_scope"):
-            return True
-        if _metadata_bool(metadata, "context_memory_merged"):
-            return True
-        if _metadata_bool(metadata, "context_memory_dynamic"):
-            return True
-    return False
+    return any(
+        _metadata_text(item.metadata, "memory_scope")
+        or _metadata_bool(item.metadata, "context_memory_merged")
+        or _metadata_bool(item.metadata, "context_memory_dynamic")
+        for item in history
+    )
 
 
 def _build_runtime_memory_context(
@@ -113,51 +116,26 @@ def _build_runtime_memory_context(
     user_message: str,
     history: list[Message],
 ) -> str:
-    if _history_has_memory_context(history=history):
-        try:
-            runner._pending_memory_context_meta = {}
-        except Exception:  # noqa: BLE001
-            pass
-        return ""
+    runner._pending_memory_context_meta = {}
     memory_api = getattr(runner, "memory_api", None)
-    if memory_api is None:
-        try:
-            runner._pending_memory_context_meta = {}
-        except Exception:  # noqa: BLE001
-            pass
+    if memory_api is None or _history_has_memory_context(history=history):
         return ""
     try:
-        build_context_with_meta = getattr(
-            memory_api, "build_context_with_metadata", None
-        )
-        if callable(build_context_with_meta):
-            context, meta = build_context_with_meta(
+        build_with_meta = getattr(memory_api, "build_context_with_metadata", None)
+        if callable(build_with_meta):
+            context, meta = build_with_meta(
                 session_id=session_id,
                 user_message=user_message,
             )
         else:
-            build_context = getattr(memory_api, "build_context", None)
-            if not callable(build_context):
-                try:
-                    runner._pending_memory_context_meta = {}
-                except Exception:  # noqa: BLE001
-                    pass
-                return ""
-            context = build_context(
+            context = memory_api.build_context(
                 session_id=session_id,
                 user_message=user_message,
             )
             meta = {}
     except Exception:  # noqa: BLE001
-        try:
-            runner._pending_memory_context_meta = {}
-        except Exception:  # noqa: BLE001
-            pass
         return ""
-    try:
-        runner._pending_memory_context_meta = dict(meta or {})
-    except Exception:  # noqa: BLE001
-        pass
+    runner._pending_memory_context_meta = dict(meta or {})
     return str(context or "").strip()
 
 
@@ -633,7 +611,9 @@ def _recalled_memory_count_from_runner(
     return len(refs) if isinstance(refs, list) else 0
 
 
-def _collect_system_history_context(*, history: list[Message]) -> str:
+def _collect_system_history_context(
+    *, history: list[Message], spans: list[MemoryContextSpan] | None = None
+) -> str:
     chunks: list[str] = []
     seen: set[str] = set()
     for item in history:
@@ -641,11 +621,16 @@ def _collect_system_history_context(*, history: list[Message]) -> str:
         if role != "system":
             continue
         text = str(getattr(item, "body", "") or "").strip()
-        if not text:
-            continue
-        if text in seen:
+        if not text or text in seen:
             continue
         seen.add(text)
+        if spans is not None:
+            offset = len("\n\n".join(chunks)) + (2 if chunks else 0)
+            spans.extend(
+                parse_memory_context_spans(
+                    item.metadata, context_length=len(text), offset=offset
+                )
+            )
         chunks.append(text)
     return "\n\n".join(chunks).strip()
 

@@ -1,3 +1,5 @@
+"""Session memory lifecycle and summary rendering."""
+
 import hashlib
 import json
 import threading
@@ -14,6 +16,7 @@ from openminion.modules.memory.runtime.gc import (
 )
 from openminion.modules.memory.models import MemoryCandidate, SessionSummaryContent
 from openminion.modules.memory.runtime.extraction.records import _content_text
+from openminion.modules.memory.surfacing.evidence import MemoryContextSpan
 from openminion.modules.prompting.memory import (
     CURRENT_SESSION_CALLBACK_CONTEXT_LABEL,
     CURRENT_SESSION_SUMMARY_HEADER,
@@ -22,6 +25,10 @@ from openminion.modules.prompting.memory import (
     session_summary_preview,
     truncate_session_summary_text,
 )
+
+
+def _summary_field_line(label: str, value: Any, *, max_chars: int) -> str:
+    return f"  {label}: {truncate_session_summary_text(value, max_chars=max_chars)}"
 
 
 class SessionLifecycleMixin:
@@ -635,9 +642,8 @@ class SessionLifecycleMixin:
         *,
         max_chars: int,
         current_session: bool = False,
+        spans: list[MemoryContextSpan] | None = None,
     ) -> str:
-        if not records:
-            return ""
         entries: list[dict[str, Any]] = []
         for record in records:
             content = getattr(record, "content", {}) or {}
@@ -648,6 +654,7 @@ class SessionLifecycleMixin:
             content_dict: dict[str, Any] = content if isinstance(content, dict) else {}
             entries.append(
                 {
+                    "record_id": str(getattr(record, "id", "") or "").strip(),
                     "title": title,
                     "summary_text": summary_text,
                     "decisions": list(content_dict.get("decisions", []) or []),
@@ -664,8 +671,6 @@ class SessionLifecycleMixin:
                     ),
                 }
             )
-        if not entries:
-            return ""
         eligible_indices = [
             index
             for index, entry in enumerate(entries)
@@ -673,44 +678,35 @@ class SessionLifecycleMixin:
         ]
         if not eligible_indices:
             return ""
-        preferred_index = eligible_indices[0]
-        best_rank = (-1, -1)
-        for index in eligible_indices:
-            entry = entries[index]
-            active_threads = list(entry.get("active_threads", []) or [])
-            entry_rank = 0
-            for thread in active_threads:
-                if not isinstance(thread, Mapping):
-                    continue
-                entry_rank = max(
-                    entry_rank,
-                    self._active_thread_status_rank(thread.get("status", "")),
-                )
-            candidate_rank = (
-                self._session_summary_outcome_rank(entry.get("outcome", "unknown")),
-                entry_rank,
-            )
-            if candidate_rank > best_rank:
-                best_rank = candidate_rank
-                preferred_index = index
+        preferred_index = max(
+            eligible_indices,
+            key=lambda index: (
+                self._session_summary_outcome_rank(entries[index]["outcome"]),
+                max(
+                    (
+                        self._active_thread_status_rank(thread.get("status", ""))
+                        for thread in entries[index]["active_threads"]
+                        if isinstance(thread, Mapping)
+                    ),
+                    default=0,
+                ),
+            ),
+        )
         first = entries[preferred_index]
-        active_thread: Mapping[str, Any] | None = None
-        active_thread_rank = -1
-        for thread in list(first.get("active_threads", []) or []):
-            if not isinstance(thread, Mapping):
-                continue
-            rank = self._active_thread_status_rank(thread.get("status", ""))
-            if rank > active_thread_rank:
-                active_thread = thread
-                active_thread_rank = rank
-        if active_thread is None:
-            for thread in list(first.get("active_threads", []) or []):
-                if isinstance(thread, Mapping):
-                    active_thread = thread
-                    break
-        prior_decisions: list[str] = []
-        prior_open_questions: list[str] = []
-        prior_corrections: list[str] = []
+        active_thread = max(
+            (
+                thread
+                for thread in first["active_threads"]
+                if isinstance(thread, Mapping)
+            ),
+            key=lambda thread: self._active_thread_status_rank(
+                thread.get("status", "")
+            ),
+            default=None,
+        )
+        prior_decisions: list[tuple[str, str]] = []
+        prior_open_questions: list[tuple[str, str]] = []
+        prior_corrections: list[tuple[str, str]] = []
         eligible_entries = [entries[index] for index in eligible_indices]
         for entry in eligible_entries:
             for source_key, target in (
@@ -718,34 +714,29 @@ class SessionLifecycleMixin:
                 ("open_questions", prior_open_questions),
                 ("corrections", prior_corrections),
             ):
-                seen = {item.lower() for item in target}
+                seen = {item.lower() for item, _record_id in target}
                 for item in list(entry.get(source_key, []) or []):
                     text = str(item or "").strip()
                     if not text or text.lower() in seen:
                         continue
-                    target.append(text)
+                    target.append((text, entry["record_id"]))
                     seen.add(text.lower())
                     if len(target) >= 3:
                         break
-        lines = (
-            [
-                CURRENT_SESSION_SUMMARY_HEADER,
-                "",
-                CURRENT_SESSION_CALLBACK_CONTEXT_LABEL,
-            ]
+        lines = [
+            CURRENT_SESSION_SUMMARY_HEADER
             if current_session
-            else [
-                PRIOR_SESSION_SUMMARY_HEADER,
-                "",
-                PRIOR_SESSION_CONTEXT_LABEL,
-            ]
-        )
+            else PRIOR_SESSION_SUMMARY_HEADER,
+            "",
+            CURRENT_SESSION_CALLBACK_CONTEXT_LABEL
+            if current_session
+            else PRIOR_SESSION_CONTEXT_LABEL,
+        ]
         key_decision_section: list[str] | None = None
         if first["decisions"]:
-            key_decision_limit = 120 if current_session else 88
             key_decision = truncate_session_summary_text(
                 first["decisions"][0],
-                max_chars=key_decision_limit,
+                max_chars=120 if current_session else 88,
             )
             if key_decision:
                 key_decision_section = [f"  Key decision: {key_decision}"]
@@ -754,55 +745,35 @@ class SessionLifecycleMixin:
             current_session=current_session,
             has_active_thread=active_thread is not None,
         )
-        optional_sections: list[list[str]] = []
         title_section: list[str] | None = None
         if first["title"]:
-            title_section = [
-                "  Title: "
-                + truncate_session_summary_text(
-                    first["title"],
-                    max_chars=72,
-                )
-            ]
+            title_section = [_summary_field_line("Title", first["title"], max_chars=72)]
         topic_section: list[str] | None = None
         if first["keywords"]:
             topic_label = ", ".join(str(item) for item in first["keywords"][:5])
-            topic_section = [
-                "  Topic: "
-                + truncate_session_summary_text(
-                    topic_label,
-                    max_chars=72,
-                )
-            ]
+            topic_section = [_summary_field_line("Topic", topic_label, max_chars=72)]
         elif not current_session:
             topic_section = ["  Topic: none"]
         active_thread_section: list[str] | None = None
         if active_thread is not None:
-            active_thread_lines = ["", "Active thread:"]
-            active_thread_lines.append(
-                "  Topic: "
-                + truncate_session_summary_text(
-                    active_thread.get("topic", ""),
-                    max_chars=64,
-                )
-            )
-            active_thread_lines.append(
-                f"  Status: {str(active_thread.get('status', '')).strip() or 'open'}"
-            )
+            active_thread_section = [
+                "",
+                "Active thread:",
+                _summary_field_line(
+                    "Topic", active_thread.get("topic", ""), max_chars=64
+                ),
+                f"  Status: {str(active_thread.get('status', '')).strip() or 'open'}",
+            ]
             next_step = str(active_thread.get("next_step", "") or "").strip()
             if next_step:
-                active_thread_lines.append(
-                    "  Next step: "
-                    + truncate_session_summary_text(next_step, max_chars=120)
+                active_thread_section.append(
+                    _summary_field_line("Next step", next_step, max_chars=120)
                 )
-            active_thread_section = active_thread_lines
         open_question_section: list[str] | None = None
         if first["open_questions"]:
             open_question_section = [
-                "  Open question: "
-                + truncate_session_summary_text(
-                    first["open_questions"][0],
-                    max_chars=96,
+                _summary_field_line(
+                    "Open question", first["open_questions"][0], max_chars=96
                 )
             ]
         summary_section: list[str] | None = None
@@ -823,30 +794,51 @@ class SessionLifecycleMixin:
                     entry["summary_text"] or label, max_chars=80
                 )
                 other_recent_section.append(f"  • {label} — {condensed or label}")
-        prioritized_sections = (
-            [
-                topic_section,
-                key_decision_section,
-                open_question_section,
-                active_thread_section,
-                summary_section,
-                title_section,
-                other_recent_section,
-            ]
-            if current_session
-            else [
-                active_thread_section,
-                summary_section,
-                key_decision_section,
-                open_question_section,
-                title_section,
-                topic_section,
-                other_recent_section,
-            ]
+        first_ids = (first["record_id"],)
+        topic_ids = (
+            first_ids
+            if any(str(item).strip() for item in first["keywords"][:5])
+            else ()
         )
-        for section in prioritized_sections:
-            if section:
-                optional_sections.append(section)
+        thread_ids = (
+            ("", "")
+            + tuple(
+                first["record_id"]
+                if str(active_thread.get(key, "") or "").strip()
+                else ""
+                for key in ("topic", "status", "next_step")
+            )
+            if active_thread is not None
+            else ()
+        )
+        question_ids = (
+            first_ids
+            if first["open_questions"] and str(first["open_questions"][0] or "").strip()
+            else ()
+        )
+        other_ids = ("", "") + tuple(
+            entries[index]["record_id"]
+            for index in eligible_indices
+            if index != preferred_index
+        )
+        optional_sections: list[tuple[list[str] | None, tuple[str, ...]]] = [
+            (key_decision_section, first_ids),
+            (open_question_section, question_ids),
+        ]
+        thread_sections = [
+            (active_thread_section, thread_ids),
+            (summary_section, first_ids),
+        ]
+        if current_session:
+            optional_sections.insert(0, (topic_section, topic_ids))
+            optional_sections.extend(thread_sections)
+            optional_sections.append((title_section, first_ids))
+        else:
+            optional_sections[0:0] = thread_sections
+            optional_sections.extend(
+                [(title_section, first_ids), (topic_section, topic_ids)]
+            )
+        optional_sections.append((other_recent_section, other_ids))
         for header, prior_items in (
             ("Prior decisions:", prior_decisions),
             ("Prior corrections:", prior_corrections),
@@ -855,16 +847,33 @@ class SessionLifecycleMixin:
             if not prior_items:
                 continue
             optional_sections.append(
-                ["", header]
-                + [
-                    "  - " + truncate_session_summary_text(item, max_chars=96)
-                    for item in prior_items[:3]
-                ]
+                (
+                    ["", header]
+                    + [
+                        "  - " + truncate_session_summary_text(item, max_chars=96)
+                        for item, _record_id in prior_items[:3]
+                    ],
+                    ("", "") + tuple(record_id for _item, record_id in prior_items[:3]),
+                )
             )
         omitted_sections = False
-        for section in optional_sections:
+        for section, record_ids in optional_sections:
+            if not section:
+                continue
             candidate = "\n".join(lines + section)
             if len(candidate) <= max_chars:
+                if spans is not None:
+                    start = len("\n".join(lines)) + 1
+                    # IDs align with rendered lines; headings have no provenance.
+                    for line, record_id in zip(section, record_ids):
+                        end = start + len(line)
+                        if record_id:
+                            spans.append(
+                                MemoryContextSpan(
+                                    record_id=record_id, start=start, end=end
+                                )
+                            )
+                        start = end + 1
                 lines.extend(section)
             else:
                 omitted_sections = True
@@ -873,9 +882,7 @@ class SessionLifecycleMixin:
             marker = "\n  [truncated]"
             if len(rendered) + len(marker) <= max_chars:
                 rendered += marker
-        if len(rendered) > max_chars:
-            return rendered[:max_chars]
-        return rendered
+        return rendered[:max_chars]
 
     def compress_old_summaries(
         self,

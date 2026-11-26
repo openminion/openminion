@@ -30,6 +30,7 @@ def execution_task_text(ctx: Any) -> str:
 
 
 def execution_messages(ctx: Any, *, autonomous: bool = False) -> list[Message]:
+    ctx.context_llm_call_id = None
     runner = runner_from_context(ctx)
     task = "" if autonomous else execution_task_text(ctx)
     builder = getattr(runner, "_build_context", None)
@@ -47,6 +48,8 @@ def execution_messages(ctx: Any, *, autonomous: bool = False) -> list[Message]:
             logger=ctx.logger,
         )
         if context:
+            manifest = context.get("context_manifest") or {}
+            ctx.context_llm_call_id = manifest.get("llm_call_id")
             messages = list(_messages_from_context(context))
     task_message = Message(role="user", content=task) if task else None
     if task and messages and messages[-1].role == "user":

@@ -142,6 +142,7 @@ class BrainRunner:
         self._lgmh_hydrated_sessions: set[str] = set()
         self._pending_run_trigger: str | None = None
         self._pending_gateway_system_context: str | None = None
+        self._pending_gateway_memory_spans: list[dict[str, Any]] = []
         self._trace_id = trace_id or new_uuid()
         self._call_order_tracker: dict[str, dict[str, Any]] = {}
         self._progress_callback: Callable[[PhaseStatus], None] | None = None
