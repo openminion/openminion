@@ -112,6 +112,28 @@ def test_config_errors_keep_exit_code_two(monkeypatch, capsys) -> None:
     assert "config file not found" in capsys.readouterr().err
 
 
+def test_missing_config_with_unrelated_error_keeps_its_own_message(
+    monkeypatch, capsys, tmp_path
+) -> None:
+    """The hint follows the error origin, not an absent config path."""
+
+    def handler(_args):
+        raise RuntimeError("storage unavailable")
+
+    _parser_with_handler(monkeypatch, handler)
+    absent = tmp_path / "absent.json"
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / "home" / ".openminion"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_main.main(["--config", str(absent), "version"])
+
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "storage unavailable" in err
+    assert "openminion config init" not in err
+
+
 def test_abort_on_sigint_prints_and_exits_130(monkeypatch, capsys) -> None:
     codes = []
     monkeypatch.setattr(cli_main.os, "_exit", lambda code: codes.append(code))

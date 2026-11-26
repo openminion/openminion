@@ -7,6 +7,14 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Give the first-run missing-config error a next step: `run`, `doctor` and `tools`
+  now point at `openminion config init --provider <name>` or `--config <path>`
+  instead of printing a bare path. The hint is added only for the typed
+  `ConfigMissingError` the config owner raises for an absent resolved path, so an
+  unrelated runtime error keeps its own message. The original error text is
+  preserved, the displayed message gains the hint, and the stream and exit
+  statuses are unchanged (Refs #573).
+
 - `import_omx` and `export_omx` now confine table payload paths inside `omx_dir`
   (normalizing Windows separators while rejecting `..` escapes, absolute paths, and
   external symlinks), prepare quoted table/column SQL identifiers (`_quote_ident`),
