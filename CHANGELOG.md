@@ -7,6 +7,9 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- A dropped turn-input audit write is no longer silent: the queue mutation reports the
+  failure as a bounded warning while the enqueued input still succeeds (Refs #653).
+
 - `import_omx` and `export_omx` now confine table payload paths inside `omx_dir`
   (normalizing Windows separators while rejecting `..` escapes, absolute paths, and
   external symlinks), prepare quoted table/column SQL identifiers (`_quote_ident`),

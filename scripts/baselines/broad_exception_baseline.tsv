@@ -6,7 +6,7 @@ src/openminion/api/core/infrastructure.py	1	0	current broad-handler baseline; ra
 src/openminion/api/core/profiles.py	1	0	durable-save activation boundary must report partial success for any runtime close failure
 src/openminion/api/core/turn_execution.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/api/operations/skill.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/api/operations/turn_inputs.py	3	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/api/operations/turn_inputs.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/api/queries/agents.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/api/queries/runtime_reports.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/api/queries/self_model.py	7	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
