@@ -323,6 +323,75 @@ class MemoryMerger:
             rewrites=dict(options.scope_rewrites),
         )
 
+    def _preflight_direct_error_conflicts(
+        self,
+        *,
+        snapshot: MemoryBundleSnapshot,
+        rewritten_records: list[MemoryRecord],
+    ) -> list[dict[str, Any]]:
+        conflicts: list[dict[str, Any]] = []
+        seen_by_id: dict[str, MemoryRecord] = {}
+        seen_by_key: dict[tuple[str, str, str], MemoryRecord] = {}
+
+        for source_record, record in zip(snapshot.records, rewritten_records):
+            existing_exact = seen_by_id.get(record.id)
+            if existing_exact is None:
+                existing_exact = self._service._store.get(record.id)  # noqa: SLF001
+            if existing_exact is not None and _record_equal(
+                existing_exact,
+                record,
+                ignore_id=False,
+            ):
+                continue
+
+            key_tuple: tuple[str, str, str] | None = None
+            existing_key = None
+            stripped_key = str(record.key or "").strip()
+            if stripped_key:
+                key_tuple = (
+                    str(record.scope or "").strip(),
+                    str(record.type or "").strip(),
+                    stripped_key,
+                )
+                existing_key = seen_by_key.get(key_tuple)
+                if existing_key is None:
+                    existing_key = self._service.find_record_by_normalized_key(
+                        scope=record.scope,
+                        record_type=record.type,
+                        normalized_key=record.key,
+                    )
+                if existing_key is not None and _record_equal(
+                    existing_key,
+                    record,
+                    ignore_id=True,
+                ):
+                    continue
+
+            if existing_exact is not None:
+                conflicts.append(
+                    {
+                        "record_id": source_record.id,
+                        "target_id": existing_exact.id,
+                        "reason": "exact_id_conflict",
+                    }
+                )
+                continue
+            if existing_key is not None and existing_key.id != record.id:
+                conflicts.append(
+                    {
+                        "record_id": source_record.id,
+                        "target_id": existing_key.id,
+                        "reason": "normalized_key_conflict",
+                    }
+                )
+                continue
+
+            seen_by_id[record.id] = record
+            if key_tuple is not None:
+                seen_by_key[key_tuple] = record
+
+        return conflicts
+
     def _import_direct_mode(
         self,
         *,
@@ -334,6 +403,23 @@ class MemoryMerger:
         imported_at: str,
         options: MemoryBundleImportOptions,
     ) -> MemoryBundleImportResult:
+        if options.conflict_mode == "error":
+            preflight_conflicts = self._preflight_direct_error_conflicts(
+                snapshot=snapshot,
+                rewritten_records=rewritten_records,
+            )
+            if preflight_conflicts:
+                return MemoryBundleImportResult(
+                    applied=False,
+                    trust_mode=options.trust_mode,
+                    conflict_mode=options.conflict_mode,
+                    id_mode=options.id_mode,
+                    imported_records=0,
+                    skipped_records=0,
+                    conflicts=preflight_conflicts,
+                    rewrites=dict(options.scope_rewrites),
+                )
+
         conflicts: list[dict[str, Any]] = []
         imported_records = 0
         skipped_records = 0
