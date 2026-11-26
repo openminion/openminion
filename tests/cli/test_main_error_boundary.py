@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 import sqlite3
+import subprocess
+import sys
 
 import pytest
 
@@ -191,3 +195,87 @@ def test_multiline_message_is_rendered_on_one_line(monkeypatch, capsys) -> None:
     assert cli_main.main(["version"]) == 1
     payload = json.loads(capsys.readouterr().out.strip())
     assert payload["error"]["message"] == "ValueError: first line\nsecond line"
+
+
+def test_broken_pipe_exits_zero_without_internal_error(monkeypatch, capsys) -> None:
+    def handler(_args):
+        raise BrokenPipeError(32, "Broken pipe")
+
+    _parser_with_handler(monkeypatch, handler)
+
+    rc = cli_main.main(["version"])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_broken_pipe_with_json_exits_zero_without_writing_json_error(
+    monkeypatch, capsys
+) -> None:
+    def handler(_args):
+        raise BrokenPipeError(32, "Broken pipe")
+
+    _parser_with_handler(monkeypatch, handler, json_output=True)
+
+    rc = cli_main.main(["version"])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_other_os_errors_still_become_internal_error(monkeypatch, capsys) -> None:
+    def handler(_args):
+        raise PermissionError("access denied")
+
+    _parser_with_handler(monkeypatch, handler)
+
+    rc = cli_main.main(["version"])
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "internal error" in captured.err
+    assert "PermissionError: access denied" in captured.err
+
+
+def test_broken_pipe_owning_process_avoids_teardown_stderr_noise() -> None:
+    script = (
+        "import sys\n"
+        "from openminion.cli import main as cli_main\n"
+        "real = cli_main.build_parser()\n"
+        "def handler(_args):\n"
+        "    for i in range(20000):\n"
+        "        print(f'line-{i:06d}')\n"
+        "    return 0\n"
+        "class _Parser:\n"
+        "    def parse_args(self, argv=None):\n"
+        "        args = real.parse_args(argv)\n"
+        "        args.handler = handler\n"
+        "        args.needs_app = False\n"
+        "        return args\n"
+        "cli_main.build_parser = lambda: _Parser()\n"
+        "raise SystemExit(cli_main.main(['version'], owns_process=True))\n"
+    )
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[2] / "src")
+    proc = subprocess.Popen(
+        [sys.executable, "-c", script],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+    assert proc.stdout is not None
+    assert proc.stderr is not None
+    first_line = proc.stdout.readline()
+    proc.stdout.close()
+    stderr_output = proc.stderr.read()
+    proc.stderr.close()
+    returncode = proc.wait(timeout=15)
+
+    assert first_line == "line-000000\n"
+    assert returncode == 0
+    assert stderr_output == ""
