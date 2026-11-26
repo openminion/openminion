@@ -66,7 +66,7 @@ src/openminion/modules/llm/providers/transport/http.py	http_json_post	369	curren
 src/openminion/modules/llm/runtime/flow.py	_call_with_retries	104	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/memory/cli.py	_register_memory_read_command_handlers	287	Issue 413 (2026-10-26) reports an invalid memctl inspect scope as a CLI error before the service opens
 src/openminion/modules/memory/cli.py	_register_write_commands	202	Issue 403 (2026-10-25) passes each command context to the memctl service factory so the service it creates closes with the command
-src/openminion/modules/memory/portability/merger.py	MemoryMerger._import_direct_mode	163	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/modules/memory/portability/merger.py	MemoryMerger._import_direct_mode	157	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/memory/runtime/consolidation/extract.py	extract_consolidation_payload	112	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/memory/runtime/session_lifecycle.py	SessionLifecycleMixin._format_session_summaries	247	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/memory/runtime/staging.py	stage_extracted_candidates	147	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes

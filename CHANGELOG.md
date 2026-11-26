@@ -7,6 +7,15 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `MemoryMerger._import_direct_mode` now preflights deterministic exact-ID and live
+  normalized-key conflicts (against both existing store rows and earlier in-snapshot
+  records, preserving deleted/invalidated/superseded historical-row semantics via
+  `_is_live_record`) before writing any rows when `conflict_mode="error"`, returning
+  `applied=False` with `imported_records=0` on conflict, while preserving the apply-pass
+  error refusal if a peer commit introduces a conflict after preflight. This is preflight
+  conflict detection only and does not add a multi-call store transaction or rollback for
+  concurrent writers or mid-write storage failures (Refs #873).
+
 - Security repair projects expose only their admitted delegation modes and reject
   unsupported delegation modes before requesting approval. Generic delegation and
   execution-time permission checks remain unchanged. Denied calls retain their
