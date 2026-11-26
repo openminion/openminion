@@ -484,7 +484,7 @@ def _registered_coding_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         coding_runtime,
         "collect_runtime_tool_schemas",
-        lambda _runner: _coding_runtime_schemas(),
+        lambda _runner, *, metadata=None: _coding_runtime_schemas(),
     )
 
 
@@ -3694,7 +3694,7 @@ def test_project_confirmation_replay_preserves_context_in_provider_request(
     monkeypatch.setattr(
         coding_runtime,
         "collect_runtime_tool_schemas",
-        lambda _: [
+        lambda _, *, metadata=None: [
             {**item, "parameters": schema} if item["name"] == tool_name else item
             for item in _coding_runtime_schemas()
         ],
