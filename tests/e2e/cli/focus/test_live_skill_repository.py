@@ -221,8 +221,11 @@ def _assert_turn(evidence: dict, manifest: dict, *, available: bool) -> None:
         result = event["payload"]
         request = requests[result["call_id"]]
         if event["type"] == "tool.call.blocked":
-            assert not available and request["canonical_name"] == "skill.get"
-            assert result["error"]["code"] == "NOT_FOUND"
+            if request["canonical_name"] == "tool.request":
+                assert result["error"]["code"] == "TOOL_REQUEST_INVALID_ARGUMENTS"
+            else:
+                assert not available and request["canonical_name"] == "skill.get"
+                assert result["error"]["code"] == "NOT_FOUND"
             continue
         if request["canonical_name"] == "skill.list":
             output = result["output"]["outputs"]

@@ -78,7 +78,14 @@ def test_shared_store_denies_foreign_and_absent_binding(admitted_repository):
         (True, "wrong-answer"),
         (True, "wrong-list-id"),
         (True, "wrong-list-version"),
+        (True, "recovered-control"),
+        (True, "wrong-control-error"),
+        (True, "forbidden-control-target"),
+        (True, "control-without-resource"),
+        (True, "schema-error-on-get"),
+        (True, "schema-error-on-discovery"),
         (False, None),
+        (False, "recovered-control"),
         (False, "missing-routing"),
         (False, "failed-selector"),
         (False, "foreign-selection"),
@@ -210,13 +217,56 @@ def test_turn_oracle_rejects_missing_or_unsafe_proof(
                 },
             }
         )
+    if defect in {
+        "recovered-control",
+        "wrong-control-error",
+        "forbidden-control-target",
+        "control-without-resource",
+        "schema-error-on-get",
+        "schema-error-on-discovery",
+    }:
+        name = {
+            "schema-error-on-get": "skill.get",
+            "schema-error-on-discovery": "tool.search",
+        }.get(defect, "tool.request")
+        events.extend(
+            [
+                {
+                    "type": "tool.call.requested",
+                    "payload": {
+                        "call_id": "control",
+                        "canonical_name": name,
+                        "sanitized_normalized_arguments": {
+                            "name": "file.write"
+                            if defect == "forbidden-control-target"
+                            else "skill.list",
+                            "unexpected": True,
+                        },
+                    },
+                },
+                {
+                    "type": "tool.call.blocked",
+                    "payload": {
+                        "call_id": "control",
+                        "status": "error",
+                        "error": {
+                            "code": "POLICY_DENIED"
+                            if defect == "wrong-control-error"
+                            else "TOOL_REQUEST_INVALID_ARGUMENTS",
+                        },
+                    },
+                },
+            ]
+        )
+        if defect == "control-without-resource":
+            events = [e for e in events if e["payload"].get("call_id") != "read"]
     evidence = {
         "brain_events": events,
         "answer": repository.FACT if available else "SKILL_UNAVAILABLE",
     }
     if defect == "wrong-answer":
         evidence["answer"] = "incorrect"
-    if defect:
+    if defect not in {None, "recovered-control"}:
         with pytest.raises(AssertionError):
             repository._assert_turn(evidence, manifest, available=available)
     else:
