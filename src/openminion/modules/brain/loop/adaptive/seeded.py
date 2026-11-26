@@ -1,6 +1,8 @@
 from dataclasses import replace
 from typing import Any, cast
 
+from openminion.modules.brain.tools.schema import runtime_tool_scope
+
 from openminion.modules.brain.constants import (
     BRAIN_INTERNAL_MODE_ACT_ADAPTIVE,
     BRAIN_DISPOSITION_CLOSE,
@@ -388,7 +390,7 @@ class ActLoopSeededMixin:
                 tool_specs = build_runtime_tool_specs(
                     runner_from_context(ctx),
                     allowed_tools=allowed_tools,
-                    metadata={"session_id": str(ctx.state.session_id or "")},
+                    metadata=runtime_tool_scope(ctx.state),
                 )
             except AdaptiveToolLoopRuntimeUnavailableError:
                 runtime = None

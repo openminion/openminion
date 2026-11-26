@@ -645,7 +645,12 @@ class TestCodingHandlerPureHelperBehavior:
                 ],
             ),
         ):
-            specs = handler._build_tool_specs(frozenset({"exec.run"}), ctx=object())
+            specs = handler._build_tool_specs(
+                frozenset({"exec.run"}),
+                ctx=SimpleNamespace(
+                    state=SimpleNamespace(session_id="coding", resume_task_id_hint=None)
+                ),
+            )
 
         [spec] = specs
         assert spec.input_schema == schema
@@ -674,7 +679,12 @@ class TestCodingHandlerPureHelperBehavior:
                 ],
             ),
         ):
-            specs = handler._build_tool_specs(CODING_ALLOWED_TOOLS, ctx=object())
+            specs = handler._build_tool_specs(
+                CODING_ALLOWED_TOOLS,
+                ctx=SimpleNamespace(
+                    state=SimpleNamespace(session_id="coding", resume_task_id_hint=None)
+                ),
+            )
 
         assert [spec.name for spec in specs] == ["file.read"]
 
@@ -694,7 +704,9 @@ class TestCodingHandlerPureHelperBehavior:
         ):
             specs = handler._build_tool_specs(
                 frozenset({"file.read", "web.search"}),
-                ctx=object(),
+                ctx=SimpleNamespace(
+                    state=SimpleNamespace(session_id="coding", resume_task_id_hint=None)
+                ),
             )
 
         assert specs == []
@@ -712,7 +724,12 @@ class TestCodingHandlerPureHelperBehavior:
                 return_value=[],
             ),
         ):
-            specs = handler._build_tool_specs(CODING_ALLOWED_TOOLS, ctx=object())
+            specs = handler._build_tool_specs(
+                CODING_ALLOWED_TOOLS,
+                ctx=SimpleNamespace(
+                    state=SimpleNamespace(session_id="coding", resume_task_id_hint=None)
+                ),
+            )
 
         assert specs == []
 
@@ -755,7 +772,7 @@ class TestCodingHandlerPureHelperBehavior:
 
         runtime_runner = SimpleNamespace(task_manager=object())
         ctx = SimpleNamespace(
-            state=SimpleNamespace(resume_task_id_hint="task-1"),
+            state=SimpleNamespace(session_id="coding", resume_task_id_hint="task-1"),
             _services=SimpleNamespace(runner=runtime_runner),
             command_executor=SimpleNamespace(execute_command=execute_command),
             logger=None,
@@ -897,12 +914,14 @@ class TestCodingHandlerPureHelperBehavior:
         monkeypatch.setattr(
             coding_runtime,
             "collect_runtime_tool_schemas",
-            lambda _: [
+            lambda _, *, metadata=None: [
                 {"name": spec.name, "parameters": spec.input_schema} for spec in specs
             ],
         )
         ctx = SimpleNamespace(
-            state=SimpleNamespace(goal=None),
+            state=SimpleNamespace(
+                session_id="coding", resume_task_id_hint=None, goal=None
+            ),
             _services=SimpleNamespace(runner=SimpleNamespace(tool_api=object())),
         )
         _profile, active_specs, requestable_specs = runner._iteration_profile(

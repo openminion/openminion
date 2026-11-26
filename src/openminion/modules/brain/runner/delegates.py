@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Callable
 
+from openminion.modules.task.project.policy import security_repair_delegation_modes
 from openminion.modules.tool.plugin_api import confirmation_preview_payload
 
 from ..runtime.context import build_context as build_context_pack
@@ -82,6 +83,7 @@ from .tick.context import (
 from ..tools.executor import execute_action
 from openminion.modules.tool.contracts.model_ids import (  # noqa: PLC0415
     MODEL_TASK_CANCEL,
+    MODEL_TASK_DELEGATE,
     MODEL_TASK_SCHEDULE,
 )
 from ..state import (
@@ -207,7 +209,22 @@ def _evaluate_policy_decision(
     command: Command,
     logger: Any,
 ) -> PolicyDecision:
-    if runner.policy_api is None:
+    unsupported_mode = False
+    if isinstance(command, ToolCommand) and command.tool_name == MODEL_TASK_DELEGATE:
+        modes = security_repair_delegation_modes(
+            getattr(runner, "task_manager", None),
+            task_id=state.resume_task_id_hint,
+            agent_id=state.agent_id,
+        )
+        unsupported_mode = (
+            modes is not None and command.args.get("mode", "sync") not in modes
+        )
+    if unsupported_mode:
+        decision = PolicyDecision(
+            outcome="DENY",
+            explanation="Delegation mode is outside the approved security repair scope.",
+        )
+    elif runner.policy_api is None:
         decision = PolicyDecision(
             outcome="ALLOW", explanation="No policy engine configured."
         )
@@ -322,9 +339,12 @@ def _approve_delegate(
             success_criteria={"clarification_received": True},
         )
     if decision.outcome == "DENY":
+        state.pending_confirmation_command = None
+        _clear_pending_confirmation_metadata(state)
         return AskUserCommand(
             kind=BRAIN_COMMAND_KIND_ASK_USER,
             title="Policy denied",
+            disposition="policy_denied",
             question=decision.explanation or "Policy denied this action.",
             success_criteria={"user_acknowledged": True},
         )

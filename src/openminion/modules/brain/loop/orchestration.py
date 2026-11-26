@@ -3,6 +3,8 @@ import time
 from datetime import datetime
 from typing import Any
 
+from openminion.modules.brain.tools.schema import runtime_tool_scope
+
 from openminion.modules.brain.adapters.llm.request import (
     _context_manifest,
     _insert_retry_system_message,
@@ -465,7 +467,7 @@ def decide(
     entry_scope: dict[str, Any] = {
         "act_profile": act_profile,
         "execution_target_kind": target_kind,
-        "metadata": {"session_id": state.session_id},
+        "metadata": runtime_tool_scope(state),
     }
     tool_specs, supports_seed_response = build_entry_tool_specs(
         runner,
@@ -484,7 +486,7 @@ def decide(
         runner,
         tool_specs,
         explicit_runtime_tools,
-        metadata={"session_id": state.session_id},
+        metadata=entry_scope["metadata"],
     )
     if forced_tools:
         forced = {str(name).strip() for name in forced_tools if str(name).strip()}
@@ -518,14 +520,12 @@ def decide(
             for spec in tool_specs
             if str(getattr(spec, "name", "") or "").strip() == "plan"
         ]
-    runtime_tool_names = {
-        str(spec.name or "").strip()
-        for spec in tool_specs
-        if str(spec.name or "").strip()
-    }
+    runtime_tool_names = {spec.name for spec in tool_specs}
     runtime_tool_schemas = [
         item
-        for item in _runner_delegate("_collect_runtime_tool_schemas", runner)
+        for item in _runner_delegate(
+            "_collect_runtime_tool_schemas", runner, metadata=entry_scope["metadata"]
+        )
         if str(item.get("name", "") or "").strip() in runtime_tool_names
     ]
     hints: dict[str, Any] = {

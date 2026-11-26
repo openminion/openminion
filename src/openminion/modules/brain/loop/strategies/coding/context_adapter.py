@@ -188,6 +188,11 @@ class _CodingLoopContextAdapter:
         action_result = outcome.action_result
         if (
             isinstance(approved_command, AskUserCommand)
+            and approved_command.disposition == "policy_denied"
+        ):
+            self.state.post_action_user_message = approved_command.question
+        elif (
+            isinstance(approved_command, AskUserCommand)
             and original_command is not None
         ):
             self.state.pending_confirmation_command = original_command.model_copy(

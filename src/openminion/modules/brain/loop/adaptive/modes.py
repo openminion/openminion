@@ -1,5 +1,7 @@
 from typing import Any, Literal
 
+from openminion.modules.brain.tools.schema import runtime_tool_scope
+
 from openminion.modules.brain.constants import (
     BRAIN_INTERNAL_MODE_ACT_ADAPTIVE,
     BRAIN_ACT_PROFILE_CODING,
@@ -406,7 +408,7 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
             decision_reason_code=decision_reason_code,
             entry_response=seed_response,
         )
-        exposure_metadata = {"session_id": str(ctx.state.session_id or "")}
+        exposure_metadata = runtime_tool_scope(ctx.state)
         if watch_overrides is not None:
             exposure_metadata.update(
                 task_id=str(watch_overrides.get("task_id", "") or ""),

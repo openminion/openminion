@@ -7,7 +7,7 @@ from openminion.modules.brain.constants import (
     CONTEXT_BUDGET_TIER_MEDIUM,
 )
 from openminion.modules.brain.schemas import Decision, WorkingState
-from openminion.modules.brain.tools.schema import tool_schema_stub
+from openminion.modules.brain.tools.schema import tool_schema_stub, runtime_tool_scope
 from .context import (
     _compact_decide_mode_descriptions,
     _rebuild_decide_context_with_hints,
@@ -78,7 +78,10 @@ def trim_decide_context_to_budget(
         runtime_schemas = hints.get("runtime_tool_schemas")
         if isinstance(runtime_schemas, list) and runtime_schemas:
             shortlisted_schemas = _runner_delegate(
-                "_build_prompt_tool_schemas", runner, user_input=user_input
+                "_build_prompt_tool_schemas",
+                runner,
+                user_input=user_input,
+                metadata=runtime_tool_scope(state),
             )
             if shortlisted_schemas:
                 hints["runtime_tool_schemas"] = shortlisted_schemas
@@ -165,15 +168,12 @@ def trim_decide_context_to_budget(
                 budget_max_tokens=budget_max_tokens,
                 hints=hints,
             )
-            logger.emit(
-                "llm.context.trimmed",
-                {
-                    "purpose": "decide",
-                    "strategy": "style_overrides_removed",
-                    "estimate_before": estimate,
-                    "estimate_after": no_style_estimate,
-                },
-                trace_id=state.trace_id,
+            _emit_trimmed(
+                logger,
+                state,
+                "style_overrides_removed",
+                estimate,
+                no_style_estimate,
             )
             estimate = no_style_estimate
 

@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from openminion.modules.task.project.constants import SECURITY_REPAIR_DELEGATE_MODES
+
 from openminion.modules.tool import (
     DEFAULT_POLICY,
     Policy,
@@ -214,7 +216,7 @@ def _apply_security_repair_policy(
         tool_name == MODEL_TASK_DELEGATE
         and (
             binding is not None
-            or args.get("mode", "sync") not in {"sync", "review", "accept", "reject"}
+            or args.get("mode", "sync") not in SECURITY_REPAIR_DELEGATE_MODES
             or (
                 args.get("mode", "sync") == "sync"
                 and args.get("code_bearing") is not True

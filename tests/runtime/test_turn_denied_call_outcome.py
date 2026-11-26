@@ -160,12 +160,15 @@ def test_call_that_did_not_run_stages_no_tool_outcome(
     ]
     assert approvals == ([("memory.write", ARGS)] if call == "denied" else [])
     # The call did not run: no record and no tool_outcome candidate, and no
-    # candidate holds its arguments. Its approval prompt is still recorded.
+    # candidate holds its arguments. Only a pending call records an approval prompt.
     assert handled == []
     assert rows["records"] == []
     assert rows["tool_outcome"] == []
     _assert_no_argument_text(rows["candidates"])
-    assert len(prompts) == 1
+    assert len(prompts) == (1 if call == "pending" else 0)
+    assert result.metadata["respond_kind"] == (
+        "policy_confirmation_prompt" if call == "pending" else "assistant"
+    )
 
 
 @pytest.mark.parametrize("case", ["succeeded", "failed", "failed-without-memory-write"])

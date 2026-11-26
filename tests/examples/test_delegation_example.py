@@ -79,7 +79,7 @@ class _RecorderAgent:
         if not approved:
             return SimpleNamespace(
                 text=DENIED_REPLY,
-                metadata={"respond_kind": "policy_confirmation_prompt"},
+                metadata={"respond_kind": "assistant"},
                 thread_id="thread-1",
             )
         target = self.handoffs[0].target
@@ -136,7 +136,6 @@ def test_handoff_deny_ends_without_running_target(monkeypatch, capsys) -> None:
     out = capsys.readouterr().out
     assert "operator: denying handoff of 'Review this launch plan.'" in out
     assert DENIED_REPLY in out
-    assert "denied: the operator refused the handoff" in out
     assert "paused:" not in out
     assert "agent.run(" not in out
 
@@ -284,11 +283,11 @@ def test_runtime_denial_runs_no_target(tmp_path, monkeypatch, capsys) -> None:
     assert asked == [HANDOFF_TOOL]
     assert result.text.startswith(f"{AGENT_ID}: {DENIED_REPLY}")
     assert target_runs == []
-    assert result.metadata.get("respond_kind") == "policy_confirmation_prompt"
+    assert result.metadata.get("respond_kind") == "assistant"
     capsys.readouterr()
-    module["_print_handoff"](result, "deny")
+    module["_print_handoff"](result)
     out = capsys.readouterr().out
-    assert "denied: the operator refused the handoff" in out
+    assert out == f"{result.text}\n"
     assert "paused:" not in out
     assert "agent.run(" not in out
 
@@ -322,7 +321,7 @@ def test_runtime_answer_without_confirmation_prints_unchanged(
     assert asked == []
     assert target_runs == []
     capsys.readouterr()
-    assert module["_print_handoff"](result, approval) == 0
+    assert module["_print_handoff"](result) == 0
     assert capsys.readouterr().out == f"{result.text}\n"
 
 

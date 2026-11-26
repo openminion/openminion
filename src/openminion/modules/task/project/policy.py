@@ -14,7 +14,7 @@ from .turn import project_workspace
 from openminion.modules.task.autonomy import now_ms
 from openminion.modules.task.runtime.lifecycle import TaskManager
 
-from .constants import REPOSITORY_LIFECYCLE_PAYLOAD_KEY
+from .constants import REPOSITORY_LIFECYCLE_PAYLOAD_KEY, SECURITY_REPAIR_DELEGATE_MODES
 from .models import (
     ProjectBudgetPolicy,
     ProjectCheckpoint,
@@ -84,6 +84,20 @@ def code_bearing_project_inputs(
         verification_commands,
         checkpoint.project_run.execution_selectors.verification_timeout_seconds,
     )
+
+
+def security_repair_delegation_modes(
+    manager: TaskManager | None, *, task_id: str | None, agent_id: str
+) -> tuple[str, ...] | None:
+    if manager is None or not task_id:
+        return None
+    task = manager.get_task(task_id)
+    if task is None or task.agent_id != agent_id:
+        return None
+    latest = manager.get_latest_checkpoint(task_id)
+    if latest is None or "security_repair" not in latest[1].get("payload", {}):
+        return None
+    return SECURITY_REPAIR_DELEGATE_MODES
 
 
 @contextmanager

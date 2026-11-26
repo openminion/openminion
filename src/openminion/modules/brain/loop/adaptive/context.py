@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 from typing import Any
 
+from openminion.modules.brain.schemas.commands import AskUserCommand
+
 from openminion.modules.brain.execution.loop_contracts import (
     ExecutionContext,
 )
@@ -275,6 +277,11 @@ class _AdaptiveLoopContextAdapter:
         approved_command = getattr(outcome, "approved_command", original_command)
         action_result = getattr(outcome, "action_result", None)
         if (
+            isinstance(approved_command, AskUserCommand)
+            and approved_command.disposition == "policy_denied"
+        ):
+            self.state.post_action_user_message = approved_command.question
+        elif (
             str(getattr(approved_command, "kind", "") or "").strip().lower()
             == "ask_user"
         ):
