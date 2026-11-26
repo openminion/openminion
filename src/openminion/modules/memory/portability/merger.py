@@ -10,6 +10,7 @@ from openminion.modules.memory.models import (
     MemoryRelation,
     MemoryTierTransition,
 )
+from openminion.modules.memory.runtime.candidate_lifecycle import _is_live_record
 
 from .models import (
     MemoryBundleSnapshot,
@@ -323,6 +324,53 @@ class MemoryMerger:
             rewrites=dict(options.scope_rewrites),
         )
 
+    def _classify_direct_record(
+        self,
+        record: MemoryRecord,
+        *,
+        seen_by_id: dict[str, MemoryRecord] | None = None,
+        seen_by_key: dict[tuple[str, str, str], MemoryRecord] | None = None,
+    ) -> tuple[str, str | None, tuple[str, str, str] | None]:
+        existing_exact = seen_by_id.get(record.id) if seen_by_id is not None else None
+        if existing_exact is None:
+            existing_exact = self._service._store.get(record.id)  # noqa: SLF001
+        if existing_exact is not None and _record_equal(
+            existing_exact,
+            record,
+            ignore_id=False,
+        ):
+            return ("equal", existing_exact.id, None)
+
+        key_tuple: tuple[str, str, str] | None = None
+        existing_key = None
+        stripped_key = str(record.key or "").strip()
+        if stripped_key:
+            key_tuple = (
+                str(record.scope or "").strip(),
+                str(record.type or "").strip(),
+                stripped_key,
+            )
+            if seen_by_key is not None:
+                existing_key = seen_by_key.get(key_tuple)
+            if existing_key is None:
+                existing_key = self._service.find_record_by_normalized_key(
+                    scope=record.scope,
+                    record_type=record.type,
+                    normalized_key=record.key,
+                )
+            if existing_key is not None and _record_equal(
+                existing_key,
+                record,
+                ignore_id=True,
+            ):
+                return ("equal", existing_key.id, key_tuple)
+
+        if existing_exact is not None:
+            return ("exact_id_conflict", existing_exact.id, key_tuple)
+        if existing_key is not None and existing_key.id != record.id:
+            return ("normalized_key_conflict", existing_key.id, key_tuple)
+        return ("new", None, key_tuple)
+
     def _preflight_direct_error_conflicts(
         self,
         *,
@@ -334,60 +382,24 @@ class MemoryMerger:
         seen_by_key: dict[tuple[str, str, str], MemoryRecord] = {}
 
         for source_record, record in zip(snapshot.records, rewritten_records):
-            existing_exact = seen_by_id.get(record.id)
-            if existing_exact is None:
-                existing_exact = self._service._store.get(record.id)  # noqa: SLF001
-            if existing_exact is not None and _record_equal(
-                existing_exact,
+            outcome, target_id, key_tuple = self._classify_direct_record(
                 record,
-                ignore_id=False,
-            ):
+                seen_by_id=seen_by_id,
+                seen_by_key=seen_by_key,
+            )
+            if outcome == "equal":
                 continue
-
-            key_tuple: tuple[str, str, str] | None = None
-            existing_key = None
-            stripped_key = str(record.key or "").strip()
-            if stripped_key:
-                key_tuple = (
-                    str(record.scope or "").strip(),
-                    str(record.type or "").strip(),
-                    stripped_key,
-                )
-                existing_key = seen_by_key.get(key_tuple)
-                if existing_key is None:
-                    existing_key = self._service.find_record_by_normalized_key(
-                        scope=record.scope,
-                        record_type=record.type,
-                        normalized_key=record.key,
-                    )
-                if existing_key is not None and _record_equal(
-                    existing_key,
-                    record,
-                    ignore_id=True,
-                ):
-                    continue
-
-            if existing_exact is not None:
+            if outcome in {"exact_id_conflict", "normalized_key_conflict"}:
                 conflicts.append(
                     {
                         "record_id": source_record.id,
-                        "target_id": existing_exact.id,
-                        "reason": "exact_id_conflict",
+                        "target_id": target_id,
+                        "reason": outcome,
                     }
                 )
                 continue
-            if existing_key is not None and existing_key.id != record.id:
-                conflicts.append(
-                    {
-                        "record_id": source_record.id,
-                        "target_id": existing_key.id,
-                        "reason": "normalized_key_conflict",
-                    }
-                )
-                continue
-
             seen_by_id[record.id] = record
-            if key_tuple is not None:
+            if key_tuple is not None and _is_live_record(record):
                 seen_by_key[key_tuple] = record
 
         return conflicts
@@ -420,55 +432,22 @@ class MemoryMerger:
                     rewrites=dict(options.scope_rewrites),
                 )
 
-        conflicts: list[dict[str, Any]] = []
         imported_records = 0
         skipped_records = 0
 
         for source_record, record in zip(snapshot.records, rewritten_records):
-            existing_exact = self._service._store.get(record.id)  # noqa: SLF001
-            if existing_exact is not None and _record_equal(
-                existing_exact,
-                record,
-                ignore_id=False,
-            ):
-                record_id_map[source_record.id] = existing_exact.id
+            outcome, conflict_target, _ = self._classify_direct_record(record)
+            if outcome == "equal":
+                if conflict_target:
+                    record_id_map[source_record.id] = conflict_target
                 skipped_records += 1
                 continue
 
-            existing_key = None
-            if record.key:
-                existing_key = self._service.find_record_by_normalized_key(
-                    scope=record.scope,
-                    record_type=record.type,
-                    normalized_key=record.key,
-                )
-                if existing_key is not None and _record_equal(
-                    existing_key,
-                    record,
-                    ignore_id=True,
-                ):
-                    record_id_map[source_record.id] = existing_key.id
-                    skipped_records += 1
-                    continue
-
-            conflict_reason = None
-            conflict_target = None
-            if existing_exact is not None:
-                conflict_reason = "exact_id_conflict"
-                conflict_target = existing_exact.id
-            elif existing_key is not None and existing_key.id != record.id:
-                conflict_reason = "normalized_key_conflict"
-                conflict_target = existing_key.id
-
-            if conflict_reason is not None and options.conflict_mode == "error":
-                conflicts.append(
-                    {
-                        "record_id": source_record.id,
-                        "target_id": conflict_target,
-                        "reason": conflict_reason,
-                    }
-                )
-                continue
+            conflict_reason = (
+                outcome
+                if outcome in {"exact_id_conflict", "normalized_key_conflict"}
+                else None
+            )
             if conflict_reason is not None and options.conflict_mode == "skip":
                 if conflict_target:
                     record_id_map[source_record.id] = conflict_target
@@ -489,18 +468,6 @@ class MemoryMerger:
             else:
                 record_id_map[source_record.id] = record.id
             imported_records += 1
-
-        if conflicts:
-            return MemoryBundleImportResult(
-                applied=False,
-                trust_mode=options.trust_mode,
-                conflict_mode=options.conflict_mode,
-                id_mode=options.id_mode,
-                imported_records=imported_records,
-                skipped_records=skipped_records,
-                conflicts=conflicts,
-                rewrites=dict(options.scope_rewrites),
-            )
 
         imported_candidates = 0
         for candidate in snapshot.candidates:
@@ -569,7 +536,7 @@ class MemoryMerger:
             imported_tier_transitions=imported_tier_transitions,
             imported_provenance_traces=imported_provenance_traces,
             skipped_records=skipped_records,
-            conflicts=conflicts,
+            conflicts=[],
             rewrites=dict(options.scope_rewrites),
         )
 

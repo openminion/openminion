@@ -19,6 +19,8 @@ def _make_record(
     content: str,
     scope: str = "agent:a",
     key: str | None = None,
+    is_deleted: bool = False,
+    superseded_by_id: str | None = None,
 ) -> MemoryRecord:
     return MemoryRecord(
         id=record_id,
@@ -30,6 +32,8 @@ def _make_record(
         confidence=0.9,
         created_at="2026-11-26T00:00:00Z",
         updated_at="2026-11-26T00:00:00Z",
+        is_deleted=is_deleted,
+        superseded_by_id=superseded_by_id,
     )
 
 
@@ -40,13 +44,17 @@ def test_error_mode_late_exact_id_conflict_writes_nothing_across_reopen(
     store = SQLiteMemoryStore(db_path)
     try:
         service = MemoryService(store)
-        existing = _make_record("mem_conflict", content="original value", key="k_conflict")
+        existing = _make_record(
+            "mem_conflict", content="original value", key="k_conflict"
+        )
         store.put(existing)
 
         snapshot = MemoryBundleSnapshot(
             manifest={"bundle_id": "b_err_1"},
             records=[
-                _make_record("mem_new_first", content="should not persist", key="k_new"),
+                _make_record(
+                    "mem_new_first", content="should not persist", key="k_new"
+                ),
                 replace(existing, content="conflicting updated value"),
             ],
         )
@@ -62,12 +70,10 @@ def test_error_mode_late_exact_id_conflict_writes_nothing_across_reopen(
         assert result.conflicts[0]["record_id"] == "mem_conflict"
         assert result.conflicts[0]["reason"] == "exact_id_conflict"
         assert store.get("mem_new_first") is None
-        assert store.get("mem_conflict") is not None
         assert store.get("mem_conflict").content == "original value"
     finally:
         store.close()
 
-    # Persisted/reopened negative control
     reopened = SQLiteMemoryStore(db_path)
     try:
         assert reopened.get("mem_new_first") is None
@@ -85,7 +91,6 @@ def test_error_mode_duplicate_in_snapshot_exact_id_and_normalized_key_write_noth
     try:
         service = MemoryService(store)
 
-        # Duplicate exact ID inside snapshot with divergent content
         dup_id_snapshot = MemoryBundleSnapshot(
             manifest={"bundle_id": "b_dup_id"},
             records=[
@@ -104,7 +109,6 @@ def test_error_mode_duplicate_in_snapshot_exact_id_and_normalized_key_write_noth
         assert store.get("mem_clean") is None
         assert store.get("mem_dup") is None
 
-        # Duplicate normalized key inside snapshot with different IDs
         dup_key_snapshot = MemoryBundleSnapshot(
             manifest={"bundle_id": "b_dup_key"},
             records=[
@@ -125,6 +129,69 @@ def test_error_mode_duplicate_in_snapshot_exact_id_and_normalized_key_write_noth
         store.close()
 
 
+def test_error_mode_preserves_deleted_and_superseded_historical_same_key_rows(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "memory.db"
+    store = SQLiteMemoryStore(db_path)
+    try:
+        service = MemoryService(store)
+        merger = MemoryMerger(service)
+
+        deleted_snap = MemoryBundleSnapshot(
+            manifest={"bundle_id": "b_hist_del"},
+            records=[
+                _make_record(
+                    "mem_del_1",
+                    content="retired value",
+                    key="k_hist_del",
+                    is_deleted=True,
+                ),
+                _make_record("mem_live_1", content="live value", key="k_hist_del"),
+            ],
+        )
+        del_res = merger.import_snapshot(
+            deleted_snap,
+            MemoryBundleImportOptions(trust_mode="direct", conflict_mode="error"),
+        )
+        assert del_res.applied is True
+        assert del_res.imported_records == 2
+        assert del_res.conflicts == []
+
+        target = _make_record("mem_sup_real_target", content="current target")
+        store.put(target)
+        sup_snap = MemoryBundleSnapshot(
+            manifest={"bundle_id": "b_hist_sup"},
+            records=[
+                _make_record(
+                    "mem_sup_old",
+                    content="old version",
+                    key="k_hist_sup",
+                    superseded_by_id=target.id,
+                ),
+                _make_record("mem_sup_live", content="live version", key="k_hist_sup"),
+            ],
+        )
+        sup_res = merger.import_snapshot(
+            sup_snap,
+            MemoryBundleImportOptions(trust_mode="direct", conflict_mode="error"),
+        )
+        assert sup_res.applied is True
+        assert sup_res.imported_records == 2
+        assert sup_res.conflicts == []
+    finally:
+        store.close()
+
+    reopened = SQLiteMemoryStore(db_path)
+    try:
+        assert reopened.get("mem_del_1") is not None
+        assert reopened.get("mem_live_1") is not None
+        assert reopened.get("mem_sup_old") is not None
+        assert reopened.get("mem_sup_live") is not None
+    finally:
+        reopened.close()
+
+
 def test_healthy_dry_run_skip_supersede_and_id_remapping_neighbors(
     tmp_path: Path,
 ) -> None:
@@ -133,7 +200,6 @@ def test_healthy_dry_run_skip_supersede_and_id_remapping_neighbors(
         service = MemoryService(store)
         merger = MemoryMerger(service)
 
-        # Healthy import in error mode
         healthy_snap = MemoryBundleSnapshot(
             manifest={"bundle_id": "b_healthy"},
             records=[_make_record("mem_1", content="hello", key="k1")],
@@ -156,7 +222,6 @@ def test_healthy_dry_run_skip_supersede_and_id_remapping_neighbors(
         assert ok_res.imported_records == 1
         assert store.get("mem_1") is not None
 
-        # Skip mode leaves conflicting existing row unchanged and imports new neighbor
         conflict_snap = MemoryBundleSnapshot(
             manifest={"bundle_id": "b_skip"},
             records=[
@@ -174,7 +239,6 @@ def test_healthy_dry_run_skip_supersede_and_id_remapping_neighbors(
         assert store.get("mem_1").content == "hello"
         assert store.get("mem_2") is not None
 
-        # Supersede mode on exact-ID conflict remaps ID and preserves original row
         existing_no_key = _make_record("mem_sup_target", content="v1", key=None)
         store.put(existing_no_key)
         sup_snap = MemoryBundleSnapshot(
@@ -193,10 +257,11 @@ def test_healthy_dry_run_skip_supersede_and_id_remapping_neighbors(
         assert sup_res.imported_records == 1
         assert store.get("mem_sup_target").content == "v1"
 
-        # ID remapping (id_mode="regenerate") mints a fresh ID in error mode
         regen_snap = MemoryBundleSnapshot(
             manifest={"bundle_id": "b_regen"},
-            records=[_make_record("mem_orig_regen", content="regenerated row", key="k_regen")],
+            records=[
+                _make_record("mem_orig_regen", content="regenerated row", key="k_regen")
+            ],
         )
         regen_res = merger.import_snapshot(
             regen_snap,
