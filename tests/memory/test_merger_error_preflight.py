@@ -192,6 +192,51 @@ def test_error_mode_preserves_deleted_and_superseded_historical_same_key_rows(
         reopened.close()
 
 
+def test_error_mode_apply_pass_refuses_peer_conflict_after_preflight(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "memory.db"
+    store = SQLiteMemoryStore(db_path)
+    peer_store = SQLiteMemoryStore(db_path)
+    try:
+        service = MemoryService(store)
+        merger = MemoryMerger(service)
+        orig_preflight = merger._preflight_direct_error_conflicts
+
+        def _preflight_then_peer_commit(**kwargs):
+            conflicts = orig_preflight(**kwargs)
+            peer_store.put(_make_record("mem_race", content="peer value", key="k_race"))
+            return conflicts
+
+        merger._preflight_direct_error_conflicts = _preflight_then_peer_commit  # type: ignore[method-assign]
+
+        snapshot = MemoryBundleSnapshot(
+            manifest={"bundle_id": "b_peer_race"},
+            records=[_make_record("mem_race", content="incoming value", key="k_race")],
+        )
+        result = merger.import_snapshot(
+            snapshot,
+            MemoryBundleImportOptions(trust_mode="direct", conflict_mode="error"),
+        )
+
+        assert result.applied is False
+        assert result.imported_records == 0
+        assert len(result.conflicts) == 1
+        assert result.conflicts[0]["record_id"] == "mem_race"
+        assert result.conflicts[0]["reason"] == "exact_id_conflict"
+    finally:
+        peer_store.close()
+        store.close()
+
+    reopened = SQLiteMemoryStore(db_path)
+    try:
+        row = reopened.get("mem_race")
+        assert row is not None
+        assert row.content == "peer value"
+    finally:
+        reopened.close()
+
+
 def test_healthy_dry_run_skip_supersede_and_id_remapping_neighbors(
     tmp_path: Path,
 ) -> None:

@@ -432,6 +432,7 @@ class MemoryMerger:
                     rewrites=dict(options.scope_rewrites),
                 )
 
+        conflicts: list[dict[str, Any]] = []
         imported_records = 0
         skipped_records = 0
 
@@ -448,6 +449,15 @@ class MemoryMerger:
                 if outcome in {"exact_id_conflict", "normalized_key_conflict"}
                 else None
             )
+            if conflict_reason is not None and options.conflict_mode == "error":
+                conflicts.append(
+                    {
+                        "record_id": source_record.id,
+                        "target_id": conflict_target,
+                        "reason": conflict_reason,
+                    }
+                )
+                continue
             if conflict_reason is not None and options.conflict_mode == "skip":
                 if conflict_target:
                     record_id_map[source_record.id] = conflict_target
@@ -468,6 +478,18 @@ class MemoryMerger:
             else:
                 record_id_map[source_record.id] = record.id
             imported_records += 1
+
+        if conflicts:
+            return MemoryBundleImportResult(
+                applied=False,
+                trust_mode=options.trust_mode,
+                conflict_mode=options.conflict_mode,
+                id_mode=options.id_mode,
+                imported_records=imported_records,
+                skipped_records=skipped_records,
+                conflicts=conflicts,
+                rewrites=dict(options.scope_rewrites),
+            )
 
         imported_candidates = 0
         for candidate in snapshot.candidates:
