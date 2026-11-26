@@ -319,6 +319,30 @@ def test_retired_record_id_fails_even_without_nonce_exposure(case, field):
     assert not outcomes["old_record_not_recalled"]
 
 
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "new-value",
+        "prefix new-value",
+        "new-value suffix",
+        "old-value",
+        "UNKNOWN",
+        "UNKNOWN extra",
+        "",
+    ],
+)
+def test_recall_acceptance_requires_exact_answer_despite_valid_exposure(answer):
+    tokens, requests, state = _phase_evidence()
+    state["response_hashes"] = [hashlib.sha256(answer.encode()).hexdigest()]
+    outcomes, _ = _phase_outcomes(
+        "correction", "recall", "memory", tokens, "old-record", answer, requests, state
+    )
+    assert outcomes["recorded_answer_matches"]
+    assert outcomes["required_exposure"] and outcomes["target_context_join"]
+    assert outcomes["answer_correct"] == (answer == tokens["new"])
+    assert all(outcomes.values()) == (answer == tokens["new"])
+
+
 def test_native_context_join_cannot_be_replaced_with_observational_id():
     tokens, requests, state = _phase_evidence()
     requests[0]["canonical"] = {}
@@ -631,8 +655,23 @@ def test_unset_memory_overrides_preserve_offline_loading_and_gate_b_denial(
         load_campaign(path)
 
 
-def test_failed_phase_retains_content_free_report_and_cleans_private_roots(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    "answer,containing,exact",
+    [
+        (None, [], []),
+        ("synthetic-private-value", ["old"], ["old"]),
+        ("prefix synthetic-private-value suffix", ["old"], []),
+        ("UNKNOWN", [], []),
+        ("UNKNOWN extra", [], []),
+        ("wrong", [], []),
+        ("", [], []),
+        ("new-value", ["new"], ["new"]),
+        ("synthetic-private-value new-value", ["old", "new"], []),
+    ],
+)
+@pytest.mark.parametrize("readback_succeeds", [False, True])
+def test_campaign_retains_content_free_report_and_cleans_private_roots(
+    tmp_path, monkeypatch, answer, containing, exact, readback_succeeds
 ):
     from tests.e2e.cli.focus.harness import memory_campaign
     from tests.e2e.cli.focus import test_live_memory_continuity as live
@@ -643,7 +682,7 @@ def test_failed_phase_retains_content_free_report_and_cleans_private_roots(
     secret = "synthetic-private-value"
     corpus.write_text(
         json.dumps(
-            {"explicit-01": {"old": secret, "new": "new", "distractor": "other"}}
+            {"explicit-01": {"old": secret, "new": "new-value", "distractor": "other"}}
         )
     )
     credentials = tmp_path / "credentials.json"
@@ -661,12 +700,26 @@ def test_failed_phase_retains_content_free_report_and_cleans_private_roots(
     monkeypatch.setenv("MINIMAX_API_KEY", "offline")
     monkeypatch.setattr(live, "require_live_focus", lambda: None)
     monkeypatch.setattr(memory_campaign, "load_campaign", lambda _: manifest)
+    monkeypatch.setattr(memory_campaign, "PHASES", {"explicit": ("recall",)})
 
-    def fail(**kwargs):
+    def run(**kwargs):
         (kwargs["data_root"] / "private.txt").write_text(secret)
+        if answer is not None:
+            _, requests, _ = _phase_evidence()
+            requests[0]["target_matches"] = ["old"]
+            return answer, requests
         raise RuntimeError(secret)
 
-    monkeypatch.setattr(memory_campaign, "run_phase", fail)
+    def readback(*args):
+        if not readback_succeeds:
+            raise RuntimeError(secret)
+        _, _, state = _phase_evidence()
+        state["response_hashes"] = [hashlib.sha256(answer.encode()).hexdigest()]
+        state["records"][0]["matches"] = ["old"]
+        return state
+
+    monkeypatch.setattr(memory_campaign, "run_phase", run)
+    monkeypatch.setattr(memory_campaign, "read_state", readback)
     finalizers = []
     with pytest.raises(AssertionError, match="phase_failed") as error:
         live.test_live_focus_memory_campaign(
@@ -674,10 +727,24 @@ def test_failed_phase_retains_content_free_report_and_cleans_private_roots(
         )
     assert secret not in str(error.value)
     report = (
-        run_root / "evaluator" / "explicit-01-memory-teach.result.json"
+        run_root / "evaluator" / "explicit-01-memory-recall.result.json"
     ).read_text()
-    assert json.loads(report)["status"] == "incomplete"
+    payload = json.loads(report)
+    if answer is None or not readback_succeeds:
+        assert payload["status"] == "incomplete"
+    else:
+        assert payload["status"] == ("passed" if answer == secret else "failed")
+    if answer is None:
+        assert "answer_observation" not in payload
+    else:
+        assert payload["answer_observation"] == {
+            "character_count": len(answer),
+            "containing_labels": containing,
+            "exact_labels": exact,
+            "exact_unknown": answer == "UNKNOWN",
+        }
     assert secret not in report
+    assert "new-value" not in report
     assert not (run_root / "agents" / "explicit-01-memory").exists()
     for finalize in finalizers:
         finalize()

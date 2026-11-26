@@ -151,6 +151,20 @@ def test_live_focus_memory_campaign(request: pytest.FixtureRequest) -> None:
                             deadline_monotonic=started
                             + manifest["max_admission_seconds"],
                         )
+                        report["answer_observation"] = {
+                            "character_count": len(answer),
+                            "containing_labels": [
+                                label
+                                for label, value in tokens.items()
+                                if value in answer
+                            ],
+                            "exact_labels": [
+                                label
+                                for label, value in tokens.items()
+                                if value == answer
+                            ],
+                            "exact_unknown": answer == "UNKNOWN",
+                        }
                         state = read_state(config_path, data_root, slot, tokens)
                         report.update(state)
                         outcomes, original_id = _phase_outcomes(
