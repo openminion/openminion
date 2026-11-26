@@ -16,11 +16,14 @@ from acp.schema import (
     ToolCallStart,
 )
 
+from openminion import APIRuntime
 from openminion.api.operations.acp import OpenMinionACPAgent
-from openminion.base.config import OpenMinionConfig
+from openminion.base.config import OpenMinionConfig, save_config
+from openminion.base.constants import REPLY_BODY_FORM_CANONICAL, REPLY_BODY_FORM_KEY
 from openminion.modules.storage.runtime.migrations import migrate_database
 from openminion.modules.storage.runtime.session_store import SessionStore
 from openminion.modules.storage.runtime.sqlite import connect_database
+from tests._csc_fixtures import _csc_install_default_agent
 
 
 class _Client:
@@ -316,6 +319,48 @@ async def test_acp_rejects_concurrent_prompt_and_cancels_active_trace(
     await task
 
     assert blocking.runtime_manager.cancelled == ["trace-1"]
+
+
+@pytest.mark.asyncio
+async def test_acp_prompt_on_real_runtime_sends_the_reply_once(
+    tmp_path: Path,
+) -> None:
+    # #567 control: a real APIRuntime (echo provider, temp state) behind the
+    # ACP agent, not the scripted runtime above.
+    reply = "Note: tabs over spaces."
+    config = OpenMinionConfig()
+    _csc_install_default_agent(config, name="iris", provider="echo")
+    config.runtime.log_level = "ERROR"
+    config.storage.path = str(tmp_path / "state.db")
+    save_config(config, str(tmp_path / "agents.json"))
+    real = APIRuntime.from_config_path(
+        str(tmp_path / "agents.json"), home_root=tmp_path, data_root=tmp_path / "data"
+    )
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    client = _Client()
+    try:
+        agent, _ = await _initialized_agent(real, client)
+        created = await agent.new_session(cwd=str(workspace))
+        result = await agent.prompt(
+            created.session_id, [TextContentBlock(type="text", text=reply)]
+        )
+        outbound = [
+            record
+            for record in real.sessions.list_messages(session_id=created.session_id)
+            if record.role == "outbound"
+        ]
+    finally:
+        real.close()
+
+    assert result.stop_reason == "end_turn"
+    assert [
+        update.content.text
+        for _, update in client.updates
+        if not isinstance(update, (ToolCallStart, ToolCallProgress))
+    ] == [reply]
+    assert [record.body for record in outbound] == [reply]
+    assert outbound[0].metadata[REPLY_BODY_FORM_KEY] == REPLY_BODY_FORM_CANONICAL
 
 
 def test_acp_cli_command_is_registered() -> None:

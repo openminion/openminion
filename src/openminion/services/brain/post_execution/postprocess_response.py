@@ -3,6 +3,11 @@ import time
 from typing import Any
 
 from openminion.base.config.core import resolve_default_agent_id
+from openminion.base.constants import (
+    REPLY_BODY_FORM_CANONICAL,
+    REPLY_BODY_FORM_KEY,
+    REPLY_SENDER_KEY,
+)
 from openminion.base.types import AgentResponse, Message
 from openminion.modules.brain.constants import STATE_KEY_MODULE_STATE
 from openminion.modules.brain.runner import BrainRunner
@@ -268,14 +273,12 @@ def _agent_response_from_postprocess(
     response_text: str,
     is_pae_idle_tick_noop: bool,
 ) -> AgentResponse:
-    if is_pae_idle_tick_noop:
-        response_envelope_text = ""
-    else:
-        default_agent_id = resolve_default_agent_id(self._config)
-        agent_name = self._config.agents[default_agent_id].name or default_agent_id
-        response_envelope_text = f"{agent_name}: {response_text}"
+    if not is_pae_idle_tick_noop:
+        agent_id = resolve_default_agent_id(self._config)
+        metadata[REPLY_BODY_FORM_KEY] = REPLY_BODY_FORM_CANONICAL
+        metadata[REPLY_SENDER_KEY] = self._config.agents[agent_id].name or agent_id
     return AgentResponse(
-        text=response_envelope_text,
+        text="" if is_pae_idle_tick_noop else response_text,
         channel=message.channel,
         target=message.target,
         metadata=metadata,

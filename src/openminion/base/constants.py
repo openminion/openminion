@@ -47,6 +47,11 @@ STATE_KEY_WORKING = "working_state"
 STATE_KEY_ACTIVE = "active_state"
 STATE_KEY_SOURCE_OUTCOME = "source_outcome_status"
 
+# #567: body_form=canonical marks an exact reply body; unmarked bodies stay legacy.
+REPLY_BODY_FORM_KEY = "body_form"
+REPLY_BODY_FORM_CANONICAL = "canonical"
+REPLY_SENDER_KEY = "reply_sender"
+
 __all__ = [
     "BASE_BOOL_FALSE_VALUES",
     "BASE_BOOL_TRUE_VALUES",
@@ -84,6 +89,9 @@ __all__ = [
     "OPENMINION_STORAGE_POSTGRES_URL_ENV",
     "OPENMINION_STORAGE_POSTGRES_POOL_MIN_ENV",
     "OPENMINION_STORAGE_POSTGRES_POOL_MAX_ENV",
+    "REPLY_BODY_FORM_CANONICAL",
+    "REPLY_BODY_FORM_KEY",
+    "REPLY_SENDER_KEY",
     "STATE_KEY_ACTIVE",
     "STATE_KEY_FINALIZATION_STATUS",
     "STATE_KEY_SOURCE_OUTCOME",

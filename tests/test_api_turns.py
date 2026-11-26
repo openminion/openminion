@@ -33,7 +33,8 @@ class APITurnsTests(unittest.TestCase):
             turn = payload["turn"]
             self.assertEqual(turn["channel"], "console")
             self.assertEqual(turn["target"], "api-user")
-            self.assertTrue(str(turn["body"]).startswith("openminion: "))
+            self.assertEqual(turn["body"], "hello from api")
+            self.assertEqual(turn["metadata"]["reply_sender"], "openminion")
             self.assertTrue(turn["session_id"])
 
     def test_post_turns_idempotency_reuses_completed_result(self) -> None:

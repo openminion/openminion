@@ -8,6 +8,11 @@ from urllib.parse import quote, urlencode
 
 from openminion.base.config.bootstrap import bootstrap_config_path
 from openminion.base.config.core import resolve_default_agent_id
+from openminion.base.constants import (
+    REPLY_BODY_FORM_CANONICAL,
+    REPLY_BODY_FORM_KEY,
+    REPLY_SENDER_KEY,
+)
 from openminion.cli.presentation.json_output import print_json_payload
 from openminion.cli.transport.runtime_source import call_daemon_or_inproc
 from openminion.cli.transport.daemon_client import (
@@ -252,6 +257,9 @@ def _print_output(args: Any, payload: dict[str, Any]) -> None:
         text = (
             str(turn.get("final_text", "")).strip() or str(turn.get("body", "")).strip()
         )
+        metadata = turn.get("metadata") or {}
+        if text and metadata.get(REPLY_BODY_FORM_KEY) == REPLY_BODY_FORM_CANONICAL:
+            text = f"{metadata.get(REPLY_SENDER_KEY) or 'assistant'}: {text}"
         if text:
             print(text)
             return

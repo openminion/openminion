@@ -153,7 +153,8 @@ def test_call_that_did_not_run_stages_no_tool_outcome(
         runtime.close()
 
     reply = DENIED_REPLY if call == "denied" else PENDING_REPLY
-    assert result.text.startswith(f"{AGENT_ID}: {reply}")
+    assert result.text.startswith(reply)
+    assert result.metadata["reply_sender"] == AGENT_ID
     # The memory policy allows the write: the turn's own memory.write answer.
     assert [d[1:2] + d[4:] for d in recorder.decisions] == [
         ("memory-capture", "allow", "allowed")
@@ -199,11 +200,11 @@ def test_executed_call_keeps_its_tool_outcome(
     assert handled == [ARGS]
     if case == "succeeded":
         # memory.write is not in the success allowlist: no candidate, as before.
-        assert result.text == f"{AGENT_ID}: {REPLY}"
+        assert (result.text, result.metadata["reply_sender"]) == (REPLY, AGENT_ID)
         assert rows["records"] == [ARGS["title"]]
         assert rows["tool_outcome"] == []
         return
-    assert result.text == f"{AGENT_ID}: {FAILED_REPLY}"
+    assert (result.text, result.metadata["reply_sender"]) == (FAILED_REPLY, AGENT_ID)
     assert rows["records"] == []
     if case == "failed-without-memory-write":
         # The turn's memory.write answer (#496) still suppresses it.
@@ -248,7 +249,8 @@ def test_pending_call_approved_later_stages_once_after_it_runs(
     finally:
         runtime.close()
 
-    assert pending.text.startswith(f"{AGENT_ID}: {PENDING_REPLY}")
+    assert pending.text.startswith(PENDING_REPLY)
+    assert pending.metadata["reply_sender"] == AGENT_ID
     assert approved["metadata"]["thread_decision_action"] == "resume_thread"
     # Nothing is staged while the call waits.
     assert pending_rows["tool_outcome"] == []
@@ -256,7 +258,10 @@ def test_pending_call_approved_later_stages_once_after_it_runs(
     # Approved, the call runs once, and only its own outcome is staged.
     assert handled == [ARGS]
     if executed == "succeeded":
-        assert approved["body"] == f"{AGENT_ID}: {REPLY}"
+        assert (approved["body"], approved["metadata"]["reply_sender"]) == (
+            REPLY,
+            AGENT_ID,
+        )
         assert rows["records"] == [ARGS["title"]]
         assert rows["tool_outcome"] == []
         _assert_no_argument_text(rows["candidates"])

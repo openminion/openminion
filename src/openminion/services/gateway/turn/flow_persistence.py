@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, Any
 from collections.abc import Callable
 
+from openminion.base.constants import REPLY_BODY_FORM_KEY, REPLY_SENDER_KEY
 from openminion.base.types import Message
 from openminion.modules.brain.constants import (
     RESPOND_KIND_POLICY_CONFIRMATION_PROMPT,
@@ -187,6 +188,8 @@ class GatewayTurnPersistenceDeliveryMixin:
                 event_type=SESSION_EVENT_POLICY_CONFIRMATION_PROMPT,
                 payload={
                     "body": outbound.body,
+                    REPLY_BODY_FORM_KEY: outbound.metadata.get(REPLY_BODY_FORM_KEY, ""),
+                    REPLY_SENDER_KEY: outbound.metadata.get(REPLY_SENDER_KEY, ""),
                     "conversation_id": conversation_id or "",
                     "thread_id": thread_id or "",
                     "attach_id": attach_id or "",

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping, cast
 from uuid import uuid4
 
 from openminion.base.redaction import redact_sensitive_text
+from openminion.base.constants import REPLY_BODY_FORM_CANONICAL, REPLY_BODY_FORM_KEY
 from openminion.base.types import Message
 from openminion.cli.interactive.runtime.agent_sidebar import build_session_sidebar_item
 from openminion.cli.presentation.models import ChatMessage, MessageKind, ToolEvent
@@ -597,7 +598,12 @@ class RuntimeMessageMixin:
                         ChatMessage(
                             kind=MessageKind.AGENT,
                             sender=self._role_to_sender(role, metadata),
-                            body=self._strip_sender_prefix(body),
+                            body=(
+                                body
+                                if dict(metadata or {}).get(REPLY_BODY_FORM_KEY)
+                                == REPLY_BODY_FORM_CANONICAL
+                                else self._strip_sender_prefix(body)
+                            ),
                             show_header=self.is_room_session(),
                             created_at=created_at,
                             msg_id=msg_id,
@@ -610,7 +616,11 @@ class RuntimeMessageMixin:
         sender = self._role_to_sender(role, metadata)
         tool_result = self._tool_result(metadata)
         tool_event = self._tool_event_from_metadata(metadata)
-        if kind == MessageKind.AGENT:
+        if (
+            kind == MessageKind.AGENT
+            and dict(metadata or {}).get(REPLY_BODY_FORM_KEY)
+            != REPLY_BODY_FORM_CANONICAL
+        ):
             body = self._strip_sender_prefix(body)
 
         return [
@@ -865,9 +875,12 @@ class RuntimeMessageMixin:
 
     def _message_text(self, message: Message) -> str:
         body = str(getattr(message, "body", "") or "")
+        metadata = getattr(message, "metadata", None)
+        if body and isinstance(metadata, dict):
+            if metadata.get(REPLY_BODY_FORM_KEY) == REPLY_BODY_FORM_CANONICAL:
+                return body
         if body:
             return self._strip_sender_prefix(body)
-        metadata = getattr(message, "metadata", None)
         if isinstance(metadata, dict):
             text = str(metadata.get("text") or "").strip()
             if text:
@@ -893,9 +906,13 @@ def room_result_chat_messages(payload: Mapping[str, Any]) -> list[ChatMessage]:
             ChatMessage(
                 kind=MessageKind.AGENT,
                 sender=str(item.get("agent_id", "") or ""),
-                body=_strip_expected_sender_prefix(
-                    str(item.get("body", "") or ""),
-                    str(item.get("agent_id", "") or ""),
+                body=(
+                    str(item.get("body", "") or "")
+                    if item.get(REPLY_BODY_FORM_KEY) == REPLY_BODY_FORM_CANONICAL
+                    else _strip_expected_sender_prefix(
+                        str(item.get("body", "") or ""),
+                        str(item.get("agent_id", "") or ""),
+                    )
                 ),
                 show_header=True,
                 msg_id=str(item.get("persisted_outbound_message_id", "") or ""),
@@ -912,9 +929,14 @@ def room_result_chat_messages(payload: Mapping[str, Any]) -> list[ChatMessage]:
         ChatMessage(
             kind=MessageKind.AGENT,
             sender=str(payload.get("agent_id", "") or ""),
-            body=_strip_expected_sender_prefix(
-                str(payload.get("body", "") or ""),
-                str(payload.get("agent_id", "") or ""),
+            body=(
+                str(payload.get("body", "") or "")
+                if dict(metadata or {}).get(REPLY_BODY_FORM_KEY)
+                == REPLY_BODY_FORM_CANONICAL
+                else _strip_expected_sender_prefix(
+                    str(payload.get("body", "") or ""),
+                    str(payload.get("agent_id", "") or ""),
+                )
             ),
             show_header=True,
             msg_id=persisted_id,

@@ -6,6 +6,7 @@ from typing import Any, Awaitable, Callable
 from uuid import uuid4
 
 from openminion.base.config import RunProfileOverrides
+from openminion.base.constants import REPLY_BODY_FORM_KEY
 from openminion.modules.controlplane.constants import (
     CALLER_HANDLES_DELIVERY_METADATA_KEY,
 )
@@ -281,7 +282,7 @@ def _aggregate_routed_results(
         for key in (
             "result_id request_id invocation_id execution_id run_id trace_id status "
             "error_code persisted_inbound_message_id persisted_outbound_message_id"
-        ).split():
+        ).split() + [REPLY_BODY_FORM_KEY]:
             if value := str(child_values.get(key) or "").strip():
                 room_response[key] = value
         room_responses.append(room_response)

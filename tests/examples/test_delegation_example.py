@@ -256,7 +256,8 @@ def test_runtime_pause_leaves_target_unrun(tmp_path, monkeypatch) -> None:
         runtime.close()
 
     assert provider.handed_off is True
-    assert result.text.startswith(f"{AGENT_ID}: Policy confirmation required.")
+    assert result.text.startswith("Policy confirmation required.")
+    assert result.metadata["reply_sender"] == AGENT_ID
     assert result.metadata.get("respond_kind") == "policy_confirmation_prompt"
     assert target_runs == []
 
@@ -282,7 +283,8 @@ def test_runtime_denial_runs_no_target(tmp_path, monkeypatch, capsys) -> None:
 
     assert provider.handed_off is True
     assert asked == [HANDOFF_TOOL]
-    assert result.text.startswith(f"{AGENT_ID}: {DENIED_REPLY}")
+    assert result.text.startswith(DENIED_REPLY)
+    assert result.metadata["reply_sender"] == AGENT_ID
     assert target_runs == []
     assert result.metadata.get("respond_kind") == "policy_confirmation_prompt"
     capsys.readouterr()
@@ -340,4 +342,5 @@ def test_runtime_allow_once_runs_target_exactly_once(tmp_path, monkeypatch) -> N
     assert provider.handed_off is True
     assert asked == [HANDOFF_TOOL]
     assert target_runs == ["Research this launch plan."]
-    assert result.text.startswith(f"{AGENT_ID}: ")
+    assert result.text == REPLY
+    assert result.metadata["reply_sender"] == AGENT_ID

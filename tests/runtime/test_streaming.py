@@ -1,7 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
 from time import sleep
 
+from openminion import APIRuntime
+from openminion.base.config import OpenMinionConfig, save_config
+from openminion.base.constants import (
+    REPLY_BODY_FORM_CANONICAL,
+    REPLY_BODY_FORM_KEY,
+    REPLY_SENDER_KEY,
+)
 from openminion.services.runtime import (
     AgentRuntimeManager,
     TurnChunk,
@@ -11,6 +19,7 @@ from openminion.services.runtime import (
 )
 from openminion.modules.runtime.contracts import TURN_STREAM_SCHEMA_VERSION
 from openminion.services.runtime.constants import TURN_STREAM_HISTORY_LIMIT
+from tests._csc_fixtures import _csc_install_default_agent
 
 
 def test_chunk_order() -> None:
@@ -274,3 +283,38 @@ def test_failed_turn_emits_typed_terminal_error_status() -> None:
         assert terminal.data["detail_text"] == "provider unavailable"
     finally:
         manager.shutdown()
+
+
+def test_real_stream_final_text_is_the_canonical_reply_body(tmp_path: Path) -> None:
+    # #567 control: a real APIRuntime (echo provider, temp state) through the
+    # runtime manager's streaming path, not a scripted turn executor.
+    reply = "Note: tabs over spaces."
+    config = OpenMinionConfig()
+    _csc_install_default_agent(config, name="iris", provider="echo")
+    config.runtime.log_level = "ERROR"
+    config.storage.path = str(tmp_path / "state.db")
+    save_config(config, str(tmp_path / "agents.json"))
+    runtime = APIRuntime.from_config_path(
+        str(tmp_path / "agents.json"), home_root=tmp_path, data_root=tmp_path / "data"
+    )
+    try:
+        handle = runtime.submit_turn(
+            payload={"message": reply, "session_id": "stream-567", "stream": True}
+        )
+        chunks = list(handle.stream(timeout_s=30))
+        result = handle.result(timeout_s=30)
+        outbound = [
+            record
+            for record in runtime.sessions.list_messages(session_id="stream-567")
+            if record.role == "outbound"
+        ]
+    finally:
+        runtime.close()
+
+    final_chunks = [c.data["text"] for c in chunks if c.kind == "final_text"]
+    assert final_chunks == [reply]
+    assert result.final_text == reply
+    assert result.metadata[REPLY_BODY_FORM_KEY] == REPLY_BODY_FORM_CANONICAL
+    assert result.metadata[REPLY_SENDER_KEY] == "iris"
+    assert [record.body for record in outbound] == [reply]
+    assert outbound[0].metadata[REPLY_BODY_FORM_KEY] == REPLY_BODY_FORM_CANONICAL

@@ -141,6 +141,27 @@ def test_run_openminion_plain_output_prefers_final_text(monkeypatch, capsys) -> 
     assert capsys.readouterr().out.strip() == "hello from run"
 
 
+def test_run_openminion_plain_output_names_the_canonical_reply_sender(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(run_command, "load_config", lambda _cfg: _run_config())
+    monkeypatch.setattr(
+        run_command, "resolve_default_agent_id", lambda _cfg: "default-agent"
+    )
+    monkeypatch.setattr(
+        run_command,
+        "run_turn",
+        lambda **_kwargs: {
+            "run_id": "trace-567",
+            "final_text": "Note: hello",
+            "metadata": {"body_form": "canonical", "reply_sender": "iris"},
+        },
+    )
+
+    assert run_command.run_openminion(_run_args()) == 0
+    assert capsys.readouterr().out.strip() == "iris: Note: hello"
+
+
 def test_run_openminion_jsonl_output_single_process(monkeypatch, capsys) -> None:
     args = _run_args()
     args.jsonl = True
