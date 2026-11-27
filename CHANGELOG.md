@@ -7,6 +7,17 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `openminion time <subcommand>` now works for all nine registered operations
+  (`time.now`, `time.in_zone`, `time.convert`, `time.parse_iso`, `time.diff`,
+  `time.format`, `time.start_of_day`, `time.end_of_day`, `time.next_cron`) on the
+  default daemon route. One declaration in the `time` manifest drives both the direct
+  tool schema lookup and the runtime-direct exposure mapping, so each name returns its
+  own live parameters and executes under the existing `time` exposure boundary. An
+  explicitly requested declared command that is not registered is refused instead of
+  falling back to another candidate. The model-facing `time` tool remains `time.now`,
+  no profiles or model-facing `time.*` aliases are added, and the schema route stays
+  session-blind while inproc activations stay process-local (Refs #751).
+
 - `SQLiteSessionStore(":memory:")` and `PostgresSessionStore(":memory:")` now remove
   only the temporary storage directory they created on `close()` (idempotently across
   repeated calls) and clean up owned resources (`_owned_temp_root`, owned default

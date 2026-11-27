@@ -1,30 +1,18 @@
-"""Direct-invocation admission for the time module's nine registered operations.
+"""Direct-invocation admission for the time owner's declared runtime operations.
 
 The model-facing inventory exposes one aggregate ``time`` tool, while the CLI's ``time``
-group dispatches the registered runtime specs. These nine names are admitted for direct HTTP
-invocation only while that visible parent exists, and their parameters come from the live
-registry spec; every other runtime-only name stays refused.
+group dispatches the registered runtime specs. The time owner declares those runtime names
+once; this module admits a requested declared name only while that visible parent exists and
+the live registry resolves that exact name. Other runtime-only names stay refused.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-TIME_MODEL_TOOL_NAME = "time"
+from openminion.tools.time.constants import TIME_RUNTIME_TOOL_NAMES
 
-TIME_OPERATION_TOOL_NAMES = frozenset(
-    {
-        "time.now",
-        "time.in_zone",
-        "time.convert",
-        "time.parse_iso",
-        "time.diff",
-        "time.format",
-        "time.start_of_day",
-        "time.end_of_day",
-        "time.next_cron",
-    }
-)
+TIME_MODEL_TOOL_NAME = "time"
 
 
 def direct_time_tool_report(
@@ -32,7 +20,7 @@ def direct_time_tool_report(
 ) -> dict[str, Any] | None:
     """Describe one admitted time operation through the registry's locked lookup."""
 
-    if tool_name not in TIME_OPERATION_TOOL_NAMES:
+    if tool_name not in TIME_RUNTIME_TOOL_NAMES:
         return None
     if not any(item["name"] == TIME_MODEL_TOOL_NAME for item in inventory):
         return None
@@ -41,7 +29,7 @@ def direct_time_tool_report(
         return None
     spec = registry._provider_spec_for_runtime_name(tool_name)
     if spec is None:
-        # Unregistered since bootstrap: the name no longer resolves.
+        # Unregistered since bootstrap: the requested name no longer resolves.
         return None
     return {
         "name": spec.name,

@@ -112,6 +112,13 @@ def resolve_binding_for_call(
             source="runtime_direct",
         )
 
+    # An explicitly requested declared runtime name either resolves to its own live spec
+    # or is refused; only canonical model names may fall back to another candidate.
+    if allow_runtime_direct and model_tool_id and raw not in available:
+        direct_binding_id = mgr.resolve_binding(model_tool_id) or ""
+        if raw in mgr.runtime_candidates(direct_binding_id):
+            return None
+
     if not model_tool_id:
         return None
 
