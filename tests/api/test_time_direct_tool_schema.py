@@ -8,14 +8,18 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from openminion.api.operations.tools import execute_tool_run
 from openminion.api.runtime import APIRuntime
 from openminion.api.server import dispatch_request
 from openminion.modules.llm.providers.base import ProviderToolCall
+from openminion.modules.policy.adapters.composition import (
+    SEAM_API_TOOLS,
+    build_default_composition_boundary_adapter,
+)
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.contracts.runtime_ids import RUNTIME_TIME_NOW
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.executor import execute_single_call
-from openminion.modules.tool.adapters import LocalPolicyAdapter
 from openminion.modules.tool.exposure import ToolExposureProfile
 from openminion.modules.tool.runtime.policy import Policy
 from openminion.modules.tool.runtime.policy_checks import run_policy_preflight
@@ -136,6 +140,29 @@ def _model_call(runtime: APIRuntime, *, tool_name: str, arguments: dict):
     )
 
 
+def _execution_context(*, session_id: str = "time-direct") -> ToolExecutionContext:
+    return ToolExecutionContext(
+        channel="console",
+        target="cli-tools",
+        session_id=session_id,
+        metadata={"session_id": session_id},
+    )
+
+
+class _DenyingCompositionBoundary:
+    """Controlled composition-boundary denial; it changes no policy semantics."""
+
+    def __init__(self) -> None:
+        self.seen: list[str] = []
+
+    def step(self, tool_spec: object) -> None:
+        self.seen.append(str(getattr(tool_spec, "name", "") or ""))
+        raise ToolRuntimeError(
+            "CONFIRM_REQUIRED",
+            "confirmation required at the composition boundary",
+        )
+
+
 class TimeDirectToolRouteTests(unittest.TestCase):
     """The route-level admission: both handlers read the same schema lookup."""
 
@@ -212,22 +239,6 @@ class TimeDirectToolRouteTests(unittest.TestCase):
 class TimeDirectToolOwnerTests(unittest.TestCase):
     """The admission predicate itself, driven through the runtime owner."""
 
-    def test_a_missing_visible_parent_closes_direct_admission(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            runtime = APIRuntime.from_config_path(str(_config(tmp)))
-            try:
-                with mock.patch(
-                    "openminion.api.queries.runtime_reports.build_tool_inventory_report",
-                    return_value=[{"name": "weather"}],
-                ):
-                    for name in TIME_RUNTIME_TOOL_NAMES:
-                        with self.subTest(tool=name):
-                            self.assertIsNone(
-                                runtime.tool_schema_report(tool_name=name)
-                            )
-            finally:
-                runtime.close()
-
     def test_unregistering_one_operation_keeps_its_neighbours(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime = APIRuntime.from_config_path(str(_config(tmp)))
@@ -243,6 +254,111 @@ class TimeDirectToolOwnerTests(unittest.TestCase):
                 self.assertIsNone(
                     runtime.tool_schema_report(tool_name=_RUNTIME_ONLY_NAME)
                 )
+            finally:
+                runtime.close()
+
+    def test_unregistering_the_canonical_operation_keeps_direct_neighbours(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = _config(tmp)
+            runtime = APIRuntime.from_config_path(str(config_path))
+            try:
+                runtime.tools.unregister("time.now")
+
+                # The canonical model-facing `time` matches base: no schema and no
+                # execution, and never a quiet substitution of `time.in_zone`.
+                self.assertIsNone(runtime.tool_schema_report(tool_name="time"))
+                schema_status, schema_payload = dispatch_request(
+                    "GET", "/v1/tools/time/schema", str(config_path), runtime=runtime
+                )
+                self.assertEqual(int(schema_status), 404, schema_payload)
+                self.assertEqual(schema_payload["error"]["code"], "tool_not_found")
+
+                run_status, run_payload = dispatch_request(
+                    "POST",
+                    "/v1/tools/time/run",
+                    str(config_path),
+                    body={"arguments": {"timezone": "UTC"}},
+                    runtime=runtime,
+                )
+                self.assertEqual(int(run_status), 404, run_payload)
+                self.assertEqual(run_payload["error"]["code"], "tool_not_found")
+
+                status, payload, _ = execute_tool_run(
+                    runtime=runtime,
+                    tool_name="time",
+                    arguments={"timezone": "UTC"},
+                    request_id="time-direct",
+                    channel="console",
+                    target="cli-tools",
+                    requested_session_id="time-direct",
+                )
+                self.assertEqual(int(status), 400, payload)
+                self.assertFalse(payload["ok"])
+                self.assertEqual(payload["tool"]["name"], "time")
+                data = payload["tool"]["data"]
+                self.assertEqual(data["error_code"], "unknown_tool_name")
+                self.assertEqual(
+                    data["runtime_resolution_source"], "binding_unavailable"
+                )
+                self.assertEqual(data["runtime_tool_name"], "")
+
+                # The CLI `tools run` gate reads the same model provider specs.
+                self.assertIsNone(runtime.tools.provider_spec_for_name("time"))
+
+                # Live explicit neighbours stay reportable and executable.
+                for name in TIME_RUNTIME_TOOL_NAMES:
+                    if name == "time.now":
+                        continue
+                    with self.subTest(tool=name):
+                        self.assertIsNotNone(runtime.tool_schema_report(tool_name=name))
+                in_zone_status, in_zone_payload = dispatch_request(
+                    "GET",
+                    "/v1/tools/time.in_zone/schema",
+                    str(config_path),
+                    runtime=runtime,
+                )
+                self.assertEqual(int(in_zone_status), 200, in_zone_payload)
+                self.assertEqual(in_zone_payload["tool"]["name"], "time.in_zone")
+                self.assertEqual(in_zone_payload["tool"]["source"], "runtime_direct")
+                in_zone_run_status, in_zone_run_payload = dispatch_request(
+                    "POST",
+                    "/v1/tools/time.in_zone/run",
+                    str(config_path),
+                    body={"arguments": {"timezone": "Europe/Helsinki"}},
+                    runtime=runtime,
+                )
+                self.assertEqual(int(in_zone_run_status), 200, in_zone_run_payload)
+                self.assertTrue(in_zone_run_payload["ok"], in_zone_run_payload)
+                self.assertEqual(in_zone_run_payload["tool"]["name"], "time.in_zone")
+
+                # The model-origin lanes keep refusing both names.
+                model_direct = _model_call(
+                    runtime,
+                    tool_name="time.in_zone",
+                    arguments={"timezone": "Europe/Helsinki"},
+                )
+                self.assertFalse(model_direct.ok)
+                self.assertEqual(model_direct.data["error_code"], "unknown_tool_name")
+                model_canonical = _model_call(runtime, tool_name="time", arguments={})
+                self.assertFalse(model_canonical.ok)
+                self.assertEqual(
+                    model_canonical.data["error_code"], "unknown_tool_name"
+                )
+                self.assertEqual(
+                    model_canonical.data["runtime_resolution_source"],
+                    "binding_unavailable",
+                )
+
+                # Unrelated canonical fallback is untouched.
+                self.assertEqual(
+                    runtime.tools.model_to_runtime_tool_map()["web.fetch"],
+                    "fetch.get",
+                )
+                web_schema = runtime.tool_schema_report(tool_name="web.fetch")
+                self.assertIsNotNone(web_schema)
+                self.assertEqual(web_schema["runtime_tool_name"], "fetch.get")
             finally:
                 runtime.close()
 
@@ -279,6 +395,46 @@ class TimeDirectToolOwnerTests(unittest.TestCase):
                 self.assertFalse(result.ok)
                 self.assertEqual(result.data["error_code"], "tool_exposure_denied")
                 self.assertEqual(result.data["reason_code"], "profile_inactive")
+            finally:
+                runtime.close()
+
+    def test_inactive_time_profile_keeps_explicit_neighbours_hidden(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = _config(tmp)
+            runtime = APIRuntime.from_config_path(str(config_path))
+            try:
+                runtime.tools.exposure_service.register_profiles((_time_profile(),))
+                runtime.tools.unregister("time.now")
+                for name in ("time", "time.in_zone"):
+                    with self.subTest(tool=name):
+                        self.assertIsNone(runtime.tool_schema_report(tool_name=name))
+                        status, payload = dispatch_request(
+                            "GET",
+                            f"/v1/tools/{name}/schema",
+                            str(config_path),
+                            runtime=runtime,
+                        )
+                        self.assertEqual(int(status), 404, payload)
+                        self.assertEqual(payload["error"]["code"], "tool_not_found")
+
+                run_status, run_payload = dispatch_request(
+                    "POST",
+                    "/v1/tools/time.in_zone/run",
+                    str(config_path),
+                    body={"arguments": {"timezone": "Europe/Helsinki"}},
+                    runtime=runtime,
+                )
+                self.assertEqual(int(run_status), 404, run_payload)
+                self.assertEqual(run_payload["error"]["code"], "tool_not_found")
+
+                direct = _direct_call(
+                    runtime,
+                    tool_name="time.in_zone",
+                    arguments={"timezone": "Europe/Helsinki"},
+                )
+                self.assertFalse(direct.ok)
+                self.assertEqual(direct.data["error_code"], "tool_exposure_denied")
+                self.assertEqual(direct.data["reason_code"], "profile_inactive")
             finally:
                 runtime.close()
 
@@ -392,55 +548,56 @@ class TimeDirectToolOwnerTests(unittest.TestCase):
             finally:
                 runtime.close()
 
-    def test_confirmation_is_enforced_at_the_tool_policy_adapter(self) -> None:
+    def test_time_direct_execution_crosses_the_composition_boundary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime = APIRuntime.from_config_path(str(_config(tmp)))
             calls: list[str] = []
 
-            def handler() -> None:
+            def spy_handler(arguments: dict, ctx: object) -> dict:
+                del arguments, ctx
                 calls.append("ran")
+                return {
+                    "ok": True,
+                    "content": "spy",
+                    "data": {"tool_min_scope": "READ_ONLY"},
+                }
 
+            spec = runtime.tools._tools["time.in_zone"]
+            call = ProviderToolCall(
+                name="time.in_zone",
+                arguments={"timezone": "Europe/Helsinki"},
+                source="inproc",
+            )
             try:
-                policy = Policy(
-                    raw={
-                        "version": 1,
-                        "scope": "READ_ONLY",
-                        "workspace_root": tmp,
-                        "tools": {"allow_prefix": ["time"]},
-                        "paths": {
-                            "read_allow": [tmp],
-                            "write_allow": [tmp],
-                            "deny": [],
-                        },
-                        "confirm": {"required_tools": ["time.in_zone"]},
-                    }
-                )
-                spec = runtime.tools._tools["time.in_zone"]
+                with mock.patch.object(spec, "handler", spy_handler):
+                    # This is a controlled boundary decision at the composition
+                    # seam, not a policy-semantics change: the default adapter
+                    # decides allowed composition, and the executor calls `step`
+                    # before the handler. A denial must keep the handler at zero.
+                    denial = _DenyingCompositionBoundary()
+                    denied_context = _execution_context()
+                    denied_context.blast_radius_adapter = denial
+                    with self.assertRaises(ToolRuntimeError) as raised:
+                        runtime.tools.execute_calls([call], context=denied_context)
+                    self.assertEqual(raised.exception.code, "CONFIRM_REQUIRED")
+                    self.assertEqual(denial.seen, ["time.in_zone"])
+                    self.assertEqual(calls, [])
 
-                def evaluate(confirm: bool):
-                    decision = LocalPolicyAdapter(
-                        policy=policy,
-                        workspace=Path(tmp),
-                        scope="READ_ONLY",
-                        confirm=confirm,
-                    ).evaluate(
-                        tool_name="time.in_zone",
-                        tool_spec=spec,
-                        args={"timezone": "Europe/Helsinki"},
+                    allow = build_default_composition_boundary_adapter(
+                        seam_id=SEAM_API_TOOLS
                     )
-                    if decision.allowed:
-                        handler()
-                    return decision
-
-                denied = evaluate(False)
-                self.assertFalse(denied.allowed)
-                self.assertTrue(denied.requires_confirm)
-                self.assertEqual(denied.code, "CONFIRM_REQUIRED")
-                self.assertEqual(calls, [])
-
-                allowed = evaluate(True)
-                self.assertTrue(allowed.allowed)
+                    allowed_context = _execution_context()
+                    allowed_context.blast_radius_adapter = allow
+                    allowed = runtime.tools.execute_calls(
+                        [call], context=allowed_context
+                    )
+                result = allowed.results[0]
+                self.assertTrue(result.ok, result.data)
                 self.assertEqual(calls, ["ran"])
+                self.assertEqual(
+                    [profile.tool_name for profile in allow.prior_profiles],
+                    ["time.in_zone"],
+                )
             finally:
                 runtime.close()
 

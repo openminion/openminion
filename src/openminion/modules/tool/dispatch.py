@@ -113,15 +113,15 @@ def resolve_binding_for_call(
             source="runtime_direct",
         )
 
+    if not model_tool_id:
+        return None
+
     # Explicit time runtime calls either resolve to their own live spec or are refused.
     # Unrelated families keep their existing fallback behavior.
     if allow_runtime_direct and model_tool_id == MODEL_TIME and raw not in available:
         direct_binding_id = mgr.resolve_binding(model_tool_id) or ""
         if raw in mgr.runtime_candidates(direct_binding_id):
             return None
-
-    if not model_tool_id:
-        return None
 
     runtime_binding_id = mgr.resolve_binding(model_tool_id)
     if not runtime_binding_id:
@@ -132,10 +132,10 @@ def resolve_binding_for_call(
         for candidate in mgr.runtime_candidates(runtime_binding_id)
         if candidate in available
     )
-    if model_tool_id == MODEL_TIME and not allow_runtime_direct:
-        # Canonical model-facing time remains the first declared operation. If it is
-        # unavailable, report the binding as unavailable rather than substituting a
-        # different operation/schema from the family.
+    if model_tool_id == MODEL_TIME:
+        # Canonical model-facing time remains the first declared operation in both
+        # lanes. If it is unavailable, report the binding as unavailable rather than
+        # substituting a different operation/schema from the family.
         declared = mgr.runtime_candidates(runtime_binding_id)
         canonical = declared[0] if declared else ""
         candidate_chain = (canonical,) if canonical in available else ()

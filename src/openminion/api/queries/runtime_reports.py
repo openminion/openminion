@@ -59,18 +59,19 @@ def build_tool_inventory_report(
     return sorted(inventory, key=lambda item: item["name"])
 
 
-def _direct_time_tool_report(
-    runtime: Any, tool_name: str, inventory: list[dict[str, Any]]
-) -> dict[str, Any] | None:
+def _direct_time_tool_report(runtime: Any, tool_name: str) -> dict[str, Any] | None:
     if tool_name not in TIME_RUNTIME_TOOL_NAMES:
-        return None
-    if not any(item["name"] == MODEL_TIME for item in inventory):
         return None
     registry = getattr(runtime, "tools", None)
     if registry is None:
         return None
-    spec = registry._provider_spec_for_runtime_name(tool_name)
-    if spec is None:
+    # The explicit time operations follow the model `time` parent: it must stay
+    # declared and exposure-visible even when time.now itself is unavailable.
+    manager = registry._binding_manager()
+    visible = registry.exposure_service.decide(MODEL_TIME).state == "visible"
+    if MODEL_TIME not in dict(manager.model_tool_catalog()) or not visible:
+        return None
+    if (spec := registry._provider_spec_for_runtime_name(tool_name)) is None:
         return None
     return {
         "name": spec.name,
@@ -89,7 +90,7 @@ def build_tool_schema_report(runtime: Any, *, tool_name: str) -> dict[str, Any] 
         return None
     inventory = build_tool_inventory_report(runtime)
     found = next((dict(item) for item in inventory if item["name"] == normalized), None)
-    return found or _direct_time_tool_report(runtime, normalized, inventory)
+    return found or _direct_time_tool_report(runtime, normalized)
 
 
 def _build_provider_items(runtime: Any, diagnostics: dict[str, Any]) -> dict[str, Any]:

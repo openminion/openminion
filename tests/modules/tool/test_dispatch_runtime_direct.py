@@ -8,7 +8,6 @@ from openminion.modules.llm.providers.base import ProviderToolCall
 from openminion.modules.tool import build_default_tool_registry
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.dispatch import resolve_binding_for_call
-from openminion.modules.tool.runtime.manager import _schema_candidates
 from openminion.tools.time.constants import TIME_RUNTIME_TOOL_NAMES
 
 
@@ -48,28 +47,33 @@ def test_available_declared_time_candidates_use_runtime_direct(resolution_manage
         assert resolution.runtime_tool_name == raw_name
 
 
-def test_model_origin_time_dispatch_is_unchanged(resolution_manager):
+@pytest.mark.parametrize("allow_runtime_direct", [True, False])
+def test_canonical_time_never_selects_another_operation(
+    resolution_manager, allow_runtime_direct
+):
     canonical = resolve_binding_for_call(
         raw_tool_name="time",
-        available_tool_names=("time.now",),
+        available_tool_names=("time.now", "time.in_zone"),
         manager=resolution_manager,
-        allow_runtime_direct=False,
+        allow_runtime_direct=allow_runtime_direct,
     )
     assert canonical is not None
     assert canonical.source == "model_dispatch"
     assert canonical.runtime_tool_name == "time.now"
 
-    fallback = resolve_binding_for_call(
+    unavailable = resolve_binding_for_call(
         raw_tool_name="time",
         available_tool_names=("time.in_zone",),
         manager=resolution_manager,
-        allow_runtime_direct=False,
+        allow_runtime_direct=allow_runtime_direct,
     )
-    assert fallback is not None
-    assert fallback.source == "binding_unavailable"
-    assert fallback.runtime_tool_name == ""
-    assert fallback.runtime_fallback_chain == ()
+    assert unavailable is not None
+    assert unavailable.source == "binding_unavailable"
+    assert unavailable.runtime_tool_name == ""
+    assert unavailable.runtime_fallback_chain == ()
 
+
+def test_model_origin_explicit_time_names_are_refused(resolution_manager):
     assert (
         resolve_binding_for_call(
             raw_tool_name="time.in_zone",
@@ -141,9 +145,94 @@ def test_execute_calls_does_not_fall_back_for_a_missing_declared_candidate():
     assert "runtime_tool_name" not in result.data
 
 
-def test_time_model_schema_uses_only_the_canonical_operation() -> None:
-    assert _schema_candidates("time", ("time.now", "time.in_zone")) == ("time.now",)
-    assert _schema_candidates("web.fetch", ("fetch.get", "fetch.head")) == (
-        "fetch.get",
-        "fetch.head",
-    )
+def test_execute_calls_refuses_the_canonical_time_substitution():
+    registry = build_default_tool_registry()
+    try:
+        registry.unregister("time.now")
+        batch = registry.execute_calls(
+            [
+                ProviderToolCall(
+                    name="time",
+                    arguments={"timezone": "UTC"},
+                    source="inproc",
+                )
+            ],
+            context=ToolExecutionContext(
+                channel="test",
+                target="test",
+                session_id="time-direct",
+                metadata={"session_id": "time-direct"},
+            ),
+        )
+    finally:
+        if registry.mcp_manager is not None:
+            registry.mcp_manager.close()
+
+    result = batch.results[0]
+    assert result.ok is False
+    assert result.tool_name == "time"
+    assert result.data["error_code"] == "unknown_tool_name"
+    assert result.data["runtime_resolution_source"] == "binding_unavailable"
+    assert result.data["model_tool_name"] == "time"
+    assert result.data["runtime_tool_name"] == ""
+    assert result.data["runtime_fallback_chain"] == []
+
+
+def test_unrelated_family_fallback_survives_the_canonical_time_guard():
+    registry = build_default_tool_registry()
+    try:
+        registry.unregister("time.now")
+        manager = registry._binding_manager()
+        assert registry.model_to_runtime_tool_map()["web.fetch"] == "fetch.get"
+        resolution = resolve_binding_for_call(
+            raw_tool_name="web.fetch",
+            available_tool_names=tuple(registry._tools),
+            manager=manager,
+            allow_runtime_direct=False,
+        )
+    finally:
+        if registry.mcp_manager is not None:
+            registry.mcp_manager.close()
+
+    assert resolution is not None
+    assert resolution.source == "model_dispatch"
+    assert resolution.runtime_tool_name == "fetch.get"
+
+
+def test_compiled_time_schema_never_uses_another_operation():
+    """The model `time` schema is compiled from the declared `time.now` only."""
+    registry = build_default_tool_registry()
+    try:
+        manager = registry._binding_manager()
+        available = set(registry._tools)
+        in_zone_schema = manager._runtime_schema_by_tool_name["time.in_zone"]
+        # A missing canonical runtime schema must not fall through to a sibling.
+        manager._runtime_schema_by_tool_name.pop("time.now")
+        manager._compiled = None
+
+        specs = {spec.name: spec for spec in manager.model_provider_specs(available)}
+        assert specs["time"].parameters == {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": True,
+        }
+        assert specs["time"].parameters != in_zone_schema
+        assert manager.model_to_runtime_tool_map(available)["time"] == "time.now"
+        assert (
+            manager.model_runtime_dispatch_map(available)["time"]["runtime_tool_name"]
+            == "time.now"
+        )
+
+        # With the canonical runtime operation unavailable the model tool has no
+        # selection and no model-facing spec at all.
+        without_now = available - {"time.now"}
+        assert all(
+            spec.name != "time" for spec in manager.model_provider_specs(without_now)
+        )
+        assert "time" not in manager.model_to_runtime_tool_map(without_now)
+        unavailable = manager.model_runtime_dispatch_map(without_now)["time"]
+        assert unavailable["runtime_tool_name"] == ""
+        assert unavailable["runtime_candidates"] == []
+    finally:
+        if registry.mcp_manager is not None:
+            registry.mcp_manager.close()
