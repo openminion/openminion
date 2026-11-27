@@ -25,6 +25,9 @@ package source and release surface.
 
 - [`terminal-surfaces.md`](terminal-surfaces.md): canonical terminal product,
   retired dashboard areas, and resource-command boundaries.
+- [`session-timeline.md`](session-timeline.md): the compact `sessions timeline`
+  command and `/timeline` slash, their message, tool, approval, and agent-event
+  sources, and the entire `session` alias scope.
 - [`runtime-database-upgrades.md`](runtime-database-upgrades.md): coordinated
   upgrades for runtime migrations that add derived data and for new brain
   working state fields, backup and rollback of every database in a SQLite

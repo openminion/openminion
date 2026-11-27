@@ -38,7 +38,7 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
     ),
     SlashCommandMetadata(
         "/timeline",
-        "Show a compact event timeline for a session",
+        "Show a compact timeline for a session",
         ("/timeline", "/timeline <session-id>"),
     ),
     SlashCommandMetadata(

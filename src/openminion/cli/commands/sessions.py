@@ -352,12 +352,7 @@ def run_sessions_timeline(args: Any) -> int:
         print("openminion sessions timeline: missing session id", file=sys.stderr)
         return 2
 
-    raw_limit = getattr(args, "limit", 500)
-    try:
-        limit = 500 if raw_limit is None else int(raw_limit)
-    except (TypeError, ValueError):
-        limit = 500
-    limit = min(5000, max(1, limit))
+    limit = min(5000, max(1, int(getattr(args, "limit", 500))))
     output_json = bool(getattr(args, "output_json", False))
 
     try:
@@ -373,28 +368,34 @@ def run_sessions_timeline(args: Any) -> int:
                 file=sys.stderr,
             )
             return 1
-        total = runtime.sessions.count_events(session_id=session_id)
-        events = runtime.sessions.list_events(
-            session_id=session_id,
-            limit=limit,
-            newest_first=True,
+        entries = build_timeline(
+            messages=runtime.sessions.list_recent_messages(
+                session_id=session_id,
+                limit=limit,
+            ),
+            events=runtime.sessions.list_events(
+                session_id=session_id,
+                limit=limit,
+                newest_first=True,
+            ),
         )
-        entries = build_timeline(events)
     except _TIMELINE_ERRORS as exc:
         print(
-            f"openminion sessions timeline: could not read events: {exc}",
+            f"openminion sessions timeline: could not read timeline: {exc}",
             file=sys.stderr,
         )
         return 1
     finally:
         runtime.close()
 
+    total = len(entries)
+    latest = entries[-limit:]
     if output_json:
         print_json_payload(
-            timeline_payload(session_id=session_id, entries=entries, total=total)
+            timeline_payload(session_id=session_id, entries=latest, total=total)
         )
     else:
-        print(render_timeline(session_id=session_id, entries=entries, total=total))
+        print(render_timeline(session_id=session_id, entries=latest, total=total))
     return 0
 
 
@@ -532,7 +533,7 @@ def _register_timeline_command(sessions_subcommands: Any) -> None:
         "--limit",
         type=int,
         default=500,
-        help="Show at most N most recent events (default 500, max 5000)",
+        help="Show at most N recent messages and events (default 500, max 5000)",
     )
     add_json_output_flag(
         timeline,

@@ -584,11 +584,16 @@ def _handle_slash_timeline(text: str, *, runtime: Any, console: Console) -> None
         )
         return
     session_exists = getattr(runtime, "session_exists", None)
+    list_messages = getattr(runtime, "list_session_messages", None)
     list_events = getattr(runtime, "list_session_events", None)
-    if not callable(session_exists) or not callable(list_events):
+    if (
+        not callable(session_exists)
+        or not callable(list_messages)
+        or not callable(list_events)
+    ):
         console.print(
             Text(
-                "(/timeline: runtime does not expose session events)",
+                "(/timeline: runtime does not expose session messages and events)",
                 style=_muted_style(italic=True),
             )
         )
@@ -602,22 +607,32 @@ def _handle_slash_timeline(text: str, *, runtime: Any, console: Console) -> None
                 )
             )
             return
-        events = list_events(session_id)
+        entries = build_timeline(
+            messages=list_messages(session_id),
+            events=list_events(session_id),
+        )
     except (OSError, RuntimeError, TypeError, ValueError, sqlite3.DatabaseError) as exc:
         console.print(
-            Text(f"(/timeline: could not read events: {exc})", style=_error_style())
+            Text(f"(/timeline: could not read timeline: {exc})", style=_error_style())
         )
         return
-    if not events:
+    latest = entries[-500:]
+    if not latest:
         console.print(
             Text(
-                f"(no events for session {session_id!r})",
+                f"(no timeline entries for session {session_id!r})",
                 style=_muted_style(italic=True),
             )
         )
         return
     console.print(
-        Text(render_timeline(session_id=session_id, entries=build_timeline(events)))
+        Text(
+            render_timeline(
+                session_id=session_id,
+                entries=latest,
+                total=len(entries),
+            )
+        )
     )
 
 

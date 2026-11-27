@@ -304,6 +304,15 @@ class OpenMinionRuntime(
             messages.extend(self._record_to_chat_messages(record))
         return messages
 
+    def list_session_messages(self, session_id: str, *, limit: int = 500) -> list[Any]:
+        return cast(
+            "list[Any]",
+            self._rt.sessions.list_recent_messages(
+                session_id=session_id,
+                limit=limit,
+            ),
+        )
+
     def list_session_events(self, session_id: str, *, limit: int = 500) -> list[Any]:
         return cast(
             "list[Any]",
