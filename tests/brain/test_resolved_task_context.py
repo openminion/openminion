@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 from jsonschema import Draft202012Validator
 
+from openminion.modules.brain.constants import TASK_CONTEXT_MAX_CHARS
 from openminion.modules.brain.loop.context.task_context import (
     input_digest,
     resolve_entry_task_update,
@@ -953,25 +954,44 @@ def test_verbatim_adoption_quotes_are_allowed_only_during_update():
             )
 
 
-def test_initial_verbatim_capacity_failure_preserves_empty_state():
-    from openminion.modules.brain.constants import TASK_CONTEXT_MAX_CHARS
+@pytest.mark.parametrize(
+    "size,active,reason",
+    [
+        (TASK_CONTEXT_MAX_CHARS, False, None),
+        (TASK_CONTEXT_MAX_CHARS + 1, False, "task_context_capacity_exceeded"),
+        (TASK_CONTEXT_MAX_CHARS + 1, True, "invalid_task_context_update"),
+    ],
+)
+def test_initial_verbatim_capacity_failure_has_its_own_reason(
+    current, size, active, reason
+):
     from openminion.modules.brain.loop.context.task_entry import (
         apply_entry_task_context,
     )
-    from tests.brain.runner_test_support import fake_logger
 
+    events = []
+    logger = SimpleNamespace(emit=lambda _name, payload, **_: events.append(payload))
+    task = current if active else None
     state = SimpleNamespace(
-        resolved_task_context=None, task_context_needs_update=False, trace_id="large"
+        resolved_task_context=task, task_context_needs_update=False, trace_id="large"
     )
     result = apply_entry_task_context(
         state,
         _tool_response("research", {"sub_intents": []}),
-        user_input="x" * (TASK_CONTEXT_MAX_CHARS + 1),
+        user_input="x" * size,
         clarify=False,
-        logger=fake_logger(),
+        logger=logger,
     )
-    assert result.respond_kind == "clarify"
-    assert state.resolved_task_context is None and state.task_context_needs_update
+    if reason is None:
+        assert result is None and events == []
+        assert state.resolved_task_context.objective == "x" * size
+        assert state.resolved_task_context.objective_kind == "verbatim"
+        return
+    assert result.reason_code == reason and result.respond_kind == "clarify"
+    capacity = reason == "task_context_capacity_exceeded"
+    assert events == [{"reason": reason if capacity else "invalid_or_missing_update"}]
+    assert (f"it has {size:,} characters" in result.question) == capacity
+    assert state.resolved_task_context is task and state.task_context_needs_update
 
 
 def test_execution_keeps_latest_verbatim_input_even_when_delta_omits_a_detail():

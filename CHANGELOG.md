@@ -7,6 +7,17 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- A new request that is too long to seed verbatim as the task objective (over the
+  12,000-character `TASK_CONTEXT_MAX_CHARS` bound, with no model-supplied
+  `task_update`) now gets its own clarify decision instead of the generic
+  `invalid_task_context_update` restate question: reason code
+  `task_context_capacity_exceeded`, a `brain.task_context.rejected` event with that
+  reason, and a question that states the request's length and the task-context limit
+  for a verbatim seed. The bound, the task state left by the rejection and every other
+  task-update validation reason are unchanged; nothing is truncated. Carrying the
+  reason to response metadata and handling it before SDK output coercion are separate,
+  held work (Refs #804).
+
 - Security repair projects expose only their admitted delegation modes and reject
   unsupported delegation modes before requesting approval. Generic delegation and
   execution-time permission checks remain unchanged. Denied calls retain their
