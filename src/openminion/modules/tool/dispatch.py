@@ -5,6 +5,7 @@ from typing import Any
 from openminion.modules.tool.contracts import (
     normalize_raw_model_tool_name,
 )
+from openminion.modules.tool.contracts.model_ids import MODEL_TIME
 from openminion.modules.tool.contracts.runtime_ids import (
     RUNTIME_BROWSER,
     RUNTIME_EXEC_KILL,
@@ -112,9 +113,9 @@ def resolve_binding_for_call(
             source="runtime_direct",
         )
 
-    # An explicitly requested declared runtime name either resolves to its own live spec
-    # or is refused; only canonical model names may fall back to another candidate.
-    if allow_runtime_direct and model_tool_id and raw not in available:
+    # Explicit time runtime calls either resolve to their own live spec or are refused.
+    # Unrelated families keep their existing fallback behavior.
+    if allow_runtime_direct and model_tool_id == MODEL_TIME and raw not in available:
         direct_binding_id = mgr.resolve_binding(model_tool_id) or ""
         if raw in mgr.runtime_candidates(direct_binding_id):
             return None
@@ -131,6 +132,13 @@ def resolve_binding_for_call(
         for candidate in mgr.runtime_candidates(runtime_binding_id)
         if candidate in available
     )
+    if model_tool_id == MODEL_TIME and not allow_runtime_direct:
+        # Canonical model-facing time remains the first declared operation. If it is
+        # unavailable, report the binding as unavailable rather than substituting a
+        # different operation/schema from the family.
+        declared = mgr.runtime_candidates(runtime_binding_id)
+        canonical = declared[0] if declared else ""
+        candidate_chain = (canonical,) if canonical in available else ()
     if not candidate_chain:
         return BindingResolution(
             raw_tool_name=raw_tool_name,

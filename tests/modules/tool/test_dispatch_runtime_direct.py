@@ -8,6 +8,7 @@ from openminion.modules.llm.providers.base import ProviderToolCall
 from openminion.modules.tool import build_default_tool_registry
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.dispatch import resolve_binding_for_call
+from openminion.modules.tool.runtime.manager import _schema_candidates
 from openminion.tools.time.constants import TIME_RUNTIME_TOOL_NAMES
 
 
@@ -65,8 +66,9 @@ def test_model_origin_time_dispatch_is_unchanged(resolution_manager):
         allow_runtime_direct=False,
     )
     assert fallback is not None
-    assert fallback.source == "model_dispatch"
-    assert fallback.runtime_tool_name == "time.in_zone"
+    assert fallback.source == "binding_unavailable"
+    assert fallback.runtime_tool_name == ""
+    assert fallback.runtime_fallback_chain == ()
 
     assert (
         resolve_binding_for_call(
@@ -98,6 +100,16 @@ def test_unrelated_family_paths_are_unchanged(resolution_manager):
     assert canonical.source == "model_dispatch"
     assert canonical.runtime_tool_name == "fetch.head"
 
+    missing_direct = resolve_binding_for_call(
+        raw_tool_name="fetch.get",
+        available_tool_names=("fetch.head",),
+        manager=resolution_manager,
+    )
+    assert missing_direct is not None
+    assert missing_direct.source == "model_dispatch"
+    assert missing_direct.model_tool_id == "web.fetch"
+    assert missing_direct.runtime_tool_name == "fetch.head"
+
 
 def test_execute_calls_does_not_fall_back_for_a_missing_declared_candidate():
     registry = build_default_tool_registry()
@@ -127,3 +139,11 @@ def test_execute_calls_does_not_fall_back_for_a_missing_declared_candidate():
     assert result.tool_name == "time.in_zone"
     assert result.data["error_code"] == "unknown_tool_name"
     assert "runtime_tool_name" not in result.data
+
+
+def test_time_model_schema_uses_only_the_canonical_operation() -> None:
+    assert _schema_candidates("time", ("time.now", "time.in_zone")) == ("time.now",)
+    assert _schema_candidates("web.fetch", ("fetch.get", "fetch.head")) == (
+        "fetch.get",
+        "fetch.head",
+    )

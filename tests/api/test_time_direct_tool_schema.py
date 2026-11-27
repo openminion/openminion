@@ -15,6 +15,7 @@ from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.contracts.runtime_ids import RUNTIME_TIME_NOW
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.executor import execute_single_call
+from openminion.modules.tool.adapters import LocalPolicyAdapter
 from openminion.modules.tool.exposure import ToolExposureProfile
 from openminion.modules.tool.runtime.policy import Policy
 from openminion.modules.tool.runtime.policy_checks import run_policy_preflight
@@ -388,6 +389,58 @@ class TimeDirectToolOwnerTests(unittest.TestCase):
                     confirm=True,
                     workspace=Path(tmp),
                 )
+            finally:
+                runtime.close()
+
+    def test_confirmation_is_enforced_at_the_tool_policy_adapter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = APIRuntime.from_config_path(str(_config(tmp)))
+            calls: list[str] = []
+
+            def handler() -> None:
+                calls.append("ran")
+
+            try:
+                policy = Policy(
+                    raw={
+                        "version": 1,
+                        "scope": "READ_ONLY",
+                        "workspace_root": tmp,
+                        "tools": {"allow_prefix": ["time"]},
+                        "paths": {
+                            "read_allow": [tmp],
+                            "write_allow": [tmp],
+                            "deny": [],
+                        },
+                        "confirm": {"required_tools": ["time.in_zone"]},
+                    }
+                )
+                spec = runtime.tools._tools["time.in_zone"]
+
+                def evaluate(confirm: bool):
+                    decision = LocalPolicyAdapter(
+                        policy=policy,
+                        workspace=Path(tmp),
+                        scope="READ_ONLY",
+                        confirm=confirm,
+                    ).evaluate(
+                        tool_name="time.in_zone",
+                        tool_spec=spec,
+                        args={"timezone": "Europe/Helsinki"},
+                    )
+                    if decision.allowed:
+                        handler()
+                    return decision
+
+                denied = evaluate(False)
+                self.assertFalse(denied.allowed)
+                self.assertTrue(denied.requires_confirm)
+                self.assertEqual(denied.code, "CONFIRM_REQUIRED")
+                self.assertEqual(calls, [])
+
+                allowed = evaluate(True)
+                self.assertTrue(allowed.allowed)
+                self.assertEqual(calls, ["ran"])
             finally:
                 runtime.close()
 

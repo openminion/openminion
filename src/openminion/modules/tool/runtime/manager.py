@@ -12,6 +12,7 @@ from openminion.modules.tool.contracts import (
     is_valid_runtime_binding_id,
     validate_manifest,
 )
+from openminion.modules.tool.contracts.model_ids import MODEL_TIME
 from openminion.modules.tool.contracts.normalization import (
     normalize_raw_model_tool_name,
     strip_tool_wrapper_prefix,
@@ -60,6 +61,12 @@ def _normalized_names(names: Iterable[str]) -> set[str]:
         if token:
             normalized.add(token)
     return normalized
+
+
+def _schema_candidates(
+    model_tool_id: str, candidates: tuple[str, ...]
+) -> tuple[str, ...]:
+    return candidates[:1] if model_tool_id == MODEL_TIME else candidates
 
 
 @dataclass(frozen=True)
@@ -262,10 +269,10 @@ class ToolRegistryManager:
         for model_tool_id, model_tool in model_tools_by_id.items():
             parameters = dict(model_tool.parameters or {})
             if not parameters:
-                runtime_binding_id = model_to_runtime_binding_id.get(model_tool_id, "")
-                for candidate in runtime_binding_to_candidates.get(
-                    runtime_binding_id, ()
-                ):
+                candidates = runtime_binding_to_candidates.get(
+                    model_to_runtime_binding_id.get(model_tool_id, ""), ()
+                )
+                for candidate in _schema_candidates(model_tool_id, candidates):
                     candidate_schema = self._runtime_schema_by_tool_name.get(candidate)
                     if isinstance(candidate_schema, dict) and candidate_schema:
                         parameters = dict(candidate_schema)
