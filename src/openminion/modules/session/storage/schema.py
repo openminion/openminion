@@ -1,3 +1,38 @@
+from openminion.modules.storage.record_store import RecordStore
+
+
+def _table_columns(record_store: RecordStore, table_name: str) -> set[str]:
+    capabilities = record_store.capabilities()
+    if bool(capabilities.get("raw_sql")):
+        rows = record_store.query_dicts(f"PRAGMA table_info({table_name})")
+        return {str(row["name"]) for row in rows}
+    rows = record_store.query_dicts(
+        """
+        SELECT column_name AS name
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = ?
+        """,
+        (table_name,),
+    )
+    return {str(row["name"]) for row in rows}
+
+
+def _ensure_store_column(
+    record_store: RecordStore,
+    *,
+    table_name: str,
+    column_name: str,
+    ddl_tail: str,
+) -> None:
+    columns = _table_columns(record_store, table_name)
+    if not columns or column_name in columns:
+        return
+    record_store.execute_count(
+        f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl_tail}"
+    )
+
+
 BOOTSTRAP_SCHEMA: tuple[str, ...] = (
     """
     CREATE TABLE IF NOT EXISTS sessions (

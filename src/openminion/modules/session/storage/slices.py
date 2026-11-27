@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol, runtime_checkable
 
@@ -8,6 +10,43 @@ from openminion.base.constants import STATE_KEY_ACTIVE
 from openminion.modules.session.constants import MAX_TASK_ANCHOR_SCAN_TURNS
 
 _TASK_ANCHOR_PURPOSES = {"act", "entry", "judge", "summarize", "validate"}
+
+
+@dataclass(frozen=True)
+class SliceLimits:
+    max_turns: int = 8
+    max_tool_events: int = 12
+    summary_variant: str = "auto"  # short|long|auto
+    include_open_tasks: bool = True
+    include_active_state: bool = True
+
+
+def stable_slice_hash(value: Any) -> str:
+    return hashlib.sha256(to_json(value).encode()).hexdigest()
+
+
+def normalize_slice_limits(limits: SliceLimits | Mapping[str, Any]) -> dict[str, Any]:
+    if isinstance(limits, SliceLimits):
+        source: Mapping[str, Any] = {
+            "max_turns": limits.max_turns,
+            "max_tool_events": limits.max_tool_events,
+            "summary_variant": limits.summary_variant,
+            "include_open_tasks": limits.include_open_tasks,
+            "include_active_state": limits.include_active_state,
+        }
+    else:
+        source = limits
+    summary_variant = str(source.get("summary_variant", "auto")).lower().strip()
+    if summary_variant not in {"short", "long", "auto"}:
+        summary_variant = "auto"
+    return {
+        "max_turns": max(1, int(source.get("max_turns", 8))),
+        "max_tool_events": max(1, int(source.get("max_tool_events", 12))),
+        "archive_ref_limit": max(1, int(source.get("archive_ref_limit", 3))),
+        "summary_variant": summary_variant,
+        "include_open_tasks": bool(source.get("include_open_tasks", True)),
+        "include_active_state": bool(source.get("include_active_state", True)),
+    }
 
 
 @runtime_checkable

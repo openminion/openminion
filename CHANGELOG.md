@@ -7,6 +7,13 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `SQLiteSessionStore(":memory:")` and `PostgresSessionStore(":memory:")` now remove
+  only the temporary storage directory they created on `close()` (idempotently across
+  repeated calls) and clean up owned resources (`_owned_temp_root`, owned default
+  `artifactctl`, and owned SQLite `record_store`) when construction fails at any stage,
+  without masking `close()` or initialization exceptions or deleting caller-supplied
+  paths (Refs #857).
+
 - A new request that is too long to seed verbatim as the task objective (over the
   12,000-character `TASK_CONTEXT_MAX_CHARS` bound, with no model-supplied
   `task_update`) now gets its own clarify decision instead of the generic
