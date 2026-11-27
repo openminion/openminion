@@ -304,6 +304,19 @@ class OpenMinionRuntime(
             messages.extend(self._record_to_chat_messages(record))
         return messages
 
+    def list_session_events(self, session_id: str, *, limit: int = 500) -> list[Any]:
+        return cast(
+            "list[Any]",
+            self._rt.sessions.list_events(
+                session_id=session_id,
+                limit=limit,
+                newest_first=True,
+            ),
+        )
+
+    def session_exists(self, session_id: str) -> bool:
+        return self._rt.sessions.get_session(session_id) is not None
+
     def list_sessions(self, *, scope: str = "all") -> list[SidebarItem]:
         sessions = self._rt.sessions.list_sessions(limit=self._history_limit)
         if str(scope or "").strip().lower() == "current_agent":

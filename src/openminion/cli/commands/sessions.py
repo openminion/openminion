@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import closing
+import sqlite3
 import sys
 from typing import Any
 
@@ -10,6 +11,11 @@ from openminion.base.config import resolve_agent_config
 from openminion.cli.config import load_cli_manager_from_args
 from openminion.cli.parser.flags import add_json_output_flag
 from openminion.cli.presentation.json_output import print_json_payload
+from openminion.cli.presentation.session_timeline import (
+    build_timeline,
+    render_timeline,
+    timeline_payload,
+)
 from openminion.modules.artifact.config import from_base_config
 from openminion.modules.artifact.control import ArtifactCtl
 from openminion.modules.session.schemas import ContinuationError
@@ -337,6 +343,61 @@ def run_sessions_show(args) -> int:
     return 0
 
 
+_TIMELINE_ERRORS = (OSError, RuntimeError, TypeError, ValueError, sqlite3.DatabaseError)
+
+
+def run_sessions_timeline(args: Any) -> int:
+    session_id = str(getattr(args, "session_id", "") or "").strip()
+    if not session_id:
+        print("openminion sessions timeline: missing session id", file=sys.stderr)
+        return 2
+
+    raw_limit = getattr(args, "limit", 500)
+    try:
+        limit = 500 if raw_limit is None else int(raw_limit)
+    except (TypeError, ValueError):
+        limit = 500
+    limit = min(5000, max(1, limit))
+    output_json = bool(getattr(args, "output_json", False))
+
+    try:
+        runtime = _load_session_storage(args)
+    except _TIMELINE_ERRORS as exc:
+        print(f"openminion sessions timeline: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        if runtime.sessions.get_session(session_id) is None:
+            print(
+                f"openminion sessions timeline: unknown session {session_id!r}",
+                file=sys.stderr,
+            )
+            return 1
+        total = runtime.sessions.count_events(session_id=session_id)
+        events = runtime.sessions.list_events(
+            session_id=session_id,
+            limit=limit,
+            newest_first=True,
+        )
+        entries = build_timeline(events)
+    except _TIMELINE_ERRORS as exc:
+        print(
+            f"openminion sessions timeline: could not read events: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    finally:
+        runtime.close()
+
+    if output_json:
+        print_json_payload(
+            timeline_payload(session_id=session_id, entries=entries, total=total)
+        )
+    else:
+        print(render_timeline(session_id=session_id, entries=entries, total=total))
+    return 0
+
+
 def run_sessions_update(args) -> int:
     session_id = str(getattr(args, "session_id", "") or "").strip()
     action = str(getattr(args, "lifecycle_action", "") or "").strip()
@@ -462,9 +523,30 @@ def _register_lifecycle_commands(sessions_subcommands: Any) -> None:
     )
 
 
+def _register_timeline_command(sessions_subcommands: Any) -> None:
+    timeline = sessions_subcommands.add_parser(
+        "timeline", help="Show a compact event timeline for a session"
+    )
+    timeline.add_argument("session_id", help="Session id to inspect")
+    timeline.add_argument(
+        "--limit",
+        type=int,
+        default=500,
+        help="Show at most N most recent events (default 500, max 5000)",
+    )
+    add_json_output_flag(
+        timeline,
+        dest="output_json",
+        help_text="Emit timeline JSON",
+    )
+    timeline.set_defaults(handler=run_sessions_timeline, needs_app=False)
+
+
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     sessions_cmd = subparsers.add_parser(
-        "sessions", help="Session browser and management"
+        "sessions",
+        aliases=("session",),
+        help="Session browser and management",
     )
     sessions_subcommands = sessions_cmd.add_subparsers(
         dest="sessions_command", required=True
@@ -486,6 +568,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         sessions_list_cmd, dest="output_json", help_text="Emit JSON array"
     )
     sessions_list_cmd.set_defaults(handler=run_sessions_list, needs_app=False)
+    _register_timeline_command(sessions_subcommands)
     _register_lifecycle_commands(sessions_subcommands)
 
     sessions_delete_cmd = sessions_subcommands.add_parser(

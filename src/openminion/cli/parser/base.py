@@ -14,6 +14,7 @@ class CommandSpec:
     name: str
     module: str
     help: str
+    aliases: tuple[str, ...] = ()
 
 
 COMMAND_SPECS = (
@@ -41,7 +42,12 @@ COMMAND_SPECS = (
     CommandSpec(
         "channel", "openminion.cli.commands.channel", "Channel setup and operations"
     ),
-    CommandSpec("sessions", "openminion.cli.commands.sessions", "Session operations"),
+    CommandSpec(
+        "sessions",
+        "openminion.cli.commands.sessions",
+        "Session operations",
+        ("session",),
+    ),
     CommandSpec(
         "sidecar", "openminion.cli.commands.sidecar", "Sidecar lifecycle controls"
     ),
@@ -119,7 +125,9 @@ COMMAND_SPECS = (
     CommandSpec("mcp", "openminion.cli.commands.mcp", "Manage MCP servers"),
 )
 COMMAND_MODULES = tuple(dict.fromkeys(spec.module for spec in COMMAND_SPECS))
-COMMAND_NAMES = frozenset(spec.name for spec in COMMAND_SPECS)
+COMMAND_NAMES = frozenset(
+    name for spec in COMMAND_SPECS for name in (spec.name, *spec.aliases)
+)
 _ROOT_OPTIONS_WITH_VALUES = frozenset(
     {
         "--home-root",
@@ -189,20 +197,32 @@ def _selected_command(args: Sequence[str] | None) -> str | None:
     return None
 
 
+def _spec_for_command(command: str) -> CommandSpec | None:
+    return next(
+        (
+            spec
+            for spec in COMMAND_SPECS
+            if command == spec.name or command in spec.aliases
+        ),
+        None,
+    )
+
+
 def _register_command_modules(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
     *,
     selected_command: str | None,
 ) -> None:
     if selected_command is None:
-        for spec in COMMAND_SPECS:
-            subparsers.add_parser(spec.name, help=spec.help)
+        for command_spec in COMMAND_SPECS:
+            subparsers.add_parser(command_spec.name, help=command_spec.help)
         return
 
-    modules = [spec.module for spec in COMMAND_SPECS if spec.name == selected_command]
-    for module_name in dict.fromkeys(modules):
-        module = importlib.import_module(module_name)
-        module.register(subparsers)
+    spec = _spec_for_command(selected_command)
+    if spec is None:
+        return
+    module = importlib.import_module(spec.module)
+    module.register(subparsers)
 
 
 def _hide_suppressed_subcommands(parser: argparse.ArgumentParser) -> None:
