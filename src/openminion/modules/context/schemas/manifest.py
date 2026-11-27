@@ -18,6 +18,11 @@ class IdentityManifest(BaseModel):
     agent_id: str
     profile_version: str
     render_version: str
+    # Context-budget stage estimates for the rendered identity (counts, never text).
+    # None = not measured (older manifests), never "untruncated".
+    budget_truncated: bool | None = None
+    budget_cap_tokens: int | None = None
+    budget_used_tokens: int | None = None
 
 
 class SessionManifest(BaseModel):
