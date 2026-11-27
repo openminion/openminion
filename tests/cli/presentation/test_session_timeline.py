@@ -11,6 +11,9 @@ from openminion.cli.presentation.session_timeline import (
     timeline_payload,
 )
 from openminion.modules.storage.runtime.session_store import EventRecord, MessageRecord
+from openminion.services.agent.execution.required.metadata import (
+    invalid_tool_arguments_metadata,
+)
 
 TS = "2026-03-22T10:00:00+00:00"
 
@@ -103,9 +106,9 @@ def test_tool_entries_come_from_outbound_metadata() -> None:
     assert tool.kind == "tool"
     assert tool.actor == "tool"
     assert tool.status == "ok"
-    assert tool.event_type == "tool.execution.completed"
+    assert tool.event_type == "tool.result.reported"
     assert tool.event_id == "call-1"
-    assert tool.summary == 'tool probe_tool ok {"result":"probe-ok-A-104"}'
+    assert tool.summary == "tool probe_tool reported ok"
 
 
 def test_tool_entries_fall_back_to_cumulative_metadata() -> None:
@@ -124,7 +127,7 @@ def test_tool_entries_fall_back_to_cumulative_metadata() -> None:
     )
 
     assert entries[0].kind == "tool"
-    assert entries[0].summary == "tool file.read ok bytes"
+    assert entries[0].summary == "tool file.read reported ok"
 
 
 @pytest.mark.parametrize(
@@ -156,29 +159,72 @@ def test_tool_metadata_list_ignores_non_mapping_entries() -> None:
     )
 
     assert [entry.kind for entry in entries] == ["tool", "message"]
-    assert entries[0].summary == "tool ok ok"
+    assert entries[0].summary == "tool ok reported ok"
 
 
-def test_tool_result_prefers_data_then_content_then_error() -> None:
+def test_tool_summary_keeps_only_name_outcome_and_bounded_error_code() -> None:
     entries = build_timeline(
         messages=[
             _message(
                 "outbound",
                 "done",
                 metadata=_tool_results(
-                    {"tool_name": "a", "ok": True, "data": 3.5, "content": "c"},
-                    {"tool_name": "b", "ok": False, "content": "c", "error": "E"},
-                    {"tool_name": "c", "ok": False, "error": "boom"},
+                    {
+                        "tool_name": "a",
+                        "ok": True,
+                        "data": {"private_token": "SYNTHETIC-TIMELINE-SECRET"},
+                        "content": "arbitrary content",
+                    },
+                    {
+                        "tool_name": "b",
+                        "ok": False,
+                        "content": "arbitrary content",
+                        "error": "arbitrary error message",
+                    },
+                    {
+                        "tool_name": "c",
+                        "ok": False,
+                        "error": "arbitrary error message",
+                        "error_code": "E_TIMEOUT",
+                    },
+                    {
+                        "tool_name": "d",
+                        "ok": False,
+                        "data": {"error_code": "invalid_arguments"},
+                    },
                 ),
             )
         ]
     )
 
-    assert entries[0].summary == "tool a ok 3.5"
-    assert entries[1].summary == "tool b failed c"
-    assert entries[1].status == "failed"
-    assert entries[1].event_type == "tool.execution.failed"
-    assert entries[2].summary == "tool c failed boom"
+    assert [entry.summary for entry in entries[:4]] == [
+        "tool a reported ok",
+        "tool b reported failed",
+        "tool c reported failed (E_TIMEOUT)",
+        "tool d reported failed (invalid_arguments)",
+    ]
+    assert [entry.event_type for entry in entries[:4]] == ["tool.result.reported"] * 4
+    assert "SYNTHETIC-TIMELINE-SECRET" not in json.dumps(
+        [entry.summary for entry in entries]
+    )
+    assert "arbitrary" not in json.dumps([entry.summary for entry in entries])
+
+
+def test_invalid_tool_arguments_metadata_reports_failed_without_execution() -> None:
+    metadata = invalid_tool_arguments_metadata(
+        tool_name="probe_tool",
+        missing_fields_csv="order_id,quantity",
+    )
+
+    entries = build_timeline(messages=[_message("outbound", "done", metadata=metadata)])
+
+    (tool, message) = entries
+    assert metadata["tool_execution_count"] == "0"
+    assert message.kind == "message"
+    assert tool.kind == "tool"
+    assert tool.status == "failed"
+    assert tool.event_type == "tool.result.reported"
+    assert tool.summary == "tool probe_tool reported failed (invalid_arguments)"
 
 
 def test_tool_without_a_name_uses_a_generic_name() -> None:
@@ -186,11 +232,11 @@ def test_tool_without_a_name_uses_a_generic_name() -> None:
         messages=[_message("outbound", "done", metadata=_tool_results({"ok": True}))]
     )
 
-    assert entries[0].summary == "tool unknown ok"
+    assert entries[0].summary == "tool unknown reported ok"
     assert entries[0].event_id == "msg-1:tool:0"
 
 
-def test_tool_timestamp_uses_matching_waiting_tool_event() -> None:
+def test_tool_rows_share_the_outbound_observation_time() -> None:
     entries = build_timeline(
         messages=[
             _message(
@@ -198,7 +244,10 @@ def test_tool_timestamp_uses_matching_waiting_tool_event() -> None:
                 "done",
                 metadata={
                     "run_id": "run-9",
-                    "tool_results": [{"tool_name": "probe_tool", "ok": True}],
+                    "tool_results": [
+                        {"tool_name": "probe_alpha", "ok": True},
+                        {"tool_name": "probe_beta", "ok": True},
+                    ],
                 },
                 created_at="2026-03-22T10:00:05+00:00",
             )
@@ -208,14 +257,18 @@ def test_tool_timestamp_uses_matching_waiting_tool_event() -> None:
                 1,
                 "run.waiting_tool",
                 {"run_id": "run-9"},
-                created_at="2026-03-22T10:00:03+00:00",
+                created_at="2026-03-22T10:00:09+00:00",
             )
         ],
     )
 
-    assert [entry.kind for entry in entries] == ["tool", "message"]
-    assert entries[0].timestamp == "2026-03-22 10:00:03"
-    assert entries[1].timestamp == "2026-03-22 10:00:05"
+    assert [entry.kind for entry in entries] == ["tool", "tool", "message"]
+    assert [entry.timestamp for entry in entries] == [
+        "2026-03-22 10:00:05",
+        "2026-03-22 10:00:05",
+        "2026-03-22 10:00:05",
+    ]
+    assert not any(entry.event_type == "run.waiting_tool" for entry in entries)
 
 
 def test_tool_sorts_before_the_outbound_message_on_a_timestamp_tie() -> None:
@@ -237,19 +290,42 @@ def test_tool_sorts_before_the_outbound_message_on_a_timestamp_tie() -> None:
     [
         "run.queued",
         "run.running",
-        "run.completed",
+        "run.responding",
         "run.waiting_tool",
         "response.persisted",
         "response.delivered",
-        "thread.decision",
+    ],
+)
+def test_exact_duplicate_progress_events_are_omitted(event_type: str) -> None:
+    assert build_timeline(events=[_event(1, event_type, {"body": "x"})]) == []
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    [
+        "run.failed",
+        "run.cancelled",
+        "run.completed",
         "turn.outcome",
+        "thread.decision",
         "session.context.budget",
         "memory.capture.result",
         "knowledge_graph.query.completed",
+        "run.future_state",
+        "memory.future.observation",
+        "knowledge_graph.query.future",
     ],
 )
-def test_known_plumbing_events_are_skipped(event_type: str) -> None:
-    assert build_timeline(events=[_event(1, event_type, {"body": "x"})]) == []
+def test_outcome_and_observation_events_stay_bounded_event_rows(
+    event_type: str,
+) -> None:
+    (entry,) = build_timeline(events=[_event(1, event_type, {"body": "x"})])
+
+    assert entry.kind == "event"
+    assert entry.actor == ""
+    assert entry.status == ""
+    assert entry.summary == event_type
+    assert entry.event_type == event_type
 
 
 def test_unknown_event_stays_an_honest_event_row() -> None:
@@ -416,14 +492,14 @@ def test_render_pads_kind_to_eight_characters() -> None:
             timestamp="2026-03-22 10:00:00",
             kind="tool",
             actor="tool",
-            summary="tool shell ok",
+            summary="tool shell reported ok",
             status="ok",
-            event_type="tool.execution.completed",
+            event_type="tool.result.reported",
             event_id="1",
         )
     ]
 
-    assert "2026-03-22 10:00:00  tool      tool shell ok" in render_timeline(
+    assert "2026-03-22 10:00:00  tool      tool shell reported ok" in render_timeline(
         session_id="sess-1", entries=entries
     )
 
@@ -445,7 +521,14 @@ def test_timeline_payload_shape_and_no_raw_metadata() -> None:
                 metadata={
                     "api_key": "sk-live-secret",
                     **_tool_results(
-                        {"tool_name": "probe_tool", "ok": True, "content": "ok"}
+                        {
+                            "tool_name": "probe_tool",
+                            "ok": True,
+                            "content": "ok",
+                            "data": {
+                                "private_token": "SYNTHETIC-TIMELINE-SECRET",
+                            },
+                        }
                     ),
                 },
                 created_at=TS,
@@ -471,9 +554,13 @@ def test_timeline_payload_shape_and_no_raw_metadata() -> None:
         "event_id",
     }
     assert tool_payload["seq"] == 1
+    assert tool_payload["summary"] == "tool probe_tool reported ok"
+    assert tool_payload["event_type"] == "tool.result.reported"
     assert message_payload["summary"] == "done"
     encoded = json.dumps(payload)
     assert "sk-live-secret" not in encoded
+    assert "SYNTHETIC-TIMELINE-SECRET" not in encoded
+    assert "private_token" not in encoded
     assert "api_key" not in encoded
     assert "tool_results" not in encoded
 
@@ -542,10 +629,10 @@ def test_empty_tool_results_falls_back_to_cumulative_metadata() -> None:
     )
 
     assert entries[0].kind == "tool"
-    assert entries[0].summary == "tool file.read ok bytes"
+    assert entries[0].summary == "tool file.read reported ok"
 
 
-def test_empty_data_falls_back_to_content() -> None:
+def test_data_and_content_are_not_summarized() -> None:
     entries = build_timeline(
         messages=[
             _message(
@@ -558,4 +645,4 @@ def test_empty_data_falls_back_to_content() -> None:
         ]
     )
 
-    assert entries[0].summary == "tool probe ok bytes"
+    assert entries[0].summary == "tool probe reported ok"

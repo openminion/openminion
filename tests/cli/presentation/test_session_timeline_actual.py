@@ -20,6 +20,7 @@ from openminion import Agent, APIRuntime, tool
 from openminion.base.config import OpenMinionConfig, save_config
 from openminion.cli.presentation.session_timeline import (
     build_timeline,
+    render_timeline,
     timeline_payload,
 )
 from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
@@ -41,11 +42,10 @@ def _completion(message: dict[str, Any], finish: str) -> dict[str, Any]:
 
 
 class _Provider:
-    """Scripted OpenAI-compatible server that calls one tool once."""
+    """Scripted OpenAI-compatible server that calls its tools once per batch."""
 
-    def __init__(self, tool_name: str, arguments: dict[str, Any]) -> None:
-        self._tool_name = tool_name
-        self._arguments = arguments
+    def __init__(self, *calls: tuple[str, dict[str, Any]]) -> None:
+        self._calls = calls
         self._sent = False
         self._lock = threading.Lock()
         provider = self
@@ -75,19 +75,23 @@ class _Provider:
     def respond(self, body: dict[str, Any]) -> dict[str, Any]:
         names = [tool["function"]["name"] for tool in body.get("tools") or []]
         with self._lock:
-            call_now = not self._sent and self._tool_name in names
+            call_now = not self._sent and any(name in names for name, _ in self._calls)
             self._sent = self._sent or call_now
         if call_now:
-            call = {
-                "id": f"call-{self._tool_name}",
-                "type": "function",
-                "function": {
-                    "name": self._tool_name,
-                    "arguments": json.dumps(self._arguments),
-                },
-            }
+            calls = [
+                {
+                    "id": f"call-{name}",
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": json.dumps(arguments),
+                    },
+                }
+                for name, arguments in self._calls
+                if name in names
+            ]
             return _completion(
-                {"role": "assistant", "content": None, "tool_calls": [call]},
+                {"role": "assistant", "content": None, "tool_calls": calls},
                 "tool_calls",
             )
         return _completion(
@@ -144,7 +148,7 @@ def test_real_read_only_tool_turn_shows_messages_and_tool_result(
         """Read one probe order."""
         return f"probe-ok-{order_id}"
 
-    provider = _Provider("probe_tool", {"order_id": "A-104"})
+    provider = _Provider(("probe_tool", {"order_id": "A-104"}))
     runtime = _runtime(tmp_path, monkeypatch, provider)
     try:
         result = Agent(
@@ -172,11 +176,98 @@ def test_real_read_only_tool_turn_shows_messages_and_tool_result(
     assert inbound.summary == "Use the probe tool."
     assert "DONE" in assistant.summary
     assert tool_entry.status == "ok"
-    assert tool_entry.event_type == "tool.execution.completed"
-    assert "probe_tool" in tool_entry.summary
-    assert "probe-ok-A-104" in tool_entry.summary
+    assert tool_entry.event_type == "tool.result.reported"
+    assert tool_entry.summary == "tool probe_tool reported ok"
+    assert "probe-ok-A-104" not in tool_entry.summary
+    assert tool_entry.timestamp == assistant.timestamp
     assert entries.index(tool_entry) < entries.index(assistant)
     assert any(event.event_type == "run.waiting_tool" for event in events)
+    assert not any(entry.event_type == "run.waiting_tool" for entry in entries)
+
+
+def test_real_agent_failure_keeps_the_recorded_run_outcome(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _NotJSON:
+        pass
+
+    @tool(idempotent=True, min_scope="READ_ONLY")
+    def bad_return() -> str:
+        """Return an object that cannot be JSON-serialized."""
+        return _NotJSON()  # type: ignore[return-value]
+
+    provider = _Provider(("bad_return", {}))
+    runtime = _runtime(tmp_path, monkeypatch, provider)
+    try:
+        result = Agent(
+            runtime=runtime,
+            session_id=SESSION_ID,
+            tools=[bad_return],
+            forced_tools=["bad_return"],
+        ).run("Use the bad tool.", timeout_seconds=30)
+        messages, events, entries = _timeline(runtime)
+    finally:
+        runtime.close()
+        provider.close()
+
+    assert result.run_state == "failed"
+    assert [message.role for message in messages] == ["inbound", "outbound"]
+    failed_event = next(event for event in events if event.event_type == "run.failed")
+    assert failed_event.payload["error_code"] == "RUNTIME_ERROR"
+    assistant = next(entry for entry in entries if entry.actor == "assistant")
+    failed_entry = next(entry for entry in entries if entry.event_type == "run.failed")
+    assert failed_entry.kind == "event"
+    assert failed_entry.summary == "run.failed"
+    assert entries.index(assistant) < entries.index(failed_entry)
+
+
+def test_real_two_tool_turn_does_not_expose_result_payloads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    synthetic_marker = "SYNTHETIC-TIMELINE-SECRET"
+
+    @tool(min_scope="READ_ONLY")
+    def probe_alpha() -> dict[str, Any]:
+        """Return a nested alpha result."""
+        return {"private_token": synthetic_marker, "nested": {"value": "alpha"}}
+
+    @tool(min_scope="READ_ONLY")
+    def probe_beta() -> dict[str, Any]:
+        """Return a nested beta result."""
+        return {"private_token": synthetic_marker, "nested": {"value": "beta"}}
+
+    provider = _Provider(("probe_alpha", {}), ("probe_beta", {}))
+    runtime = _runtime(tmp_path, monkeypatch, provider)
+    try:
+        result = Agent(
+            runtime=runtime,
+            session_id=SESSION_ID,
+            tools=[probe_alpha, probe_beta],
+            forced_tools=["probe_alpha", "probe_beta"],
+        ).run("Use both probe tools.", timeout_seconds=30)
+        assert result.run_state == "completed"
+        messages, _events, entries = _timeline(runtime)
+    finally:
+        runtime.close()
+        provider.close()
+
+    assert synthetic_marker in json.dumps(
+        [message.metadata for message in messages], default=str
+    )
+    tools = [entry for entry in entries if entry.kind == "tool"]
+    assert [entry.summary for entry in tools] == [
+        "tool probe_alpha reported ok",
+        "tool probe_beta reported ok",
+    ]
+    assert [entry.event_type for entry in tools] == ["tool.result.reported"] * 2
+    text = render_timeline(session_id=SESSION_ID, entries=entries)
+    encoded = json.dumps(timeline_payload(session_id=SESSION_ID, entries=entries))
+    for rendered in (text, encoded):
+        assert synthetic_marker not in rendered
+        assert "private_token" not in rendered
+        assert "nested" not in rendered
 
 
 def test_real_approval_prompt_maps_the_prompt_body(
@@ -191,7 +282,7 @@ def test_real_approval_prompt_maps_the_prompt_body(
         calls.append(tag)
         return f"wrote-{tag}"
 
-    provider = _Provider("write_probe", {"tag": "A-104"})
+    provider = _Provider(("write_probe", {"tag": "A-104"}))
     runtime = _runtime(tmp_path, monkeypatch, provider)
     try:
         result = Agent(

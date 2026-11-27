@@ -125,7 +125,7 @@ def test_timeline_renders_messages_and_tools(capsys) -> None:
     assert "Session: sess-1" in out
     assert "Events: 3" in out
     assert "message   user: hello" in out
-    assert "tool      tool probe_tool ok" in out
+    assert "tool      tool probe_tool reported ok" in out
     assert "message   assistant: done" in out
     assert out.index("tool      tool probe_tool") < out.index("assistant: done")
     runtime.sessions.list_recent_messages.assert_called_once_with(
@@ -165,7 +165,14 @@ def test_timeline_json_payload_has_no_raw_metadata(capsys) -> None:
                 metadata={
                     "api_key": "sk-live-secret",
                     "tool_results": [
-                        {"tool_name": "probe_tool", "ok": True, "content": "ok"}
+                        {
+                            "tool_name": "probe_tool",
+                            "ok": True,
+                            "content": "ok",
+                            "data": {
+                                "private_token": "SYNTHETIC-TIMELINE-SECRET",
+                            },
+                        }
                     ],
                 },
             )
@@ -179,8 +186,13 @@ def test_timeline_json_payload_has_no_raw_metadata(capsys) -> None:
     assert payload["session_id"] == "sess-1"
     assert payload["event_count"] == 2
     assert payload["shown_count"] == 2
+    tool_payload = payload["entries"][0]
+    assert tool_payload["summary"] == "tool probe_tool reported ok"
+    assert tool_payload["event_type"] == "tool.result.reported"
     encoded = json.dumps(payload)
     assert "sk-live-secret" not in encoded
+    assert "SYNTHETIC-TIMELINE-SECRET" not in encoded
+    assert "private_token" not in encoded
     assert "api_key" not in encoded
     assert "tool_results" not in encoded
 
@@ -189,16 +201,44 @@ def test_timeline_text_omits_raw_metadata(capsys) -> None:
     runtime = _runtime(
         [
             _message(
-                "inbound",
+                "outbound",
                 "hello",
-                metadata={"api_key": "sk-live-secret"},
+                metadata={
+                    "api_key": "sk-live-secret",
+                    "tool_results": [
+                        {
+                            "tool_name": "probe_tool",
+                            "ok": True,
+                            "data": {
+                                "private_token": "SYNTHETIC-TIMELINE-SECRET",
+                            },
+                        }
+                    ],
+                },
             )
         ]
     )
 
     assert _run(runtime, _args()) == 0
 
-    assert "sk-live-secret" not in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "tool      tool probe_tool reported ok" in out
+    assert "sk-live-secret" not in out
+    assert "SYNTHETIC-TIMELINE-SECRET" not in out
+    assert "private_token" not in out
+
+
+def test_timeline_text_reports_a_recorded_run_failure(capsys) -> None:
+    runtime = _runtime(
+        [_message("outbound", "failed", message_id="msg-2", rowid=2)],
+        events=[_event(1, "run.failed", {"error_code": "RUNTIME_ERROR"})],
+    )
+
+    assert _run(runtime, _args()) == 0
+
+    out = capsys.readouterr().out
+    assert "event     run.failed" in out
+    assert "run.queued" not in out
 
 
 def test_timeline_shows_only_the_latest_limit(capsys) -> None:
@@ -357,8 +397,9 @@ def test_timeline_reads_the_configured_messages_and_events(tmp_path, capsys) -> 
     out = capsys.readouterr().out
     assert "Session: sess-real" in out
     assert "message   user: hello from store" in out
-    assert "tool      tool probe_tool ok" in out
+    assert "tool      tool probe_tool reported ok" in out
     assert "message   assistant: done from store" in out
+    assert "run.waiting_tool" not in out
     assert out.index("hello from store") < out.index("tool probe_tool")
     assert out.index("tool probe_tool") < out.index("done from store")
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Final
@@ -24,15 +24,20 @@ _SUMMARY_LIMIT: Final = 160
 _EPOCH: Final = datetime.min.replace(tzinfo=UTC)
 _MESSAGE_ACTORS: Final = {"inbound": "user", "outbound": "assistant"}
 _TOOL_RESULTS_KEYS: Final = ("tool_results", "tool_calls_cumulative")
-_PLUMBING_PREFIXES: Final = (
-    "run.",
-    "response.",
-    "thread.",
-    "session.context.",
-    "memory.",
-    "knowledge_graph.",
+# Timeline label for a recorded outbound result, not a stored runtime event.
+_REPORTED_TOOL_EVENT: Final = "tool.result.reported"
+# Exact duplicate/progress records only. Each names a step already represented by
+# a message row or an aggregate observation, so omitting it loses no outcome fact.
+_OMITTED_EVENT_TYPES: Final = frozenset(
+    {
+        "run.queued",  # start transition; the inbound message row owns the turn start
+        "run.running",  # progress transition between queue and the next state
+        "run.responding",  # progress transition before response persistence
+        "run.waiting_tool",  # one aggregate post-tool observation; tool rows carry it
+        "response.persisted",  # delivery bookkeeping; the outbound message row covers it
+        "response.delivered",  # delivery bookkeeping; the outbound message row covers it
+    }
 )
-_PLUMBING_TYPES: Final = frozenset({"turn.outcome"})
 _KIND_PRIORITY: Final = {
     "tool": 0,
     "approval": 1,
@@ -61,11 +66,8 @@ def build_timeline(
 ) -> list[TimelineEntry]:
     """Build one chronological timeline from the fetched messages and events."""
     event_list = sorted(events, key=lambda event: event.id)
-    tool_timestamps = _waiting_tool_timestamps(event_list)
     candidates: list[tuple[datetime, int, int, TimelineEntry]] = []
-    for source, (entry, sort_at) in enumerate(
-        _message_candidates(messages, tool_timestamps)
-    ):
+    for source, (entry, sort_at) in enumerate(_message_candidates(messages)):
         candidates.append((sort_at, _KIND_PRIORITY[entry.kind], source, entry))
     for source, event in enumerate(event_list, start=len(candidates)):
         candidate = _event_candidate(event)
@@ -136,7 +138,6 @@ def timeline_payload(
 
 def _message_candidates(
     messages: Iterable[MessageRecord],
-    tool_timestamps: Mapping[str, str],
 ) -> Iterator[tuple[TimelineEntry, datetime]]:
     for message in messages:
         metadata = message.metadata if isinstance(message.metadata, Mapping) else {}
@@ -156,14 +157,12 @@ def _message_candidates(
             ),
             sort_at,
         )
-        run_id = _raw(metadata.get("run_id"))
-        tool_timestamp = tool_timestamps.get(run_id, "") if run_id else ""
         for index, result in enumerate(_tool_results(metadata)):
             yield _tool_candidate(
                 message_id=_text(message.id),
                 index=index,
                 result=result,
-                created_at=tool_timestamp or _raw(message.created_at),
+                observation_time=message.created_at,
             )
 
 
@@ -194,78 +193,43 @@ def _tool_candidate(
     message_id: str,
     index: int,
     result: Mapping[str, Any],
-    created_at: object,
+    observation_time: object,
 ) -> tuple[TimelineEntry, datetime]:
+    """Project one recorded result; never an execution claim or a payload dump."""
     name = _raw(result.get("tool_name")) or "unknown"
     ok = result.get("ok") is True
     status = "ok" if ok else "failed"
-    detail = _tool_detail(result)
-    if detail == status:
-        detail = ""
-    timestamp, sort_at = _timestamp(created_at)
+    summary = f"tool {name} reported {status}"
+    error_code = "" if ok else _tool_error_code(result)
+    if error_code:
+        summary = f"{summary} ({error_code})"
+    timestamp, sort_at = _timestamp(observation_time)
     entry = TimelineEntry(
         seq=0,
         timestamp=timestamp,
         kind="tool",
         actor="tool",
-        summary=_text(
-            " ".join(part for part in ("tool", name, status, detail) if part)
-        ),
+        summary=_text(summary),
         status=status,
-        event_type=("tool.execution.completed" if ok else "tool.execution.failed"),
+        event_type=_REPORTED_TOOL_EVENT,
         event_id=_raw(result.get("call_id")) or f"{message_id}:tool:{index}",
     )
     return entry, sort_at
 
 
-def _tool_detail(result: Mapping[str, Any]) -> str:
-    detail = _compact_value(result.get("data"))
-    if detail and detail not in {"{}", "[]"}:
-        return detail
-    for key in ("content", "error"):
-        text = _raw(result.get(key))
-        if text:
-            return text
+def _tool_error_code(result: Mapping[str, Any]) -> str:
+    error_code = _text(result.get("error_code"), limit=64)
+    if error_code:
+        return error_code
+    data = result.get("data")
+    if isinstance(data, Mapping):
+        return _text(data.get("error_code"), limit=64)
     return ""
-
-
-def _compact_value(value: object) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, (int, float)):
-        return str(value)
-    if isinstance(value, (Mapping, list, tuple)):
-        try:
-            return json.dumps(
-                value,
-                ensure_ascii=False,
-                separators=(",", ":"),
-                default=str,
-            )
-        except (TypeError, ValueError):
-            return ""
-    return ""
-
-
-def _waiting_tool_timestamps(events: Sequence[EventRecord]) -> dict[str, str]:
-    timestamps: dict[str, str] = {}
-    for event in events:
-        if event.event_type != "run.waiting_tool":
-            continue
-        payload = event.payload if isinstance(event.payload, Mapping) else {}
-        run_id = _raw(payload.get("run_id"))
-        if run_id:
-            timestamps[run_id] = _raw(event.created_at)
-    return timestamps
 
 
 def _event_candidate(event: EventRecord) -> tuple[TimelineEntry, datetime] | None:
     event_type = _raw(event.event_type)
-    if _is_plumbing(event_type):
+    if event_type in _OMITTED_EVENT_TYPES:
         return None
     timestamp, sort_at = _timestamp(event.created_at)
     event_id = _text(event.canonical_event_id or str(event.id))
@@ -326,10 +290,6 @@ def _event_candidate(event: EventRecord) -> tuple[TimelineEntry, datetime] | Non
             event_id=event_id,
         )
     return entry, sort_at
-
-
-def _is_plumbing(event_type: str) -> bool:
-    return event_type in _PLUMBING_TYPES or event_type.startswith(_PLUMBING_PREFIXES)
 
 
 def _timestamp(value: object) -> tuple[str, datetime]:

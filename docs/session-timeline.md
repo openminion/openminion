@@ -41,13 +41,16 @@ The timeline reads the configured runtime store through its existing owners:
 1. Messages from the session store's `messages` table. `inbound` renders as
    `user` and `outbound` renders as `assistant`; any other role keeps its role
    as the actor.
-2. Tool entries from the outbound message metadata. `tool_results` is preferred
+2. Tool rows from the outbound message metadata. `tool_results` is preferred
    and `tool_calls_cumulative` is the fallback; both may be a JSON string or a
    list. A malformed or non-list value keeps the message and adds no tool
-   entries. Each entry uses the exact keys `call_id`, `content`, `data`,
-   `error`, `error_code`, `ok`, `source`, `tool_name`, `turn_scope_id`, and
-   `verified`; the summary is `tool <tool_name> <ok|failed>` plus a compact
-   result from `data`, `content`, or `error`.
+   rows. A row is a recorded result fact, not an execution event: it reads the
+   exact `call_id`, `tool_name`, and `ok` keys and at most a bounded
+   `error_code` (the top-level key, or `data.error_code` for a failed result).
+   Tool `data`, `content`, `error`, and every other metadata value are never
+   summarized. The summary is `tool <tool_name> reported ok|failed`, plus
+   `(<error_code>)` when a failed result records one. The row's event type is
+   the timeline label `tool.result.reported`; no such event is written.
 3. Approval prompts from `policy_confirmation_prompt` events. The summary is
    the event payload's `body`, and the entry is shown as a pending `policy`
    approval.
@@ -57,14 +60,26 @@ The timeline reads the configured runtime store through its existing owners:
    `agent bound <agent_id> (profile <profile_version>)` and kept as an event,
    not a handoff.
 
-Tool timestamps come from the `run.waiting_tool` event whose payload `run_id`
-matches the outbound message metadata `run_id`. Without that match the tool
-entry uses the outbound message timestamp and still sorts before it.
+Tool rows have the outbound message's observation time, not a per-call
+execution time: the outbound message `created_at` is used, and every tool row
+from one outbound transcript shares it. The gateway emits `run.waiting_tool`
+once, after that response's tool activity, as an aggregate observation, so it
+is not a per-call timestamp. A transcript that records
+`tool_execution_count="0"`, as the existing invalid-tool-arguments metadata
+does, is still shown as `reported failed`; the timeline does not claim that a
+tool executed.
 
-Known internal plumbing is skipped: `run.*` (including `run.waiting_tool`),
-`response.*`, `thread.*`, `turn.outcome`, `session.context.*`, `memory.*`, and
-`knowledge_graph.*`. Any other event type stays an honest `event` row with the
-event type as its summary.
+Six exact duplicate or progress event types are omitted: `run.queued` (the
+turn-start transition already represented by the inbound message),
+`run.running` and `run.responding` (run state progress between queued and the
+response), `run.waiting_tool` (the single aggregate post-tool observation
+already summarized by the tool rows), and `response.persisted` /
+`response.delivered` (delivery bookkeeping already represented by the outbound
+message row). No prefix or wildcard filter is used. Every other event type,
+including `run.failed`, `run.cancelled`, `run.completed`, `turn.outcome`,
+`thread.decision`, session-context, memory and knowledge-graph observations,
+and any unknown or future type, stays an `event` row with the event type as
+its summary. Event payloads are never included.
 
 ## Output
 
@@ -77,7 +92,9 @@ the command did not fetch.
 
 `--json` returns `ok`, `session_id`, `event_count`, `shown_count`, and entries
 with `seq`, `timestamp`, `kind`, `actor`, `summary`, `status`, `event_type`, and
-`event_id`. Raw message metadata and raw event payloads are never included.
+`event_id`. Raw message metadata and raw event payloads are never included; a
+tool row carries only the tool name, its reported outcome, and an optional
+bounded error code.
 
 ## Related commands
 
