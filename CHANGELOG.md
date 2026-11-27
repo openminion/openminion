@@ -7,6 +7,11 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Importing `openminion.modules.tool.executor` directly now succeeds without
+  circular-dependency failures: `ToolSpec` resolution inside the executor is
+  deferred until runtime so the registry re-export does not attempt to import
+  partially initialized executor symbols (Refs #733).
+
 - A new request that is too long to seed verbatim as the task objective (over the
   12,000-character `TASK_CONTEXT_MAX_CHARS` bound, with no model-supplied
   `task_update`) now gets its own clarify decision instead of the generic
