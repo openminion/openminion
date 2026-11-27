@@ -1,5 +1,6 @@
 import asyncio
 import shlex
+import sqlite3
 import subprocess
 from collections.abc import Callable
 from typing import Any
@@ -15,6 +16,7 @@ from openminion.cli.presentation.models import (
 )
 from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.presentation.markers import token_rich_style as _style
+from openminion.cli.presentation.session_timeline import build_timeline, render_timeline
 from openminion.cli.presentation.theme import handle_theme
 from openminion.cli.presentation.theme_roots import resolve_theme_data_root
 from openminion.cli.presentation.detail_modes import resolve_details_mode
@@ -568,6 +570,72 @@ def _render_tools_command(runtime: Any, console: Console, text: str) -> None:
         console.print(tool_exposure_command(runtime, text))
 
 
+def _handle_slash_timeline(text: str, *, runtime: Any, console: Console) -> None:
+    tokens = text.split()
+    if len(tokens) > 2:
+        console.print(Text("(usage: /timeline [<session-id>])", style=_muted_style()))
+        return
+    session_id = (
+        tokens[1] if len(tokens) == 2 else str(getattr(runtime, "session_id", "") or "")
+    )
+    if not session_id:
+        console.print(
+            Text("(/timeline: no active session)", style=_muted_style(italic=True))
+        )
+        return
+    session_exists = getattr(runtime, "session_exists", None)
+    list_messages = getattr(runtime, "list_session_messages", None)
+    list_events = getattr(runtime, "list_session_events", None)
+    if (
+        not callable(session_exists)
+        or not callable(list_messages)
+        or not callable(list_events)
+    ):
+        console.print(
+            Text(
+                "(/timeline: runtime does not expose session messages and events)",
+                style=_muted_style(italic=True),
+            )
+        )
+        return
+    try:
+        if not session_exists(session_id):
+            console.print(
+                Text(
+                    f"(/timeline: unknown session {session_id!r})",
+                    style=_error_style(),
+                )
+            )
+            return
+        entries = build_timeline(
+            messages=list_messages(session_id),
+            events=list_events(session_id),
+        )
+    except (OSError, RuntimeError, TypeError, ValueError, sqlite3.DatabaseError) as exc:
+        console.print(
+            Text(f"(/timeline: could not read timeline: {exc})", style=_error_style())
+        )
+        return
+    latest = entries[-500:]
+    if not latest:
+        console.print(
+            Text(
+                f"(no timeline entries for session {session_id!r})",
+                style=_muted_style(italic=True),
+            )
+        )
+        return
+    console.print(
+        Text(
+            render_timeline(
+                session_id=session_id,
+                entries=latest,
+                total=len(entries),
+            )
+        )
+    )
+
+
 async def _handle_session_slash(
     cmd: str,
     text: str,
@@ -604,6 +672,8 @@ async def _handle_session_slash(
         _handle_slash_expand(text, transcript=transcript, console=console)
     elif cmd == "/sessions":
         _render_sessions_list(runtime=runtime, console=console)
+    elif cmd == "/timeline":
+        _handle_slash_timeline(text, runtime=runtime, console=console)
     elif cmd == "/resume":
         resume_session(
             runtime=runtime,

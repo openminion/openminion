@@ -33,7 +33,7 @@ PROMPT_SAFE_OUTPUT_SLASHES = frozenset(
     /message
     /invite /kick /mcp /memory /model /normal /participants /permissions /project /queue
     /quiet /readonly /new /overview /rename /resume /review /room /routing /sessions /skills /start /status
-    /statusline /tasks /telemetry /theme /tokens /tools /trace /undo /verbose
+    /statusline /tasks /telemetry /theme /timeline /tokens /tools /trace /undo /verbose
     """.split()
 )
 

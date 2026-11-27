@@ -7,6 +7,15 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Add `openminion sessions timeline <session-id>` (alias `openminion session timeline`)
+  and the `/timeline` slash command: a compact chronology built from the
+  configured session store's messages, recorded tool results in the outbound
+  message transcript (tool name, reported outcome, and an optional bounded
+  error code; tool data, content, and error text are not included), approval
+  prompts, agent switches, and recorded outcome and observation events, with
+  `--limit` (default 500, maximum 5000) and `--json`; empty sessions exit 0
+  (Refs #891).
+
 - `SQLiteSessionStore(":memory:")` and `PostgresSessionStore(":memory:")` now remove
   only the temporary storage directory they created on `close()` (idempotently across
   repeated calls) and clean up owned resources (`_owned_temp_root`, owned default

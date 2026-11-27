@@ -20,7 +20,7 @@ def test_slash_metadata_has_unique_primary_names() -> None:
 
 
 def test_every_primary_command_has_explicit_usage() -> None:
-    assert len(SLASH_COMMANDS) == 58
+    assert len(SLASH_COMMANDS) == 59
     assert all(command.usage for command in SLASH_COMMANDS)
     assert all(
         all(line.strip() for line in command.usage) for command in SLASH_COMMANDS
@@ -84,6 +84,15 @@ def test_rename_metadata_registers_in_catalog() -> None:
     assert command.name == "/rename"
     assert command.description == "Rename the current session"
     assert "/rename" in terminal_slash_commands()
+
+
+def test_timeline_metadata_advertises_current_and_explicit_session_usage() -> None:
+    command = slash_command_metadata("timeline")
+
+    assert command is not None
+    assert command.name == "/timeline"
+    assert command.usage == ("/timeline", "/timeline <session-id>")
+    assert "/timeline" in terminal_slash_commands()
 
 
 def test_terminal_catalog_preserves_supported_commands_and_aliases() -> None:
