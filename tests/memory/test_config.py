@@ -1,18 +1,24 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 import warnings
 
 import yaml
 
+from openminion.base.config import OpenMinionConfig
+from openminion.base.constants import OPENMINION_DATA_ROOT_ENV, OPENMINION_HOME_ENV
 from openminion.modules.memory.config import (
     MEMCTL_CONFIG_ENV,
     CandidateLearningConfig,
     ConfigError,
     RankingConfig,
+    from_base_config,
     load_config,
     merge_candidate_learning_config,
     merge_ranking_config,
@@ -383,3 +389,180 @@ class ConfigLoaderTests(unittest.TestCase):
 
         self.assertEqual(merged.survival_halflife_days, 5.0)
         self.assertFalse(merged.auto_extract_notify)
+
+
+class ImplicitDefaultDerivationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.tmp_path = Path(self.tmp.name)
+
+    def test_integrated_missing_default_derives_builder_output(self) -> None:
+        home = self.tmp_path / "home"
+        home.mkdir()
+        env = {OPENMINION_HOME_ENV: str(home), "HOME": str(self.tmp_path)}
+
+        config = load_config(None, env=env)
+
+        data_root = (home / ".openminion").resolve()
+        expected = from_base_config(
+            base_config=OpenMinionConfig(),
+            home_root=home.resolve(),
+            data_root=data_root,
+        )
+        self.assertEqual(config, expected)
+        self.assertEqual(config.store.backend, "sqlite")
+        self.assertEqual(config.store.sqlite_path, data_root / "memory" / "memory.db")
+        self.assertEqual(config.path_mode, "integrated_runtime")
+        self.assertEqual(config.path_source, "default_integrated")
+        self.assertFalse((data_root / "memory" / "memory.db").exists())
+
+    def test_standalone_missing_default_derives_standalone_store(self) -> None:
+        with mock.patch.dict(os.environ, {"HOME": str(self.tmp_path)}):
+            config = load_config(None, env={"HOME": str(self.tmp_path)})
+
+        expected_sqlite_path = (self.tmp_path / ".memctl" / "memory.db").resolve()
+        self.assertEqual(config.store.backend, "sqlite")
+        self.assertEqual(config.store.sqlite_path, expected_sqlite_path)
+        self.assertEqual(config.path_mode, "module_standalone")
+        self.assertEqual(config.path_source, "default_derived")
+        builder = from_base_config(
+            base_config=OpenMinionConfig(),
+            home_root=self.tmp_path,
+            data_root=self.tmp_path,
+        )
+        self.assertEqual(
+            config,
+            replace(
+                builder,
+                store=replace(builder.store, sqlite_path=expected_sqlite_path),
+                path_mode="module_standalone",
+                path_source="default_derived",
+            ),
+        )
+        self.assertFalse(expected_sqlite_path.exists())
+
+    def test_data_root_only_missing_default_routes_to_data_root(self) -> None:
+        data_root = self.tmp_path / "data"
+        env = {
+            OPENMINION_DATA_ROOT_ENV: str(data_root),
+            "HOME": str(self.tmp_path),
+        }
+
+        config = load_config(None, env=env)
+
+        resolved_data_root = data_root.resolve()
+        self.assertEqual(
+            config,
+            from_base_config(
+                base_config=OpenMinionConfig(),
+                home_root=resolved_data_root,
+                data_root=resolved_data_root,
+            ),
+        )
+        self.assertEqual(
+            config.store.sqlite_path,
+            resolved_data_root / "memory" / "memory.db",
+        )
+
+    def test_memctl_config_missing_still_refused_and_creates_nothing(self) -> None:
+        home = self.tmp_path / "home"
+        home.mkdir()
+        env = {
+            OPENMINION_HOME_ENV: str(home),
+            MEMCTL_CONFIG_ENV: str(self.tmp_path / "missing.yaml"),
+            "HOME": str(self.tmp_path),
+        }
+
+        with self.assertRaises(FileNotFoundError):
+            load_config(None, env=env)
+
+        self.assertEqual(list(self.tmp_path.rglob("*.db")), [])
+
+    def test_explicit_missing_path_still_refused_and_creates_nothing(self) -> None:
+        home = self.tmp_path / "home"
+        home.mkdir()
+        env = {OPENMINION_HOME_ENV: str(home), "HOME": str(self.tmp_path)}
+
+        with self.assertRaises(FileNotFoundError):
+            load_config(home / "missing.yaml", env=env)
+
+        self.assertEqual(list(self.tmp_path.rglob("*.db")), [])
+
+    def test_dangling_symlink_at_default_still_refused(self) -> None:
+        home = self.tmp_path / "home"
+        home.mkdir()
+        (home / "memory.yaml").symlink_to(home / "does-not-exist.yaml")
+        env = {OPENMINION_HOME_ENV: str(home), "HOME": str(self.tmp_path)}
+
+        with self.assertRaises(FileNotFoundError):
+            load_config(None, env=env)
+
+        standalone_link = self.tmp_path / "memory.yaml"
+        standalone_link.symlink_to(self.tmp_path / "does-not-exist.yaml")
+        with mock.patch.dict(os.environ, {"HOME": str(self.tmp_path)}):
+            with self.assertRaises(FileNotFoundError):
+                load_config(None, env={"HOME": str(self.tmp_path)})
+
+        self.assertEqual(list(self.tmp_path.rglob("*.db")), [])
+
+    def test_present_config_in_fresh_home_loads_as_before(self) -> None:
+        home = self.tmp_path / "home"
+        home.mkdir()
+        _write_config(home, deepcopy(BASE_CONFIG))
+        env = {OPENMINION_HOME_ENV: str(home), "HOME": str(self.tmp_path)}
+
+        config = load_config(None, env=env)
+
+        self.assertEqual(config.path_mode, "integrated_runtime")
+        self.assertEqual(config.path_source, "env_var")
+        self.assertEqual(config.retrieval.max_results, 25)
+        self.assertEqual(config.store.sqlite.busy_timeout_ms, 7000)
+        self.assertEqual(
+            config.store.sqlite_path,
+            (self.tmp_path / ".memctl" / "memory.db").resolve(),
+        )
+
+    def test_present_malformed_default_still_fails(self) -> None:
+        home = self.tmp_path / "home"
+        home.mkdir()
+        (home / "memory.yaml").write_text(
+            "version: one\nmemctl: {}\n", encoding="utf-8"
+        )
+        env = {OPENMINION_HOME_ENV: str(home), "HOME": str(self.tmp_path)}
+
+        with self.assertRaises(ConfigError):
+            load_config(None, env=env)
+
+    def test_service_opens_data_root_store(self) -> None:
+        from openminion.modules.memory.cli import _get_service
+
+        data_root = self.tmp_path / "data"
+        patched = {
+            "HOME": str(self.tmp_path),
+            OPENMINION_DATA_ROOT_ENV: str(data_root),
+        }
+        with mock.patch.dict(os.environ, patched):
+            os.environ.pop(OPENMINION_HOME_ENV, None)
+            os.environ.pop(MEMCTL_CONFIG_ENV, None)
+            service = _get_service()
+            try:
+                self.assertTrue((data_root / "memory" / "memory.db").exists())
+            finally:
+                service.close()
+        self.assertFalse((self.tmp_path / ".memctl" / "memory.db").exists())
+        self.assertFalse((self.tmp_path / "memory" / "memory.db").exists())
+
+    def test_service_refusal_creates_no_database(self) -> None:
+        from openminion.modules.memory.cli import _get_service
+
+        patched = {
+            "HOME": str(self.tmp_path),
+            MEMCTL_CONFIG_ENV: str(self.tmp_path / "missing.yaml"),
+        }
+        with mock.patch.dict(os.environ, patched):
+            os.environ.pop(OPENMINION_HOME_ENV, None)
+            os.environ.pop(OPENMINION_DATA_ROOT_ENV, None)
+            with self.assertRaises(FileNotFoundError):
+                _get_service()
+        self.assertEqual(list(self.tmp_path.rglob("*.db")), [])
