@@ -18,6 +18,7 @@ _KIND_FLOAT = "float"
 _KIND_BOOL = "bool"
 _KIND_DICT_STR = "dict_str"
 _KIND_INT_LIST = "int_list"
+_KIND_RAW = "raw"
 
 _PROVIDER_SPECS: dict[str, tuple[type[Any], dict[str, tuple[str, Any]]]] = {
     "openai": (
@@ -108,6 +109,7 @@ _PROVIDER_SPECS: dict[str, tuple[type[Any], dict[str, tuple[str, Any]]]] = {
             "api_key": (_KIND_STR, ""),
             "api_key_env": (_KIND_STR, "OLLAMA_API_KEY"),
             "tool_call_strategy": (_KIND_STR, "fallback"),
+            "num_ctx": (_KIND_RAW, 0),
         },
     ),
     "cortensor": (
@@ -166,6 +168,8 @@ def _coerce_value(raw_value: Any, kind: str, default: Any) -> Any:
         }
     if kind == _KIND_INT_LIST:
         return _as_int_list(raw_value)
+    if kind == _KIND_RAW:
+        return raw_value
     raise ValueError(f"unknown provider field kind: {kind}")
 
 
@@ -186,7 +190,7 @@ def _build_providers_config(
     for name, (provider_cls, field_specs) in _PROVIDER_SPECS.items():
         payload = provider_payloads.get(name, {})
         kwargs = {
-            field_name: _coerce_value(payload.get(field_name), kind, default)
+            field_name: _coerce_value(payload.get(field_name, default), kind, default)
             for field_name, (kind, default) in field_specs.items()
         }
         configs[name] = provider_cls(**kwargs)

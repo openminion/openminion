@@ -86,3 +86,22 @@ providers:
 
 The provider client is closed when its agent runtime is evicted or the API
 runtime shuts down.
+
+## Ollama context window
+
+Ollama uses its server default context length unless a request sets
+`options.num_ctx`. Set `num_ctx` under `providers.ollama` to send it with every
+Ollama request:
+
+```yaml
+providers:
+  ollama:
+    num_ctx: 16384
+```
+
+A model connection's `provider_config_overrides.num_ctx` replaces that value
+for runs on the connection, and `0` there turns it off. An agent profile's
+`provider_config_overrides` applies only when the run keeps the profile's own
+provider and gives no explicit provider override. Use a non-negative integer:
+`0`, the default, sends no `num_ctx`, and a null, boolean, string or negative value
+fails the request with `INVALID_ARGUMENT` before it is sent.
