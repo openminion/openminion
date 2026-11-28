@@ -7,6 +7,13 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- `CortensorProvider` now honors `tool_call_strategy` for fallback tool-call parsing
+  when tools are declared (`supports_fallback_tool_calling(tool_call_strategy)`) instead
+  of hardcoding `fallback_enabled=False`, and forwards
+  `http_client_for_config(self._http_client, config)` in `openai_chat` mode so pooled
+  HTTP connection reuse matches completion mode while preserving native tool-call
+  precedence and `native`/no-tools behavior (Refs #862).
+
 - `openminion time <subcommand>` now works for all nine registered operations
   (`time.now`, `time.in_zone`, `time.convert`, `time.parse_iso`, `time.diff`,
   `time.format`, `time.start_of_day`, `time.end_of_day`, `time.next_cron`) on the
