@@ -255,7 +255,7 @@ def test_run_daemon_source_error_is_operator_visible(monkeypatch) -> None:
     config.runtime.process_mode = "daemon"
     config.runtime.daemon_auto_start = False
     monkeypatch.setattr(
-        "openminion.cli.commands.run._load_run_config",
+        "openminion.cli.commands.run.load_cli_config_from_args",
         lambda _args: config,
     )
     monkeypatch.setattr(
