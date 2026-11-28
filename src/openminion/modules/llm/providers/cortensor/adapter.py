@@ -275,6 +275,7 @@ class CortensorProvider:
             ),
             trace_metadata=request.metadata,
             env=config.get("__env__"),
+            http_client=http_client_for_config(self._http_client, config),
             telemetryctl=config.get("telemetryctl"),
         )
 
@@ -467,7 +468,9 @@ class CortensorProvider:
             provider_name=self.name,
             model_name=str(response_payload.get("model") or fallback_model),
             allowed_tool_names=allowed_tool_names if request.tools else None,
-            fallback_enabled=False,
+            fallback_enabled=bool(
+                request.tools and supports_fallback_tool_calling(tool_call_strategy)
+            ),
             parser_plugin_selection=behavior_profile.parser_plugin_selection,
             fallback_parser_policy=behavior_profile.fallback_parser_policy,
         )
