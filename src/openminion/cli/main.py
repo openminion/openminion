@@ -316,8 +316,28 @@ def main(argv: Sequence[str] | None = None, *, owns_process: bool = False) -> in
     except KeyboardInterrupt:
         print("openminion: cancelled", file=sys.stderr)
         return 130
+    except BrokenPipeError:
+        if owns_process:
+            _silence_broken_stdout()
+        return 0
     except _TERMINAL_CLI_ERRORS as exc:
         return _unexpected_error_exit(args, exc)
+
+
+def _silence_broken_stdout() -> None:
+    """Redirect stdout to devnull so interpreter teardown skips BrokenPipeError."""
+    devnull_fd: int | None = None
+    try:
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull_fd, sys.stdout.fileno())
+    except (OSError, ValueError):
+        return
+    finally:
+        if devnull_fd is not None:
+            try:
+                os.close(devnull_fd)
+            except OSError:
+                pass
 
 
 _ABORT_EXIT_CODES: dict[int, int] = {signal.SIGINT: 130, signal.SIGTERM: 143}
