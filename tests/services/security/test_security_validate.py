@@ -1,4 +1,9 @@
+import stat
+from pathlib import Path
+from types import SimpleNamespace
+
 from openminion.base.config import OpenMinionConfig
+from openminion.modules.policy.diagnostics import security as security_diagnostics
 from openminion.services.runtime.plugins import validate_plugin_manifest
 from openminion.services.security.validate import run_security_validate
 from tests._csc_fixtures import _csc_install_default_agent
@@ -119,3 +124,106 @@ def test_memory_retention_posture_warns_on_extreme_values(tmp_path) -> None:
     by_id = {item.id: item for item in report.findings}
     assert "memory.retention_posture" in by_id
     assert by_id["memory.retention_posture"].severity == "warn"
+
+
+def test_permission_checks_skip_posix_world_writable_warning_on_windows(
+    tmp_path, monkeypatch
+) -> None:
+    config = _base_config()
+    config.gateway.host = "127.0.0.1"
+    config_path = tmp_path / "config.json"
+    storage_path = tmp_path / "state" / "runtime.db"
+    memory_root = tmp_path / "memory"
+    config_path.write_text("{}", encoding="utf-8")
+    storage_path.parent.mkdir(parents=True, exist_ok=True)
+    storage_path.write_text("", encoding="utf-8")
+    memory_root.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(
+        security_diagnostics, "os", SimpleNamespace(name="nt"), raising=False
+    )
+
+    report = security_diagnostics.run_security_validate(
+        config=config,
+        config_path=config_path,
+        storage_path=storage_path,
+        memory_root=memory_root,
+        loaded_tool_names=["weather.openmeteo.current"],
+        loaded_plugin_manifest_ids=["builtin.validate"],
+    )
+
+    by_id = {item.id: item for item in report.findings}
+    for check_id in (
+        "filesystem.config_permissions",
+        "filesystem.storage_permissions",
+        "filesystem.memory_permissions",
+    ):
+        assert by_id[check_id].severity == "info"
+        assert by_id[check_id].details.get("platform") == "nt"
+    assert report.warn_count == 0
+    assert report.status == "ok"
+
+
+def test_permission_checks_warn_on_posix_world_writable_path(
+    tmp_path, monkeypatch
+) -> None:
+    config = _base_config()
+    config.gateway.host = "127.0.0.1"
+    config_path = tmp_path / "config.json"
+    config_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(
+        security_diagnostics, "os", SimpleNamespace(name="posix"), raising=False
+    )
+    real_stat = Path.stat
+
+    def _fake_stat(self: Path, *args, **kwargs):
+        if self == config_path:
+            return SimpleNamespace(st_mode=stat.S_IFREG | 0o666)
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", _fake_stat)
+
+    report = _run_validate(
+        tmp_path,
+        config,
+        loaded_plugin_manifest_ids=["builtin.validate"],
+    )
+
+    by_id = {item.id: item for item in report.findings}
+    finding = by_id["filesystem.config_permissions"]
+    assert finding.severity == "warn"
+    assert "world-writable" in finding.message.lower()
+    assert finding.details.get("mode_octal") == "0o666"
+
+
+def test_permission_checks_pass_on_posix_restricted_path(tmp_path, monkeypatch) -> None:
+    config = _base_config()
+    config.gateway.host = "127.0.0.1"
+    config_path = tmp_path / "config.json"
+    config_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(
+        security_diagnostics, "os", SimpleNamespace(name="posix"), raising=False
+    )
+    real_stat = Path.stat
+
+    def _fake_stat(self: Path, *args, **kwargs):
+        if self == config_path:
+            return SimpleNamespace(st_mode=stat.S_IFREG | 0o600)
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", _fake_stat)
+
+    report = _run_validate(
+        tmp_path,
+        config,
+        loaded_plugin_manifest_ids=["builtin.validate"],
+    )
+
+    by_id = {item.id: item for item in report.findings}
+    finding = by_id["filesystem.config_permissions"]
+    assert finding.severity == "info"
+    assert finding.details.get("mode_octal") == "0o600"
+    assert report.warn_count == 0
+    assert report.status == "ok"
