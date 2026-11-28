@@ -3467,3 +3467,133 @@ class ProviderHTTPTests(unittest.TestCase):
             response.telemetry.get("normalization", {}).get("tool_call_source"),
             "native",
         )
+
+    def test_cortensor_completion_mode_fallback_tool_calls_by_strategy(
+        self,
+    ) -> None:
+        provider = CortensorProvider()
+        payload = {
+            "model": "gpt-oss-20b",
+            "choices": [
+                {
+                    "text": json.dumps(
+                        {
+                            "tool_calls": [
+                                {
+                                    "name": "weather",
+                                    "arguments": {"location": "Tokyo"},
+                                }
+                            ]
+                        }
+                    ),
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+
+        def _fake_urlopen(http_request, timeout=None):
+            del timeout, http_request
+            return _FakeHTTPResponse(payload)
+
+        cases = (
+            (
+                "hybrid",
+                "hybrid",
+                [{"name": "weather", "description": "test tool"}],
+                "check Tokyo weather",
+            ),
+            (
+                "native",
+                "native",
+                [{"name": "weather", "description": "test tool"}],
+                "check Tokyo weather",
+            ),
+            ("no_tools", "hybrid", None, "show json example"),
+        )
+        for case_name, strategy, tools, prompt in cases:
+            with self.subTest(case=case_name):
+                request_data: dict[str, Any] = {
+                    "messages": [{"role": "user", "content": prompt}],
+                }
+                if tools is not None:
+                    request_data["tools"] = tools
+                request = LLMRequest.model_validate(request_data)
+                with patch(
+                    "openminion.modules.llm.providers.adapters.urllib_request.urlopen",
+                    side_effect=_fake_urlopen,
+                ):
+                    response = provider.complete(
+                        request,
+                        {
+                            "model": "gpt-oss-20b",
+                            "base_url": "https://router.example/api/v2/completions",
+                            "api_mode": "cortensor_completion",
+                            "session_id": 35,
+                            "tool_call_strategy": strategy,
+                        },
+                    )
+                self.assertTrue(response.ok)
+                normalization = response.telemetry.get("normalization", {})
+                if case_name == "hybrid":
+                    self.assertEqual(len(response.tool_calls), 1)
+                    self.assertEqual(response.tool_calls[0].name, "weather")
+                    self.assertEqual(
+                        response.tool_calls[0].arguments, {"location": "Tokyo"}
+                    )
+                    self.assertEqual(
+                        normalization.get("tool_call_source"), "choice.text"
+                    )
+                elif case_name == "native":
+                    self.assertEqual(response.tool_calls, [])
+                    self.assertIn(
+                        "choice.text",
+                        normalization.get("tool_call_skipped_fallback_sources", []),
+                    )
+                else:
+                    self.assertEqual(response.tool_calls, [])
+
+    def test_cortensor_openai_chat_mode_passes_http_client_when_reuse_enabled(
+        self,
+    ) -> None:
+        provider = CortensorProvider()
+        request = LLMRequest.model_validate(
+            {
+                "messages": [{"role": "user", "content": "hello"}],
+            }
+        )
+        captured_clients: list[Any] = []
+
+        def _fake_http_json_post(**kwargs: Any) -> dict[str, Any]:
+            captured_clients.append(kwargs.get("http_client"))
+            return {
+                "model": "gpt-oss-20b",
+                "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+            }
+
+        with patch(
+            "openminion.modules.llm.providers.cortensor.adapter._http_json_post",
+            side_effect=_fake_http_json_post,
+        ):
+            enabled_response = provider.complete(
+                request,
+                {
+                    "model": "gpt-oss-20b",
+                    "base_url": "http://localhost:8080/api/v2/chat/completions",
+                    "api_mode": "openai_chat",
+                    "http_connection_reuse_enabled": True,
+                },
+            )
+            disabled_response = provider.complete(
+                request,
+                {
+                    "model": "gpt-oss-20b",
+                    "base_url": "http://localhost:8080/api/v2/chat/completions",
+                    "api_mode": "openai_chat",
+                    "http_connection_reuse_enabled": False,
+                },
+            )
+
+        self.assertTrue(enabled_response.ok)
+        self.assertTrue(disabled_response.ok)
+        self.assertIs(captured_clients[0], provider._http_client)
+        self.assertIsNone(captured_clients[1])
