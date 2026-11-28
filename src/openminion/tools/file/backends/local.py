@@ -4,8 +4,10 @@ import fnmatch
 import hashlib
 import errno
 import os
+import re
 import shutil
 import stat
+from functools import lru_cache
 from pathlib import Path
 from types import ModuleType
 from typing import Callable, cast
@@ -70,6 +72,126 @@ _SEARCH_PRUNED_DIRS = frozenset(
         ".ruff_cache",
     }
 )
+
+
+def _find_char_class_end(pattern: str, start: int) -> int | None:
+    """Return the closing ``]`` index of a fnmatch class at ``start``.
+
+    A leading ``!`` negates and a leading ``]`` is literal; ``^`` is literal.
+    ``None`` means unterminated, which the caller treats as a literal ``[``.
+    """
+    j = start + 1
+    if j < len(pattern) and pattern[j] == "!":
+        j += 1
+    if j < len(pattern) and pattern[j] == "]":
+        j += 1
+    while j < len(pattern) and pattern[j] != "]":
+        j += 1
+    return j if j < len(pattern) else None
+
+
+def _escape_class_lead(body: str) -> str:
+    """Keep a leading ``]`` literal inside a negated class body."""
+    return "\\" + body if body.startswith("]") else body
+
+
+def _translate_char_class(body: str) -> str:
+    """Translate a fnmatch class body to regex without crossing ``/``.
+
+    ``!`` negates and ``^`` is literal; ranges are preserved, while a malformed
+    or descending range (``z-a``) never matches instead of raising. An empty
+    negated body matches any non-separator; an empty plain body never matches.
+    """
+    stuff = body
+    if "-" not in stuff:
+        stuff = stuff.replace("\\", r"\\")
+    else:
+        chunks: list[str] = []
+        i = 0
+        j = len(body)
+        k = 2 if body.startswith("!") else 1
+        while True:
+            k = body.find("-", k, j)
+            if k < 0:
+                break
+            chunks.append(body[i:k])
+            i = k + 1
+            k = k + 3
+        chunk = body[i:j]
+        if chunk:
+            chunks.append(chunk)
+        else:
+            chunks[-1] += "-"
+        for k in range(len(chunks) - 1, 0, -1):
+            if chunks[k - 1][-1] > chunks[k][0]:
+                chunks[k - 1] = chunks[k - 1][:-1] + chunks[k][1:]
+                del chunks[k]
+        stuff = "-".join(s.replace("\\", r"\\").replace("-", r"\-") for s in chunks)
+    stuff = re.sub(r"([&~|])", r"\\\1", stuff)
+
+    if not stuff:
+        return "(?!)"
+    if stuff == "!":
+        return "[^/]"
+    if stuff[0] == "!":
+        # The negation must not consume the path separator, or `a[!x]b` would
+        # match `a/b`; fnmatch has no separator concept, a path matcher does.
+        stuff = "^/" + _escape_class_lead(stuff[1:])
+    elif stuff[0] in ("^", "["):
+        stuff = "\\" + stuff
+    class_body = "[" + stuff + "]"
+    # A positive class can still cover the separator through a range such as
+    # `[.-0]`, which would let one component pattern match across directories.
+    if re.fullmatch(class_body, "/"):
+        return "(?!/)" + class_body
+    return class_body
+
+
+@lru_cache(maxsize=128)
+def _glob_to_regex(pattern: str) -> re.Pattern[str]:
+    """Compile a root-relative glob into an anchored regex.
+
+    ``**`` spans directories; ``*``, ``?`` and classes never cross ``/``, and
+    classes keep fnmatch semantics (``!`` negation, literal ``^``, malformed
+    range never matches, unterminated class literal). ``^``/``\\Z`` with
+    ``re.S`` matches newline-bearing names but not a trailing-newline suffix.
+    """
+    tokens: list[str] = []
+    i = 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            tokens.append("(?:.*/)?")
+            i += 3
+        elif pattern.startswith("**", i):
+            tokens.append(".*")
+            i += 2
+        elif pattern[i] == "*":
+            tokens.append("[^/]*")
+            i += 1
+        elif pattern[i] == "?":
+            tokens.append("[^/]")
+            i += 1
+        elif pattern[i] == "[":
+            end = _find_char_class_end(pattern, i)
+            if end is None:
+                tokens.append(r"\[")
+                i += 1
+            else:
+                tokens.append(_translate_char_class(pattern[i + 1 : end]))
+                i = end + 1
+        else:
+            tokens.append(re.escape(pattern[i]))
+            i += 1
+    return re.compile("^" + "".join(tokens) + r"\Z", re.S)
+
+
+def _matches_glob(pattern: str, name: str, relative_path: str) -> bool:
+    """Match separator-free patterns by basename, else the whole root-relative
+    path; the basename case keeps ``fnmatch`` recursion across directories.
+    """
+    if "/" not in pattern:
+        return fnmatch.fnmatch(name, pattern)
+    return _glob_to_regex(pattern).match(relative_path) is not None
 
 
 class LocalStorageBackend:
@@ -366,10 +488,7 @@ class LocalStorageBackend:
                 for name in files:
                     full_path = Path(root) / name
                     relative_path = full_path.relative_to(target).as_posix()
-                    basename_pattern = pattern.removeprefix("**/")
-                    if fnmatch.fnmatch(name, basename_pattern) or fnmatch.fnmatch(
-                        relative_path, pattern
-                    ):
+                    if _matches_glob(pattern, name, relative_path):
                         matches.append(
                             MatchInfo(
                                 name=name,
@@ -431,14 +550,8 @@ class LocalStorageBackend:
                     dirs[:] = [name for name in dirs if name not in _SEARCH_PRUNED_DIRS]
                 for name in files:
                     candidate = Path(root) / name
-                    if not any(
-                        fnmatch.fnmatch(value, file_glob)
-                        for value in (
-                            name,
-                            str(candidate),
-                            candidate.relative_to(target).as_posix(),
-                        )
-                    ):
+                    relative_path = candidate.relative_to(target).as_posix()
+                    if not _matches_glob(file_glob, name, relative_path):
                         continue
                     if not candidate.is_file() or candidate.is_symlink():
                         continue

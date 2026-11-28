@@ -20,6 +20,40 @@ def _backend(tmp_path: Path) -> tuple[LocalStorageBackend, Path]:
     return LocalStorageBackend(workspace), workspace
 
 
+def _glob_tree(tmp_path: Path) -> tuple[LocalStorageBackend, Path]:
+    backend, workspace = _backend(tmp_path)
+    src = workspace / "src"
+    one = src / "one"
+    two = one / "two"
+    other_src = workspace / "other" / "src"
+    two.mkdir(parents=True)
+    other_src.mkdir(parents=True)
+    (src / "a.py").write_text("needle\n", encoding="utf-8")
+    (one / "b.py").write_text("needle\n", encoding="utf-8")
+    (two / "c.py").write_text("needle\n", encoding="utf-8")
+    (other_src / "d.py").write_text("needle\n", encoding="utf-8")
+    (workspace / "root.py").write_text("needle\n", encoding="utf-8")
+    return backend, workspace
+
+
+def _class_tree(tmp_path: Path) -> tuple[LocalStorageBackend, Path]:
+    backend, workspace = _backend(tmp_path)
+    src = workspace / "src"
+    src.mkdir()
+    for name in ("a.py", "b.py", "c.py"):
+        (src / name).write_text("needle\n", encoding="utf-8")
+    return backend, workspace
+
+
+def _caret_tree(tmp_path: Path) -> tuple[LocalStorageBackend, Path]:
+    backend, workspace = _backend(tmp_path)
+    src = workspace / "src"
+    src.mkdir()
+    for name in ("^.py", "a.py", "b.py", "c.py"):
+        (src / name).write_text("needle\n", encoding="utf-8")
+    return backend, workspace
+
+
 def test_local_backend_satisfies_protocol(tmp_path: Path):
     backend, _ = _backend(tmp_path)
     assert isinstance(backend, StorageBackend)
@@ -89,6 +123,296 @@ def test_local_backend_find_returns_match_info(tmp_path: Path):
     assert result.count == 2
     assert all(isinstance(match, MatchInfo) for match in result.matches)
     assert sorted(match.name for match in result.matches) == ["alpha.txt", "beta.txt"]
+
+
+def test_local_backend_find_glob_respects_directory_boundaries(tmp_path: Path):
+    backend, workspace = _glob_tree(tmp_path)
+
+    result = backend.find(str(workspace), pattern="src/*.py")
+
+    assert sorted(match.name for match in result.matches) == ["a.py"]
+
+
+def test_local_backend_search_glob_respects_directory_boundaries(tmp_path: Path):
+    backend, workspace = _glob_tree(tmp_path)
+
+    result = backend.search(str(workspace), query="needle", file_glob="src/*.py")
+
+    assert sorted(Path(match.path).name for match in result.matches) == ["a.py"]
+
+
+def test_local_backend_find_basename_glob_still_recurses(tmp_path: Path):
+    backend, workspace = _glob_tree(tmp_path)
+
+    result = backend.find(str(workspace), pattern="*.py")
+
+    assert sorted(match.name for match in result.matches) == [
+        "a.py",
+        "b.py",
+        "c.py",
+        "d.py",
+        "root.py",
+    ]
+
+
+def test_local_backend_search_basename_glob_still_recurses(tmp_path: Path):
+    backend, workspace = _glob_tree(tmp_path)
+
+    result = backend.search(str(workspace), query="needle", file_glob="*.py")
+
+    assert sorted(Path(match.path).name for match in result.matches) == [
+        "a.py",
+        "b.py",
+        "c.py",
+        "d.py",
+        "root.py",
+    ]
+
+
+def test_local_backend_find_recursive_glob_matches_nested(tmp_path: Path):
+    backend, workspace = _glob_tree(tmp_path)
+
+    result = backend.find(str(workspace), pattern="src/**/*.py")
+
+    assert sorted(match.name for match in result.matches) == ["a.py", "b.py", "c.py"]
+
+
+def test_local_backend_search_recursive_glob_matches_nested(tmp_path: Path):
+    backend, workspace = _glob_tree(tmp_path)
+
+    result = backend.search(str(workspace), query="needle", file_glob="src/**/*.py")
+
+    assert sorted(Path(match.path).name for match in result.matches) == [
+        "a.py",
+        "b.py",
+        "c.py",
+    ]
+
+
+def test_local_backend_find_leading_recursive_glob(tmp_path: Path):
+    backend, workspace = _glob_tree(tmp_path)
+
+    result = backend.find(str(workspace), pattern="**/src/*.py")
+
+    assert sorted(match.name for match in result.matches) == ["a.py", "d.py"]
+
+
+def test_local_backend_search_leading_recursive_glob(tmp_path: Path):
+    backend, workspace = _glob_tree(tmp_path)
+
+    result = backend.search(str(workspace), query="needle", file_glob="**/src/*.py")
+
+    assert sorted(Path(match.path).name for match in result.matches) == [
+        "a.py",
+        "d.py",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("pattern", "expected"),
+    [
+        ("src/[ab].py", ["a.py", "b.py"]),
+        ("src/[!a].py", ["b.py", "c.py"]),
+        ("src/[^a].py", ["a.py"]),
+        ("src/[a-c].py", ["a.py", "b.py", "c.py"]),
+        ("src/[z-a].py", []),
+    ],
+)
+def test_local_backend_find_glob_character_class(
+    tmp_path: Path, pattern: str, expected: list[str]
+):
+    backend, workspace = _class_tree(tmp_path)
+
+    result = backend.find(str(workspace), pattern=pattern)
+
+    assert sorted(match.name for match in result.matches) == expected
+
+
+@pytest.mark.parametrize(
+    ("pattern", "expected"),
+    [
+        ("src/[ab].py", ["a.py", "b.py"]),
+        ("src/[!a].py", ["b.py", "c.py"]),
+        ("src/[^a].py", ["a.py"]),
+        ("src/[a-c].py", ["a.py", "b.py", "c.py"]),
+        ("src/[z-a].py", []),
+    ],
+)
+def test_local_backend_search_glob_character_class(
+    tmp_path: Path, pattern: str, expected: list[str]
+):
+    backend, workspace = _class_tree(tmp_path)
+
+    result = backend.search(str(workspace), query="needle", file_glob=pattern)
+
+    assert sorted(Path(match.path).name for match in result.matches) == expected
+
+
+@pytest.mark.parametrize(
+    ("pattern", "expected"),
+    [
+        ("src/[^a].py", ["^.py", "a.py"]),
+        ("src/[z-a].py", []),
+    ],
+)
+def test_local_backend_find_glob_caret_literal_and_descending_range(
+    tmp_path: Path, pattern: str, expected: list[str]
+):
+    backend, workspace = _caret_tree(tmp_path)
+
+    result = backend.find(str(workspace), pattern=pattern)
+
+    assert sorted(match.name for match in result.matches) == expected
+
+
+@pytest.mark.parametrize(
+    ("pattern", "expected"),
+    [
+        ("src/[^a].py", ["^.py", "a.py"]),
+        ("src/[z-a].py", []),
+    ],
+)
+def test_local_backend_search_glob_caret_literal_and_descending_range(
+    tmp_path: Path, pattern: str, expected: list[str]
+):
+    backend, workspace = _caret_tree(tmp_path)
+
+    result = backend.search(str(workspace), query="needle", file_glob=pattern)
+
+    assert sorted(Path(match.path).name for match in result.matches) == expected
+
+
+def _separator_class_tree(tmp_path: Path) -> tuple[LocalStorageBackend, Path]:
+    backend, workspace = _backend(tmp_path)
+    src = workspace / "src"
+    (src / "a").mkdir(parents=True)
+    (src / "a" / "b.py").write_text("needle\n", encoding="utf-8")
+    (src / "acb.py").write_text("needle\n", encoding="utf-8")
+    (src / "axb.py").write_text("needle\n", encoding="utf-8")
+    return backend, workspace
+
+
+def _newline_directory_tree(tmp_path: Path) -> tuple[LocalStorageBackend, Path]:
+    backend, workspace = _backend(tmp_path)
+    src = workspace / "src"
+    nested = src / "a\nb"
+    nested.mkdir(parents=True)
+    (nested / "c.py").write_text("needle\n", encoding="utf-8")
+    (src / "c.py").write_text("needle\n", encoding="utf-8")
+    return backend, workspace
+
+
+def test_local_backend_find_negated_class_keeps_directory_boundary(tmp_path: Path):
+    backend, workspace = _separator_class_tree(tmp_path)
+
+    result = backend.find(str(workspace), pattern="src/a[!x]b.py")
+
+    assert sorted(
+        Path(match.path).relative_to(workspace).as_posix() for match in result.matches
+    ) == ["src/acb.py"]
+
+
+def test_local_backend_search_negated_class_keeps_directory_boundary(tmp_path: Path):
+    backend, workspace = _separator_class_tree(tmp_path)
+
+    result = backend.search(str(workspace), query="needle", file_glob="src/a[!x]b.py")
+
+    assert sorted(
+        Path(match.path).relative_to(workspace).as_posix() for match in result.matches
+    ) == ["src/acb.py"]
+
+
+def test_local_backend_find_recursive_glob_matches_newline_directory(tmp_path: Path):
+    backend, workspace = _newline_directory_tree(tmp_path)
+
+    result = backend.find(str(workspace), pattern="src/**/c.py")
+
+    assert sorted(
+        Path(match.path).relative_to(workspace).as_posix() for match in result.matches
+    ) == ["src/a\nb/c.py", "src/c.py"]
+
+
+def test_local_backend_search_recursive_glob_matches_newline_directory(tmp_path: Path):
+    backend, workspace = _newline_directory_tree(tmp_path)
+
+    result = backend.search(str(workspace), query="needle", file_glob="src/**/c.py")
+
+    assert sorted(
+        Path(match.path).relative_to(workspace).as_posix() for match in result.matches
+    ) == ["src/a\nb/c.py", "src/c.py"]
+
+
+def _range_class_tree(tmp_path: Path) -> tuple[LocalStorageBackend, Path]:
+    backend, workspace = _backend(tmp_path)
+    src = workspace / "src"
+    (src / "a").mkdir(parents=True)
+    (src / "a" / "b.py").write_text("needle\n", encoding="utf-8")
+    (src / "a.b.py").write_text("needle\n", encoding="utf-8")
+    (src / "a0b.py").write_text("needle\n", encoding="utf-8")
+    return backend, workspace
+
+
+def test_local_backend_find_range_class_keeps_directory_boundary(tmp_path: Path):
+    backend, workspace = _range_class_tree(tmp_path)
+
+    result = backend.find(str(workspace), pattern="src/a[.-0]b.py")
+
+    # `.` and `0` are in range; the separator between them is not.
+    assert sorted(
+        Path(match.path).relative_to(workspace).as_posix() for match in result.matches
+    ) == ["src/a.b.py", "src/a0b.py"]
+
+
+def test_local_backend_search_range_class_keeps_directory_boundary(tmp_path: Path):
+    backend, workspace = _range_class_tree(tmp_path)
+
+    result = backend.search(str(workspace), query="needle", file_glob="src/a[.-0]b.py")
+
+    assert sorted(
+        Path(match.path).relative_to(workspace).as_posix() for match in result.matches
+    ) == ["src/a.b.py", "src/a0b.py"]
+
+
+def test_local_backend_find_glob_hidden_file_controls(tmp_path: Path):
+    backend, workspace = _backend(tmp_path)
+    (workspace / ".secret.py").write_text("x", encoding="utf-8")
+    (workspace / "visible.py").write_text("x", encoding="utf-8")
+
+    excluded = backend.find(str(workspace), pattern="*.py")
+    assert sorted(match.name for match in excluded.matches) == ["visible.py"]
+
+    included = backend.find(str(workspace), pattern="*.py", include_hidden=True)
+    assert sorted(match.name for match in included.matches) == [
+        ".secret.py",
+        "visible.py",
+    ]
+
+
+def test_local_backend_search_glob_hidden_file_controls(tmp_path: Path):
+    backend, workspace = _backend(tmp_path)
+    (workspace / ".secret.py").write_text("needle\n", encoding="utf-8")
+    (workspace / "visible.py").write_text("needle\n", encoding="utf-8")
+
+    excluded = backend.search(str(workspace), query="needle", file_glob="*.py")
+    assert sorted(Path(match.path).name for match in excluded.matches) == ["visible.py"]
+
+    included = backend.search(
+        str(workspace), query="needle", file_glob="*.py", include_hidden=True
+    )
+    assert sorted(Path(match.path).name for match in included.matches) == [
+        ".secret.py",
+        "visible.py",
+    ]
+
+
+def test_local_backend_find_glob_respects_max_entries(tmp_path: Path):
+    backend, workspace = _backend(tmp_path)
+    for index in range(5):
+        (workspace / f"f{index}.py").write_text("x", encoding="utf-8")
+
+    result = backend.find(str(workspace), pattern="*.py", max_entries=2)
+
+    assert len(result.matches) == 2
 
 
 def test_local_backend_search_returns_search_matches(tmp_path: Path):
