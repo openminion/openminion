@@ -160,6 +160,10 @@ def test_permission_checks_skip_posix_world_writable_warning_on_windows(
     ):
         assert by_id[check_id].severity == "info"
         assert by_id[check_id].details.get("platform") == "nt"
+        msg = by_id[check_id].message.lower()
+        assert "not assessed" in msg
+        assert "acl safety is not verified" in msg
+        assert "ntfs" not in msg
     assert report.warn_count == 0
     assert report.status == "ok"
 

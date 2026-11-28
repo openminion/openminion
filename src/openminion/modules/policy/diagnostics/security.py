@@ -381,7 +381,11 @@ def _permission_finding(
         return SecurityValidateFinding(
             id=check_id,
             severity=SEVERITY_INFO,
-            message=f"POSIX mode-bit permission check skipped on Windows (NTFS ACLs apply): {path}",
+            message=(
+                "POSIX mode-bit permission check skipped on Windows "
+                "(POSIX mode bits are not assessed and Windows ACL safety is not verified): "
+                f"{path}"
+            ),
             details={"path": str(path), "platform": "nt"},
         )
 
