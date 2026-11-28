@@ -121,7 +121,7 @@ class AgentProfileConfig:
 
     name: str = ""
     role: str = ""
-    default_channel: str = ""
+    default_channel: str = "console"
     thinking: str = ""
     provider: str = ""
     default_act_profile: str = ""
