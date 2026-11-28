@@ -1,3 +1,4 @@
+import os
 import stat
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -374,6 +375,18 @@ def _permission_finding(
             severity=SEVERITY_INFO,
             message=missing_message,
             details={"path": str(path)},
+        )
+
+    if os.name == "nt":
+        return SecurityValidateFinding(
+            id=check_id,
+            severity=SEVERITY_INFO,
+            message=(
+                "POSIX mode-bit permission check skipped on Windows "
+                "(POSIX mode bits are not assessed and Windows ACL safety is not verified): "
+                f"{path}"
+            ),
+            details={"path": str(path), "platform": "nt"},
         )
 
     mode = path.stat().st_mode

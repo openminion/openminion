@@ -46,6 +46,12 @@ This file tracks package-facing release notes for `openminion`.
   `default_channel`), while preserving explicitly supplied values (including empty or
   non-string inputs) unchanged (Refs #864).
 
+- `_permission_finding` in `openminion doctor` and `run_security_validate` now skips
+  POSIX `stat.S_IWOTH` world-writable warnings on Windows (`os.name == "nt"`), reporting
+  an informational finding that Windows POSIX mode bits are not assessed and that this
+  check does not inspect or verify Windows ACL safety, while preserving missing-path and
+  POSIX world-writable diagnostics unchanged (Refs #863).
+
 - `import_omx` and `export_omx` now confine table payload paths inside `omx_dir`
   (normalizing Windows separators while rejecting `..` escapes, absolute paths, and
   external symlinks), prepare quoted table/column SQL identifiers (`_quote_ident`),
