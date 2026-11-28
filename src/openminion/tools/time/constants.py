@@ -6,6 +6,18 @@ from openminion.tools.constants import (
 
 OPENMINION_TIMEZONE_ENV = "OPENMINION_TIMEZONE"
 
+TIME_RUNTIME_TOOL_NAMES: tuple[str, ...] = (
+    "time.now",
+    "time.in_zone",
+    "time.convert",
+    "time.parse_iso",
+    "time.diff",
+    "time.format",
+    "time.start_of_day",
+    "time.end_of_day",
+    "time.next_cron",
+)
+
 DEFAULT_PARSE_TIMEZONE = "UTC"
 DEFAULT_NEXT_CRON_COUNT = 3
 MAX_NEXT_CRON_COUNT = 50
@@ -58,6 +70,7 @@ __all__ = [
     "TIME_FORMAT_RFC3339",
     "TIME_FORMAT_TIME",
     "TIME_FORMATS",
+    "TIME_RUNTIME_TOOL_NAMES",
     "TIMEZONE_META_KEYS",
     "TIME_REASON_STORAGE_EXEC_ERROR",
     "TIME_REASON_STORAGE_UNAVAILABLE",

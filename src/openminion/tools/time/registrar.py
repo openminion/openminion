@@ -5,6 +5,8 @@ from typing import Any, TYPE_CHECKING
 from openminion.modules.tool.contracts.model_ids import MODEL_TIME
 from openminion.modules.tool.contracts.runtime_ids import RUNTIME_TIME_NOW
 
+from .constants import TIME_RUNTIME_TOOL_NAMES
+
 if TYPE_CHECKING:
     from openminion.modules.tool.registry import ToolRegistry
     from openminion.modules.tool.runtime.registrar import ToolRegisterContext
@@ -45,7 +47,7 @@ class TimeRegistrar:
                 RuntimeBindingDef(
                     runtime_binding_id=RUNTIME_TIME_NOW,
                     model_tool_id=MODEL_TIME,
-                    runtime_candidates=("time.now",),
+                    runtime_candidates=TIME_RUNTIME_TOOL_NAMES,
                 ),
             ),
         )

@@ -8,8 +8,10 @@ from openminion.modules.brain.bootstrap.route_catalog import (
     available_routes as available_brain_routes,
     get_route_descriptor,
 )
+from openminion.modules.tool.contracts.model_ids import MODEL_TIME
 from openminion.modules.tool.exposure import get_visible_tool_specs_and_dispatch_map
 from openminion.modules.tool import tool_dependency_report_fields as _dependency_fields
+from openminion.tools.time.constants import TIME_RUNTIME_TOOL_NAMES
 from openminion.tools.mcp.exposure import (
     build_mcp_exposure_report,
     scoped_mcp_registry_view,
@@ -57,14 +59,38 @@ def build_tool_inventory_report(
     return sorted(inventory, key=lambda item: item["name"])
 
 
+def _direct_time_tool_report(runtime: Any, tool_name: str) -> dict[str, Any] | None:
+    if tool_name not in TIME_RUNTIME_TOOL_NAMES:
+        return None
+    registry = getattr(runtime, "tools", None)
+    if registry is None:
+        return None
+    # The explicit time operations follow the model `time` parent: it must stay
+    # declared and exposure-visible even when time.now itself is unavailable.
+    manager = registry._binding_manager()
+    visible = registry.exposure_service.decide(MODEL_TIME).state == "visible"
+    if MODEL_TIME not in dict(manager.model_tool_catalog()) or not visible:
+        return None
+    if (spec := registry._provider_spec_for_runtime_name(tool_name)) is None:
+        return None
+    return {
+        "name": spec.name,
+        "description": spec.description,
+        "parameters": dict(spec.parameters),
+        "enabled": True,
+        "runtime_binding_id": "",
+        "runtime_tool_name": spec.name,
+        "source": "runtime_direct",
+    }
+
+
 def build_tool_schema_report(runtime: Any, *, tool_name: str) -> dict[str, Any] | None:
     normalized = str(tool_name or "").strip()
     if not normalized:
         return None
-    for item in build_tool_inventory_report(runtime):
-        if item["name"] == normalized:
-            return dict(item)
-    return None
+    inventory = build_tool_inventory_report(runtime)
+    found = next((dict(item) for item in inventory if item["name"] == normalized), None)
+    return found or _direct_time_tool_report(runtime, normalized)
 
 
 def _build_provider_items(runtime: Any, diagnostics: dict[str, Any]) -> dict[str, Any]:

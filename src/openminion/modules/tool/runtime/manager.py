@@ -12,6 +12,7 @@ from openminion.modules.tool.contracts import (
     is_valid_runtime_binding_id,
     validate_manifest,
 )
+from openminion.modules.tool.contracts.model_ids import MODEL_TIME
 from openminion.modules.tool.contracts.normalization import (
     normalize_raw_model_tool_name,
     strip_tool_wrapper_prefix,
@@ -261,11 +262,11 @@ class ToolRegistryManager:
 
         for model_tool_id, model_tool in model_tools_by_id.items():
             parameters = dict(model_tool.parameters or {})
-            if not parameters:
-                runtime_binding_id = model_to_runtime_binding_id.get(model_tool_id, "")
-                for candidate in runtime_binding_to_candidates.get(
-                    runtime_binding_id, ()
-                ):
+            if not parameters:  # time never borrows another operation's schema
+                names = runtime_binding_to_candidates.get(
+                    model_to_runtime_binding_id.get(model_tool_id, ""), ()
+                )
+                for candidate in names[:1] if model_tool_id == MODEL_TIME else names:
                     candidate_schema = self._runtime_schema_by_tool_name.get(candidate)
                     if isinstance(candidate_schema, dict) and candidate_schema:
                         parameters = dict(candidate_schema)
@@ -416,6 +417,10 @@ class ToolRegistryManager:
             candidates = compiled.runtime_binding_to_candidates.get(
                 runtime_binding_id, ()
             )
+            if model_tool_id == MODEL_TIME:
+                # Canonical model-facing time keeps its first declared operation;
+                # an unavailable time.now leaves the model tool with no selection.
+                candidates = candidates[:1]
             if not candidates:
                 continue
             if available is None:
@@ -458,6 +463,8 @@ class ToolRegistryManager:
             all_candidates = list(
                 compiled.runtime_binding_to_candidates.get(runtime_binding_id, ())
             )
+            if model_tool_id == MODEL_TIME:
+                all_candidates = all_candidates[:1]
             if available is None:
                 selected = all_candidates[0] if all_candidates else ""
                 effective_candidates = list(all_candidates)
@@ -484,12 +491,13 @@ class ToolRegistryManager:
             runtime_binding_id = compiled.model_to_runtime_binding_id.get(model_tool_id)
             if not runtime_binding_id:
                 continue
+            declared = compiled.runtime_binding_to_candidates.get(
+                runtime_binding_id, ()
+            )
+            if model_tool_id == MODEL_TIME:
+                declared = declared[:1]
             runtime_candidates = [
-                candidate
-                for candidate in compiled.runtime_binding_to_candidates.get(
-                    runtime_binding_id, ()
-                )
-                if candidate in available
+                candidate for candidate in declared if candidate in available
             ]
             if not runtime_candidates:
                 continue
