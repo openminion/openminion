@@ -2,6 +2,8 @@ import io
 import json
 import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from argparse import Namespace
@@ -1063,6 +1065,79 @@ class DoctorCommandTests(unittest.TestCase):
             self.assertEqual(
                 check_by_id["security.gateway.bind_posture"]["status"], "warn"
             )
+
+    def test_doctor_json_subprocess_emits_no_info_logs_on_stderr(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cfg = root / "agents.json"
+            cfg.write_text(
+                json.dumps(
+                    {
+                        "default_agent": "demo",
+                        "agents": {
+                            "demo": {
+                                "provider": "echo",
+                                "default_channel": "console",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            env = dict(os.environ)
+            env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "openminion",
+                    "--home-root",
+                    str(root),
+                    "--data-root",
+                    str(root / ".openminion"),
+                    "--config",
+                    str(cfg),
+                    "doctor",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=30,
+            )
+
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+            payload = json.loads(proc.stdout)
+            self.assertIn("checks", payload)
+            self.assertEqual(proc.stderr, "")
+
+    def test_doctor_bootstrap_passes_logging_mode_by_json_flag(self) -> None:
+        from openminion.cli.commands import doctor as doctor_cmd
+
+        seen_modes: list[str] = []
+
+        def fake_from_config_path(*_args, **kwargs):
+            seen_modes.append(str(kwargs.get("logging_mode", "")))
+            raise RuntimeError("stop after capturing logging_mode")
+
+        selected_agent = Namespace(name="demo")
+        with mock.patch.object(
+            doctor_cmd.APIRuntime, "from_config_path", side_effect=fake_from_config_path
+        ):
+            doctor_cmd._run_runtime_bootstrap_probe(
+                args=Namespace(config=None, json=True),
+                selected_agent=selected_agent,
+                provider_name="echo",
+                run_profile_overrides=None,
+            )
+            doctor_cmd._run_runtime_bootstrap_probe(
+                args=Namespace(config=None, json=False),
+                selected_agent=selected_agent,
+                provider_name="echo",
+                run_profile_overrides=None,
+            )
+
+        self.assertEqual(seen_modes, ["interactive", "default"])
 
 
 def _write_identity_profile(
