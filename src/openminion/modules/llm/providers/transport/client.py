@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import socket
 from collections.abc import Iterator, Mapping
 from threading import Lock
@@ -8,6 +9,22 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 import httpx
+
+logger = logging.getLogger(__name__)
+
+
+def _build_httpx_client() -> httpx.Client:
+    # Some runtimes publish NO_PROXY with bracketed IPv6 literals ([::1]);
+    # httpx raises InvalidURL parsing them, which must not take down every
+    # provider call. Degrade to a direct, env-free client instead.
+    try:
+        return httpx.Client(follow_redirects=True, trust_env=True)
+    except httpx.InvalidURL:
+        logger.warning(
+            "Unparseable proxy environment; provider HTTP client falls back "
+            "to direct connections without proxy settings."
+        )
+        return httpx.Client(follow_redirects=True, trust_env=False)
 
 
 class _ProviderHTTPResponse:
@@ -83,7 +100,7 @@ class ProviderHTTPClient:
     def _get_client(self) -> httpx.Client:
         with self._lock:
             if self._client is None:
-                self._client = httpx.Client(follow_redirects=True, trust_env=True)
+                self._client = _build_httpx_client()
             return self._client
 
 
